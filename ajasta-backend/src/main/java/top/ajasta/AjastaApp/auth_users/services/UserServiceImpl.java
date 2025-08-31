@@ -165,6 +165,7 @@ public class UserServiceImpl implements UserService {
                 .recipient(user.getEmail())
                 .subject("Account Deactivated")
                 .body("Your account has been deactivated. If this was a mistake, please contact support.")
+                .isHtml(false)
                 .build();
         notificationService.sendEmail(notificationDTO);
 

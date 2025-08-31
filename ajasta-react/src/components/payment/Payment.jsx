@@ -64,7 +64,7 @@ const PaymentForm = ({ amount, orderId, onSuccess }) => {
                 console.log("PAYMENT IS SUCCESSDED")
 
                 // Step 3: Update backend with payment completion
-                const res = await ApiService.updateOrderPayment({
+                await ApiService.updateOrderPayment({
                     orderId,
                     amount,
                     transactionId: paymentIntent.id,
@@ -77,7 +77,7 @@ const PaymentForm = ({ amount, orderId, onSuccess }) => {
             } else {
 
                  // Step 3: Update backend with payment completion
-                const res = await ApiService.updateOrderPayment({
+                await ApiService.updateOrderPayment({
                     orderId,
                     amount,
                     transactionId: paymentIntent.id,

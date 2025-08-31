@@ -1,13 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
 
 const DeliveriesPage = () => {
-    const { t } = useTranslation();
     const { ErrorDisplay, showError } = useError();
-    const navigate = useNavigate();
     const [deliveries, setDeliveries] = useState([]);
     const [loading, setLoading] = useState(true);
     const [statusFilter, setStatusFilter] = useState('');
