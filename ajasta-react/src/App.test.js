@@ -22,8 +22,9 @@ jest.mock('react-router-dom', () => {
   return {
     __esModule: true,
     BrowserRouter: ({ children }) => React.createElement(React.Fragment, null, children),
-    Routes: ({ children }) => React.createElement(React.Fragment, null, children),
-    Route: ({ element }) => element || null,
+    // Do not render any routed elements in tests to avoid mounting pages with side-effects
+    Routes: () => null,
+    Route: () => null,
     Navigate: () => null,
     Link: ({ children }) => React.createElement('a', null, children),
     Outlet: () => null,
