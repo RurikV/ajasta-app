@@ -88,18 +88,34 @@ const AdminResourceFormPage = () => {
   };
 
   return (
-    <div className="admin-form-page">
+    <div className="admin-menu-item-form">
       <ErrorDisplay />
-      <h1>{id ? 'Edit Resource' : 'Add Resource'}</h1>
+      <div className="content-header">
+        <h1>{id ? 'Edit Resource Item' : 'Add New Resource Item'}</h1>
+        <button
+          className="back-btn"
+          type="button"
+          onClick={() => navigate('/admin/resources')}
+        >
+          Back to Resource Items
+        </button>
+      </div>
 
-      <form onSubmit={handleSubmit} className="admin-form">
+      <form onSubmit={handleSubmit}>
         <div className="form-group">
-          <label htmlFor="name">Name</label>
-          <input id="name" type="text" name="name" value={resource.name} onChange={handleInputChange} required />
+          <label htmlFor="name">Name *</label>
+          <input
+            type="text"
+            id="name"
+            name="name"
+            value={resource.name}
+            onChange={handleInputChange}
+            required
+          />
         </div>
 
         <div className="form-group">
-          <label htmlFor="type">Type</label>
+          <label htmlFor="type">Type *</label>
           <select id="type" name="type" value={resource.type} onChange={handleInputChange} required>
             <option value="">Select type</option>
             <option value="TURF_COURT">Turf Court</option>
@@ -112,17 +128,42 @@ const AdminResourceFormPage = () => {
 
         <div className="form-group">
           <label htmlFor="location">Location</label>
-          <input id="location" type="text" name="location" value={resource.location} onChange={handleInputChange} />
+          <input
+            type="text"
+            id="location"
+            name="location"
+            value={resource.location}
+            onChange={handleInputChange}
+          />
         </div>
 
         <div className="form-group">
           <label htmlFor="description">Description</label>
-          <textarea id="description" name="description" value={resource.description} onChange={handleInputChange} rows={4} />
+          <textarea
+            id="description"
+            name="description"
+            value={resource.description}
+            onChange={handleInputChange}
+            rows="4"
+          />
         </div>
 
         <div className="form-group">
-          <label htmlFor="imageFile">Image</label>
-          <input id="imageFile" type="file" accept="image/*" onChange={handleFileChange} />
+          <label htmlFor="imageFile">{id ? 'Change Image (Leave blank to keep current)' : 'Image *'}</label>
+          <input
+            type="file"
+            id="imageFile"
+            name="imageFile"
+            onChange={handleFileChange}
+            accept="image/*"
+            required={!id}
+          />
+          {id && resource.imageUrl && (
+            <div className="current-image-preview">
+              <p>Current Image:</p>
+              <img src={resource.imageUrl} alt="Current resource" className="preview-image" />
+            </div>
+          )}
         </div>
 
         <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -130,9 +171,15 @@ const AdminResourceFormPage = () => {
           <input id="active" type="checkbox" name="active" checked={!!resource.active} onChange={handleCheckboxChange} />
         </div>
 
-        <button type="submit" className="submit-btn" disabled={isSubmitting}>
-          {isSubmitting ? 'Saving...' : id ? 'Update' : 'Create'}
-        </button>
+        <div className="form-actions">
+          <button
+            type="submit"
+            className="save-btn"
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? 'Saving...' : 'Save Resource Item'}
+          </button>
+        </div>
       </form>
     </div>
   );
