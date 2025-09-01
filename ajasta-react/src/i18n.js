@@ -10,6 +10,7 @@ const resources = {
       "home": "Home",
       "menu": "Menu",
       "categories": "Categories",
+      "resources": "Resources",
       "orders": "Orders",
       "cart": "Cart",
       "deliveries": "Deliveries",
@@ -54,7 +55,7 @@ const resources = {
   et: {
     translation: {
       // Navbar
-      "app_title": "Toidu Rakendus",
+      "app_title": "Ajasta App",
       "home": "Avaleht",
       "menu": "Menüü",
       "categories": "Kategooriad",
@@ -102,7 +103,7 @@ const resources = {
   es: {
     translation: {
       // Navbar
-      "app_title": "App de Comida",
+      "app_title": "Ajasta App",
       "home": "Inicio",
       "menu": "Menú",
       "categories": "Categorías",
@@ -150,7 +151,7 @@ const resources = {
   fr: {
     translation: {
       // Navbar
-      "app_title": "App Nourriture",
+      "app_title": "Ajasta App",
       "home": "Accueil",
       "menu": "Menu",
       "categories": "Catégories",
@@ -198,7 +199,7 @@ const resources = {
   pt: {
     translation: {
       // Navbar
-      "app_title": "App de Comida",
+      "app_title": "Ajasta App",
       "home": "Início",
       "menu": "Menu",
       "categories": "Categorias",
@@ -246,7 +247,7 @@ const resources = {
   it: {
     translation: {
       // Navbar
-      "app_title": "App Cibo",
+      "app_title": "Ajasta App",
       "home": "Home",
       "menu": "Menu",
       "categories": "Categorie",
@@ -294,7 +295,7 @@ const resources = {
   ru: {
     translation: {
       // Navbar
-      "app_title": "Приложение Еды",
+      "app_title": "Ajasta App",
       "home": "Главная",
       "menu": "Меню",
       "categories": "Категории",

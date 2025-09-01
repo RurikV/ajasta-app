@@ -27,6 +27,10 @@ import AdminPaymentDetailPage from "./components/admin/AdminPaymentDetailPage";
 import AdminDashboardPage from "./components/admin/AdminDashboardPage";
 import AdminUserRegistration from "./components/auth/AdminUserRegistration";
 import DeliveriesPage from "./components/delivery/DeliveriesPage";
+import ResourcesPage from "./components/resources/ResourcesPage";
+import ResourceDetailsPage from "./components/resources/ResourceDetailsPage";
+import AdminResourcesPage from "./components/admin/AdminResourcesPage";
+import AdminResourceFormPage from "./components/admin/AdminResourceFormPage";
 
 function App() {
   return (
@@ -46,6 +50,8 @@ function App() {
           <Route path="/menu" element={<MenuPage />} />
           <Route path="/menu/:id" element={<MenuDetailsPage />} />
 
+          <Route path="/resources" element={<ResourcesPage />} />
+          <Route path="/resources/:id" element={<ResourceDetailsPage />} />
 
           <Route path="/profile" element={<CustomerRoute element={<ProfilePage />} />} />
 
@@ -76,6 +82,9 @@ function App() {
             <Route path="menu-items/new" element={<AdminMenuFormPage />} />
             <Route path="menu-items/edit/:id" element={<AdminMenuFormPage />} />
 
+            <Route path="resources" element={<AdminResourcesPage />} />
+            <Route path="resources/new" element={<AdminResourceFormPage />} />
+            <Route path="resources/edit/:id" element={<AdminResourceFormPage />} />
 
             <Route path="orders" element={<AdminOrdersPage />} />
             <Route path="orders/:id" element={<AdminOrderDetailPage />} />

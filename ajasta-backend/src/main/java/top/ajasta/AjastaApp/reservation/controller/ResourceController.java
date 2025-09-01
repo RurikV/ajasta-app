@@ -6,9 +6,11 @@ import top.ajasta.AjastaApp.reservation.services.ResourceService;
 import top.ajasta.AjastaApp.response.Response;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -19,15 +21,19 @@ public class ResourceController {
 
     private final ResourceService resourceService;
 
-    @PostMapping
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAuthority('ADMIN')")
-    public ResponseEntity<Response<ResourceDTO>> create(@Valid @RequestBody ResourceDTO dto) {
+    public ResponseEntity<Response<ResourceDTO>> create(@ModelAttribute @Valid ResourceDTO dto,
+                                                        @RequestPart(value = "imageFile", required = true) MultipartFile imageFile) {
+        dto.setImageFile(imageFile);
         return ResponseEntity.ok(resourceService.createResource(dto));
     }
 
-    @PutMapping
+    @PutMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAuthority('ADMIN')")
-    public ResponseEntity<Response<ResourceDTO>> update(@RequestBody ResourceDTO dto) {
+    public ResponseEntity<Response<ResourceDTO>> update(@ModelAttribute ResourceDTO dto,
+                                                        @RequestPart(value = "imageFile", required = false) MultipartFile imageFile) {
+        dto.setImageFile(imageFile);
         return ResponseEntity.ok(resourceService.updateResource(dto));
     }
 

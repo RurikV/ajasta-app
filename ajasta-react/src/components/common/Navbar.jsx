@@ -49,6 +49,7 @@ const Navbar = () => {
             <div className="desktop-nav">
                 <Link to="/home" className="nav-link">{t('home')}</Link>
                 <Link to="/menu" className="nav-link">{t('menu')}</Link>
+                <Link to="/resources" className="nav-link">{t('resources')}</Link>
                 <Link to="/categories" className="nav-link">{t('categories')}</Link>
 
                 {/* Language Dropdown */}

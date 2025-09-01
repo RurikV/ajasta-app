@@ -1,5 +1,6 @@
 package top.ajasta.AjastaApp.reservation.services;
 
+import top.ajasta.AjastaApp.aws.AWSS3Service;
 import top.ajasta.AjastaApp.exceptions.BadRequestException;
 import top.ajasta.AjastaApp.exceptions.NotFoundException;
 import top.ajasta.AjastaApp.reservation.dtos.ResourceDTO;
@@ -10,8 +11,11 @@ import top.ajasta.AjastaApp.response.Response;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.net.URL;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -19,6 +23,7 @@ import java.util.stream.Collectors;
 public class ResourceServiceImpl implements ResourceService {
 
     private final ResourceRepository resourceRepository;
+    private final AWSS3Service awss3Service;
 
     @Override
     public Response<ResourceDTO> createResource(ResourceDTO dto) {
@@ -28,8 +33,18 @@ public class ResourceServiceImpl implements ResourceService {
         if (dto.getType() == null) {
             throw new BadRequestException("Resource type is required");
         }
+        MultipartFile imageFile = dto.getImageFile();
+        if (imageFile == null || imageFile.isEmpty()) {
+            throw new BadRequestException("Resource image is needed");
+        }
+        String imageUrl;
+        String imageName = UUID.randomUUID() + "_" + imageFile.getOriginalFilename();
+        URL s3Url = awss3Service.uploadFile("resources/" + imageName, imageFile);
+        imageUrl = s3Url.toString();
+
         Resource entity = toEntity(dto);
         entity.setId(null);
+        entity.setImageUrl(imageUrl);
         Resource saved = resourceRepository.save(entity);
         return Response.<ResourceDTO>builder()
                 .statusCode(HttpStatus.OK.value())
@@ -45,12 +60,27 @@ public class ResourceServiceImpl implements ResourceService {
         }
         Resource existing = resourceRepository.findById(dto.getId())
                 .orElseThrow(() -> new NotFoundException("Resource not found"));
+
+        String imageUrl = existing.getImageUrl();
+        MultipartFile imageFile = dto.getImageFile();
+        if (imageFile != null && !imageFile.isEmpty()) {
+            if (imageUrl != null && !imageUrl.isEmpty()) {
+                String keyName = imageUrl.substring(imageUrl.lastIndexOf("/") + 1);
+                awss3Service.deleteFile("resources/" + keyName);
+            }
+            String imageName = UUID.randomUUID() + "_" + imageFile.getOriginalFilename();
+            URL newImageUrl = awss3Service.uploadFile("resources/" + imageName, imageFile);
+            imageUrl = newImageUrl.toString();
+        }
+
         // update only provided fields
         if (dto.getName() != null) existing.setName(dto.getName());
         if (dto.getType() != null) existing.setType(dto.getType());
         if (dto.getLocation() != null) existing.setLocation(dto.getLocation());
         if (dto.getDescription() != null) existing.setDescription(dto.getDescription());
         if (dto.getActive() != null) existing.setActive(dto.getActive());
+        existing.setImageUrl(imageUrl);
+
         Resource saved = resourceRepository.save(existing);
         return Response.<ResourceDTO>builder()
                 .statusCode(HttpStatus.OK.value())
@@ -74,6 +104,11 @@ public class ResourceServiceImpl implements ResourceService {
     public Response<?> deleteResource(Long id) {
         Resource res = resourceRepository.findById(id)
                 .orElseThrow(() -> new NotFoundException("Resource not found"));
+        // delete image from s3 if present
+        if (res.getImageUrl() != null && !res.getImageUrl().isEmpty()) {
+            String keyName = res.getImageUrl().substring(res.getImageUrl().lastIndexOf("/") + 1);
+            awss3Service.deleteFile("resources/" + keyName);
+        }
         resourceRepository.delete(res);
         return Response.builder()
                 .statusCode(HttpStatus.OK.value())
@@ -106,6 +141,7 @@ public class ResourceServiceImpl implements ResourceService {
                 .type(r.getType())
                 .location(r.getLocation())
                 .description(r.getDescription())
+                .imageUrl(r.getImageUrl())
                 .active(r.isActive())
                 .build();
     }

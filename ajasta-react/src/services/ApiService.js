@@ -386,6 +386,44 @@ export default class ApiService {
         return resp.data;
     }
 
+    /* RESOURCES SECTION */
+    static async addResource(formData) {
+        const resp = await axios.post(`${this.BASE_URL}/resources`, formData, {
+            headers: {
+                ...this.getHeader(),
+                'Content-Type': 'multipart/form-data'
+            }
+        });
+        return resp.data;
+    }
+
+    static async updateResource(formData) {
+        const resp = await axios.put(`${this.BASE_URL}/resources`, formData, {
+            headers: {
+                ...this.getHeader(),
+                'Content-Type': 'multipart/form-data'
+            }
+        });
+        return resp.data;
+    }
+
+    static async deleteResource(id) {
+        const resp = await axios.delete(`${this.BASE_URL}/resources/${id}`, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+    static async getResourceById(id) {
+        const resp = await axios.get(`${this.BASE_URL}/resources/${id}`);
+        return resp.data;
+    }
+
+    static async getAllResources(params = {}) {
+        const resp = await axios.get(`${this.BASE_URL}/resources`, { params });
+        return resp.data;
+    }
+
 
 
 

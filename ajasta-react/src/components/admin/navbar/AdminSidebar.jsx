@@ -54,6 +54,15 @@ const AdminSidebar = () => {
           </li>
           <li>
             <NavLink 
+              to="/admin/resources" 
+              className={location.pathname.includes('/admin/resources') ? 'active' : ''}
+            >
+              <FontAwesomeIcon icon={faList} />
+              <span>Resources</span>
+            </NavLink>
+          </li>
+          <li>
+            <NavLink 
               to="/admin/orders" 
               className={location.pathname.includes('/admin/orders') ? 'active' : ''}
             >
