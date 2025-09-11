@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.net.URL;
+import java.time.LocalTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -79,6 +81,16 @@ public class ResourceServiceImpl implements ResourceService {
         if (dto.getLocation() != null) existing.setLocation(dto.getLocation());
         if (dto.getDescription() != null) existing.setDescription(dto.getDescription());
         if (dto.getActive() != null) existing.setActive(dto.getActive());
+        if (dto.getUnitsCount() != null) existing.setUnitsCount(dto.getUnitsCount());
+        if (dto.getOpenTime() != null && !dto.getOpenTime().isBlank()) {
+            try { existing.setOpenTime(LocalTime.parse(dto.getOpenTime())); } catch (DateTimeParseException ignored) {}
+        }
+        if (dto.getCloseTime() != null && !dto.getCloseTime().isBlank()) {
+            try { existing.setCloseTime(LocalTime.parse(dto.getCloseTime())); } catch (DateTimeParseException ignored) {}
+        }
+        if (dto.getUnavailableWeekdays() != null) existing.setUnavailableWeekdays(dto.getUnavailableWeekdays());
+        if (dto.getUnavailableDates() != null) existing.setUnavailableDates(dto.getUnavailableDates());
+        if (dto.getDailyUnavailableRanges() != null) existing.setDailyUnavailableRanges(dto.getDailyUnavailableRanges());
         existing.setImageUrl(imageUrl);
 
         Resource saved = resourceRepository.save(existing);
@@ -143,6 +155,12 @@ public class ResourceServiceImpl implements ResourceService {
                 .description(r.getDescription())
                 .imageUrl(r.getImageUrl())
                 .active(r.isActive())
+                .unitsCount(r.getUnitsCount())
+                .openTime(r.getOpenTime() != null ? r.getOpenTime().toString() : null)
+                .closeTime(r.getCloseTime() != null ? r.getCloseTime().toString() : null)
+                .unavailableWeekdays(r.getUnavailableWeekdays())
+                .unavailableDates(r.getUnavailableDates())
+                .dailyUnavailableRanges(r.getDailyUnavailableRanges())
                 .build();
     }
 
@@ -154,6 +172,16 @@ public class ResourceServiceImpl implements ResourceService {
                 .location(dto.getLocation())
                 .description(dto.getDescription());
         if (dto.getActive() != null) b.active(dto.getActive());
+        if (dto.getUnitsCount() != null) b.unitsCount(dto.getUnitsCount());
+        if (dto.getOpenTime() != null && !dto.getOpenTime().isBlank()) {
+            try { b.openTime(LocalTime.parse(dto.getOpenTime())); } catch (DateTimeParseException ignored) {}
+        }
+        if (dto.getCloseTime() != null && !dto.getCloseTime().isBlank()) {
+            try { b.closeTime(LocalTime.parse(dto.getCloseTime())); } catch (DateTimeParseException ignored) {}
+        }
+        if (dto.getUnavailableWeekdays() != null) b.unavailableWeekdays(dto.getUnavailableWeekdays());
+        if (dto.getUnavailableDates() != null) b.unavailableDates(dto.getUnavailableDates());
+        if (dto.getDailyUnavailableRanges() != null) b.dailyUnavailableRanges(dto.getDailyUnavailableRanges());
         return b.build();
     }
 }

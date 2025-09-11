@@ -14,7 +14,13 @@ const AdminResourceFormPage = () => {
     location: '',
     description: '',
     imageFile: null,
-    active: true
+    active: true,
+    unitsCount: 1,
+    openTime: '08:00',
+    closeTime: '20:00',
+    unavailableWeekdays: '', // CSV of 0-6 (0=Sun)
+    unavailableDates: '', // CSV yyyy-MM-dd
+    dailyUnavailableRanges: '' // e.g., 12:00-13:00;16:00-17:00
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -52,6 +58,25 @@ const AdminResourceFormPage = () => {
     setResource(prev => ({ ...prev, [name]: checked }));
   };
 
+  // Weekday helpers for unavailableWeekdays CSV (0=Sun..6=Sat)
+  const isWeekdaySelected = (idx) => {
+    if (!resource.unavailableWeekdays) return false;
+    return resource.unavailableWeekdays.split(',').map(s => s.trim()).filter(Boolean).includes(String(idx));
+  };
+
+  const toggleWeekday = (idx) => {
+    setResource(prev => {
+      const list = (prev.unavailableWeekdays || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+      const strIdx = String(idx);
+      const exists = list.includes(strIdx);
+      const next = exists ? list.filter(x => x !== strIdx) : [...list, strIdx];
+      return { ...prev, unavailableWeekdays: next.join(',') };
+    });
+  };
+
   const handleFileChange = (e) => {
     setResource(prev => ({ ...prev, imageFile: e.target.files[0] }));
   };
@@ -68,6 +93,12 @@ const AdminResourceFormPage = () => {
       if (resource.description) formData.append('description', resource.description);
       if (resource.active !== undefined && resource.active !== null) formData.append('active', resource.active);
       if (resource.imageFile) formData.append('imageFile', resource.imageFile);
+      if (resource.unitsCount !== undefined && resource.unitsCount !== null) formData.append('unitsCount', String(resource.unitsCount));
+      if (resource.openTime) formData.append('openTime', resource.openTime);
+      if (resource.closeTime) formData.append('closeTime', resource.closeTime);
+      if (resource.unavailableWeekdays !== undefined) formData.append('unavailableWeekdays', resource.unavailableWeekdays);
+      if (resource.unavailableDates !== undefined) formData.append('unavailableDates', resource.unavailableDates);
+      if (resource.dailyUnavailableRanges !== undefined) formData.append('dailyUnavailableRanges', resource.dailyUnavailableRanges);
 
       let response;
       if (id) {
@@ -169,6 +200,82 @@ const AdminResourceFormPage = () => {
         <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <label htmlFor="active">Active</label>
           <input id="active" type="checkbox" name="active" checked={!!resource.active} onChange={handleCheckboxChange} />
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label htmlFor="unitsCount">Units Count</label>
+            <input
+              type="number"
+              id="unitsCount"
+              name="unitsCount"
+              min="1"
+              value={resource.unitsCount}
+              onChange={handleInputChange}
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="openTime">Open Time</label>
+            <input
+              type="time"
+              id="openTime"
+              name="openTime"
+              value={resource.openTime || ''}
+              onChange={handleInputChange}
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="closeTime">Close Time</label>
+            <input
+              type="time"
+              id="closeTime"
+              name="closeTime"
+              value={resource.closeTime || ''}
+              onChange={handleInputChange}
+            />
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label>Unavailable Weekdays</label>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d, idx) => (
+              <label key={idx} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={isWeekdaySelected(idx)}
+                  onChange={() => toggleWeekday(idx)}
+                />
+                {d}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="unavailableDates">Unavailable Dates (CSV yyyy-MM-dd)</label>
+          <textarea
+            id="unavailableDates"
+            name="unavailableDates"
+            placeholder="2025-12-24,2025-12-25"
+            rows="2"
+            value={resource.unavailableDates}
+            onChange={handleInputChange}
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="dailyUnavailableRanges">Daily Unavailable Time Ranges (semicolon separated HH:mm-HH:mm)</label>
+          <textarea
+            id="dailyUnavailableRanges"
+            name="dailyUnavailableRanges"
+            placeholder="12:00-13:00;16:00-17:00"
+            rows="2"
+            value={resource.dailyUnavailableRanges}
+            onChange={handleInputChange}
+          />
         </div>
 
         <div className="form-actions">

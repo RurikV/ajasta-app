@@ -28,4 +28,14 @@ public class ResourceDTO {
     private String imageUrl;
     private MultipartFile imageFile;
     private Boolean active; // use Boolean to allow partial updates
+
+    // Scheduling fields (strings for easy transport)
+    private Integer unitsCount; // number of simultaneous units
+    private String openTime; // HH:mm
+    private String closeTime; // HH:mm
+
+    // Unavailability config (CSV / semicolon separated)
+    private String unavailableWeekdays; // e.g., 0,6
+    private String unavailableDates; // yyyy-MM-dd,yyyy-MM-dd
+    private String dailyUnavailableRanges; // e.g., 12:00-13:30;16:00-17:00
 }

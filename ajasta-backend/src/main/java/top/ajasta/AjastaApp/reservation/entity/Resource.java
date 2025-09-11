@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 
 @Entity
 @Table(name = "resources")
@@ -32,6 +33,27 @@ public class Resource {
 
     private String imageUrl;
 
+    // Number of simultaneous units (e.g., number of courts/chairs)
+    @Builder.Default
+    private Integer unitsCount = 1;
+
+    // Opening and closing times for scheduling (optional)
+    private LocalTime openTime;
+    private LocalTime closeTime;
+
+    // Unavailability configuration
+    // Comma-separated weekday indices 0-6 (0=Sunday)
+    @Column(length = 50)
+    private String unavailableWeekdays;
+
+    // Comma-separated dates yyyy-MM-dd
+    @Column(length = 2000)
+    private String unavailableDates;
+
+    // Semicolon-separated time ranges per day e.g. "12:00-13:30;16:00-17:00"
+    @Column(length = 2000)
+    private String dailyUnavailableRanges;
+
     @Builder.Default
     private boolean active = true;
 
@@ -42,10 +64,12 @@ public class Resource {
     public void onCreate() {
         this.createdAt = LocalDateTime.now();
         this.updatedAt = this.createdAt;
+        if (this.unitsCount == null) this.unitsCount = 1;
     }
 
     @PreUpdate
     public void onUpdate() {
         this.updatedAt = LocalDateTime.now();
+        if (this.unitsCount == null) this.unitsCount = 1;
     }
 }

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
 
 const ResourceDetailsPage = () => {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [resource, setResource] = useState(null);
   const { ErrorDisplay, showError } = useError();
 
@@ -49,6 +50,12 @@ const ResourceDetailsPage = () => {
           <p><strong>Type:</strong> {resource.type?.replaceAll('_', ' ')}</p>
           {resource.location && <p><strong>Location:</strong> {resource.location}</p>}
           <p><strong>Status:</strong> {resource.active ? 'Active' : 'Inactive'}</p>
+
+          <div style={{ marginTop: '16px' }}>
+            <button className="menu-search-button" onClick={() => navigate(`/resources/${id}/book`)}>
+              Book this resource
+            </button>
+          </div>
         </div>
       </div>
     </div>
