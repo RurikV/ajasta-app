@@ -52,6 +52,7 @@ ssh -i "$SSH_KEY" \
     -o ConnectTimeout=10 \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
+    -o IdentitiesOnly=yes \
     ${=SSH_OPTS:-} \
     "$SSH_USER@$HOST" "$CMD"
 rc=$?
@@ -66,6 +67,7 @@ fi
 echo "SSH connection failed (exit $rc)." >&2
 echo "Hints:" >&2
 echo " - Ensure the VM has your public key authorized for user '$SSH_USER'." >&2
-echo " - If needed, run: SSH_USERNAME=$SSH_USER SSH_PUBKEY_FILE=./ajasta_ed25519.pub zsh ./add-ssh-key.zsh $ajasta_VM_NAME" >&2
+echo " - If needed, run: SSH_USERNAME=$SSH_USER SSH_PUBKEY_FILE=./ajasta_ed25519.pub ./add-ssh-key.zsh $ajasta_VM_NAME" >&2
+echo " - If you see 'Too many authentication failures', try disabling your agent for this call: SSH_OPTS='-o IdentityAgent=none' ./ssh-ajasta.zsh" >&2
 echo " - Then rerun: ./ssh-ajasta.zsh" >&2
 exit $rc

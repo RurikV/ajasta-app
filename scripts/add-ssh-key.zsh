@@ -1,11 +1,11 @@
 #!/usr/bin/env zsh
 # Add or append an SSH public key to an existing YC VM's metadata (ssh-keys)
 # Usage:
-#   SSH_PUBKEY_FILE=~/.ssh/id_rsa.pub SSH_USERNAME=ubuntu ./add-ssh-key.zsh <vm_name>
+#   SSH_PUBKEY_FILE=~/.ssh/id_rsa.pub SSH_USERNAME=ajasta ./add-ssh-key.zsh <vm_name>
 # or
-#   SSH_PUBKEY="ssh-ed25519 AAAA... comment" SSH_USERNAME=ubuntu ./add-ssh-key.zsh <vm_name>
+#   SSH_PUBKEY="ssh-ed25519 AAAA... comment" SSH_USERNAME=ajasta ./add-ssh-key.zsh <vm_name>
 # Notes:
-# - Default SSH_USERNAME is 'ubuntu' (works for Ubuntu images). Ensure the user exists on the VM.
+# - Default SSH_USERNAME is 'ajasta'. Ensure the user exists on the VM.
 # - This script preserves existing ssh-keys and appends a new line if not already present.
 
 set -euo pipefail
@@ -19,7 +19,7 @@ if [ ${#} -lt 1 ]; then
 fi
 
 vm_name="$1"
-SSH_USERNAME=${SSH_USERNAME:-ubuntu}
+SSH_USERNAME=${SSH_USERNAME:-ajasta}
 
 # Load pubkey
 if [ -z "${SSH_PUBKEY_FILE:-}" ] && [ -z "${SSH_PUBKEY:-}" ]; then

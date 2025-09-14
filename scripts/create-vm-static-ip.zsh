@@ -23,14 +23,15 @@ vm_name="$1"
 YC_SUBNET_NAME=${YC_SUBNET_NAME:-ajasta-external-segment}
 YC_ADDRESS_NAME=${YC_ADDRESS_NAME:-ajasta-static-ip}
 METADATA_YAML=${METADATA_YAML:-./metadata.yaml}
-SSH_USERNAME=${SSH_USERNAME:-ubuntu}
+SSH_USERNAME=${SSH_USERNAME:-ajasta}
 
 if [ ! -f "$METADATA_YAML" ]; then
   log "Metadata file '$METADATA_YAML' not found" >&2
   exit 1
 fi
 
-# Prepare optional ssh-keys metadata
+# Prepare optional ssh key and, if present, build a dedicated cloud-init user-data file
+TEMP_USER_DATA=""
 SSH_META_ARGS=()
 if [ -n "${SSH_PUBKEY_FILE:-}" ] || [ -n "${SSH_PUBKEY:-}" ]; then
   if [ -n "${SSH_PUBKEY_FILE:-}" ]; then
@@ -42,8 +43,23 @@ if [ -n "${SSH_PUBKEY_FILE:-}" ] || [ -n "${SSH_PUBKEY:-}" ]; then
   else
     PUBKEY_CONTENT="$SSH_PUBKEY"
   fi
-  SSH_META_ARGS=( --metadata "ssh-keys=${SSH_USERNAME}:${PUBKEY_CONTENT}")
-  log "Will inject SSH key for user '${SSH_USERNAME}'."
+  TEMP_USER_DATA="$SCRIPT_DIR/.tmp-user-data-${vm_name}.yaml"
+  cat > "$TEMP_USER_DATA" <<EOF
+#cloud-config
+users:
+  - name: ubuntu
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+  - name: ${SSH_USERNAME}
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh_authorized_keys:
+      - ${PUBKEY_CONTENT}
+EOF
+  SSH_META_ARGS=( --metadata "ssh-keys=${SSH_USERNAME}:${PUBKEY_CONTENT}" )
+  log "Will seed cloud-init authorized_keys and instance metadata for user '${SSH_USERNAME}'."
 fi
 
 log "Ensuring instance '$vm_name' is absent (to recreate fresh)..."
@@ -72,10 +88,10 @@ yc compute instance create \
   --zone "$YC_ZONE" \
   --memory=2 \
   --cores=2 \
-  --create-boot-disk image-folder-id=standard-images,image-family=nat-instance-ubuntu-2204,type=network-hdd,size=10 \
+  --create-boot-disk image-folder-id=standard-images,image-family=ubuntu-2204-lts,type=network-hdd,size=10 \
   --network-interface subnet-name="$YC_SUBNET_NAME",nat-ip-version=ipv4,nat-address="$STATIC_IP_ADDRESS" \
   --serial-port-settings ssh-authorization=INSTANCE_METADATA \
-  --metadata-from-file user-data="$METADATA_YAML" \
+  --metadata-from-file user-data="${TEMP_USER_DATA:-$METADATA_YAML}" \
   ${SSH_META_ARGS:+${SSH_META_ARGS[@]}}
 
 log "VM '$vm_name' created with static IP $STATIC_IP_ADDRESS."
