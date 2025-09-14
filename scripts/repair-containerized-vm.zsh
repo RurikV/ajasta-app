@@ -157,6 +157,18 @@ docker run -d --name ajasta-frontend \
   -p 80:80 \
   $DOCKERHUB_USER/ajasta-frontend:alpine
 
+# Get external IP and inject it into frontend files
+echo "Injecting external IP into frontend configuration..."
+EXTERNAL_IP=$(curl -s http://ifconfig.me 2>/dev/null || echo 'VM_IP')
+echo "External IP: $EXTERNAL_IP"
+
+# Wait for frontend container to be ready
+sleep 5
+
+# Replace ${EXTERNAL_IP} with actual IP in frontend JavaScript files
+docker exec ajasta-frontend find /usr/share/nginx/html/static/js -name "*.js" -exec sed -i "s/\${EXTERNAL_IP}/$EXTERNAL_IP/g" {} \; || true
+docker exec ajasta-frontend find /usr/share/nginx/html/static/js -name "*.js" -exec sed -i "s/\\\${external_ip}/$EXTERNAL_IP/g" {} \; || true
+
 echo "All containers started!"
 echo "Frontend: http://$(curl -s http://ifconfig.me 2>/dev/null || echo 'VM_IP') (port 80)"
 echo "Backend: http://$(curl -s http://ifconfig.me 2>/dev/null || echo 'VM_IP'):8090"
