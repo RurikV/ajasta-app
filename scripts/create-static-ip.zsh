@@ -11,18 +11,24 @@ require_cmd yc jq
 
 YC_ADDRESS_NAME=${YC_ADDRESS_NAME:-ajasta-static-ip}
 
-log "Ensuring static address '$YC_ADDRESS_NAME' is absent (to recreate fresh)..."
-delete_address_by_name "$YC_ADDRESS_NAME" || true
-
-log "Creating static address '$YC_ADDRESS_NAME' in zone $YC_ZONE..."
-ADDR_JSON=$(yc vpc address create \
-  --name "$YC_ADDRESS_NAME" \
-  --external-ipv4 zone="$YC_ZONE" \
-  --folder-id "$YC_FOLDER_ID" \
-  --format json)
-
-IP=$(echo "$ADDR_JSON" | jq -r '.external_ipv4_address.address')
-ID=$(echo "$ADDR_JSON" | jq -r '.id')
-log "Created static IP: $IP (ID: $ID)"
+# Check if static address exists, create if not
+if address_exists "$YC_ADDRESS_NAME"; then
+  log "Static address '$YC_ADDRESS_NAME' already exists, reusing it."
+  ADDR_JSON=$(yc vpc address get --name "$YC_ADDRESS_NAME" --format json)
+  IP=$(echo "$ADDR_JSON" | jq -r '.external_ipv4_address.address')
+  ID=$(echo "$ADDR_JSON" | jq -r '.id')
+  log "Reusing static IP: $IP (ID: $ID)"
+else
+  log "Creating static address '$YC_ADDRESS_NAME' in zone $YC_ZONE..."
+  ADDR_JSON=$(yc vpc address create \
+    --name "$YC_ADDRESS_NAME" \
+    --external-ipv4 zone="$YC_ZONE" \
+    --folder-id "$YC_FOLDER_ID" \
+    --format json)
+  
+  IP=$(echo "$ADDR_JSON" | jq -r '.external_ipv4_address.address')
+  ID=$(echo "$ADDR_JSON" | jq -r '.id')
+  log "Created static IP: $IP (ID: $ID)"
+fi
 
 echo "$IP"

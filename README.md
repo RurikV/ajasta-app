@@ -83,6 +83,10 @@ Notes about AWS credentials:
 
 Replace <DOCKERHUB_USERNAME> with your Docker Hub username.
 
+### Build with explicit platform targeting
+docker build --platform linux/amd64 -t vladimirryrik/ajasta-backend:alpine ./ajasta-backend
+docker build --platform linux/amd64 -t vladimirryrik/ajasta-frontend:alpine ./ajasta-react
+
 - Postgres:
   docker tag ajasta-postgres:alpine <DOCKERHUB_USERNAME>/ajasta-postgres:alpine
   docker push <DOCKERHUB_USERNAME>/ajasta-postgres:alpine
