@@ -8,7 +8,7 @@ WORKDIR /app
 COPY pom.xml .
 # Copy sources and build
 COPY src ./src
-COPY config ./config
+#COPY config ./config
 RUN mvn -q -e -DskipTests dependency:go-offline && \
   mvn -q -DskipTests package
 

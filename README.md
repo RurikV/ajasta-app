@@ -1,4 +1,4 @@
-# Ajasta App — Dockerized Microservices 
+# Ajasta App — Dockerized Microservices (No docker-compose)
 
 This repository contains a microservice application consisting of:
 - ajasta-backend (Spring Boot, Java 21)
@@ -21,6 +21,10 @@ Backend environment variables (see ajasta-backend/src/main/resources/application
 - DB_URL (default jdbc:postgresql://localhost:15432/admin; for containers use jdbc:postgresql://ajasta-postgres:5432/ajastadb)
 - DB_USERNAME, DB_PASSWORD
 - JWT_SECRET, MAIL_USERNAME, MAIL_PASSWORD, AWS_*, STRIPE_* (optional)
+
+Notes about AWS credentials:
+- The backend can run without providing AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. If they are not set, it falls back to AWS DefaultCredentialsProvider (env, profile, instance role). This prevents startup failures when keys are blank.
+- You can still set AWS_REGION and AWS_S3_BUCKET as needed.
 
 1) Build images
 - Postgres:
@@ -70,6 +74,8 @@ Backend environment variables (see ajasta-backend/src/main/resources/application
 - Frontend: http://localhost:3000
 - Backend:  http://localhost:8090 (simple GET /)
 - PostgreSQL: psql -h localhost -p 15432 -U admin -d ajastadb
+- From inside the backend container (sh):
+  docker exec -it ajasta-backend sh -lc "curl -fsS http://localhost:8090/actuator/health || curl -fsS http://localhost:8090/ || true"
 
 5) Push images to Docker Hub
  - docker login
