@@ -1,132 +1,425 @@
-# Ajasta App — Dockerized Microservices (No docker-compose)
+# Ajasta App — Unified Deployment System
 
-This repository contains a microservice application consisting of:
-- ajasta-backend (Spring Boot, Java 21)
-- ajasta-react (React built with Node, served by Nginx)
-- PostgreSQL (alpine-based)
+🚀 **Streamlined deployment orchestrator with Docker Compose integration**
 
-Contents:
-- ajasta-backend/Dockerfile — backend image (Alpine, multi-stage)
-- ajasta-react/Dockerfile — frontend image (Alpine, Node build -> Nginx)
-- ajasta-react/nginx.conf — Nginx config for SPA routing
-- ajasta-postgres/Dockerfile — PostgreSQL (alpine-based) with sensible defaults
-- scripts/backup_volumes.sh — volume backup script
+This repository contains a complete microservice application with both cloud VM and local development deployment options.
 
-Ports:
-- Backend: 8090
-- Frontend: 3000 on host (Nginx listens on 80 inside the container)
-- PostgreSQL: 15432 on host (5432 inside the container)
+## Application Architecture
 
-Backend environment variables (see ajasta-backend/src/main/resources/application.properties):
-- DB_URL (default jdbc:postgresql://localhost:15432/admin; for containers use jdbc:postgresql://ajasta-postgres:5432/ajastadb)
-- DB_USERNAME, DB_PASSWORD
-- JWT_SECRET, MAIL_USERNAME, MAIL_PASSWORD, AWS_*, STRIPE_* (optional)
+**Services:**
+- **ajasta-backend** (Spring Boot, Java 21) - REST API server
+- **ajasta-react** (React + Nginx) - Frontend web application  
+- **PostgreSQL** (16-alpine) - Database server
 
-Notes about AWS credentials:
-- The backend can run without providing AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. If they are not set, it falls back to AWS DefaultCredentialsProvider (env, profile, instance role). This prevents startup failures when keys are blank.
-- You can still set AWS_REGION and AWS_S3_BUCKET as needed.
+**Features:**
+- Unified deployment system for VM and local environments
+- Docker Compose integration for simplified local development
+- Comprehensive monitoring and management tools
+- Automated cloud infrastructure provisioning
 
-1) Build images
-- Postgres:
-  docker build -t ajasta-postgres:alpine ./ajasta-postgres
+---
 
-- Backend:
-  docker build -t ajasta-backend:alpine ./ajasta-backend
+## Quick Start
 
-- Frontend (override API base URL at build time if needed):
-  docker build --build-arg API_BASE_URL="http://localhost:8090/api" -t ajasta-frontend:alpine ./ajasta-react
+### 🎯 One Command Deployment
 
-2) Create a Docker network and a named volume
-- Create network for the stack:
-  docker network create ajasta-net
+```bash
+# Deploy to cloud VM (default)
+./scripts/deploy-all.zsh
 
-- Create volume for PostgreSQL data:
-  docker volume create ajasta_pg_data
+# Deploy locally with Docker Compose  
+./scripts/deploy-all.zsh --mode local
 
-3) Run containers (without docker-compose)
-- Run PostgreSQL:
-  docker run -d --name ajasta-postgres \
-    --network ajasta-net \
-    -p 15432:5432 \
-    -e POSTGRES_DB=ajastadb \
-    -e POSTGRES_USER=admin \
-    -e POSTGRES_PASSWORD=adminpw \
-    -v ajasta_pg_data:/var/lib/postgresql/data \
-    ajasta-postgres:alpine
+# Deploy to both VM and locally
+./scripts/deploy-all.zsh --mode both
+```
 
-- Run backend (connects to postgres via container name):
-  docker run -d --name ajasta-backend \
-    --network ajasta-net \
-    -p 8090:8090 \
-    -e DB_URL=jdbc:postgresql://ajasta-postgres:5432/ajastadb \
-    -e DB_USERNAME=admin \
-    -e DB_PASSWORD=adminpw \
-    -e JWT_SECRET=change-me \
-    ajasta-backend:alpine
+### 📋 Prerequisites
 
-- Run frontend (static site via Nginx):
-  docker run -d --name ajasta-frontend \
-    --network ajasta-net \
-    -p 3000:80 \
-    ajasta-frontend:alpine
+**For VM Deployment:**
+- [Yandex Cloud CLI](https://cloud.yandex.com/docs/cli/) configured
+- Docker and Docker Compose
+- SSH client
 
-4) Quick checks
-- Frontend: http://localhost:3000
-- Backend:  http://localhost:8090 (simple GET /)
-- PostgreSQL: psql -h localhost -p 15432 -U admin -d ajastadb
-- From inside the backend container (sh):
-  docker exec -it ajasta-backend sh -lc "curl -fsS http://localhost:8090/actuator/health || curl -fsS http://localhost:8090/ || true"
+**For Local Development:**
+- Docker and Docker Compose
+- Git
 
-5) Push images to Docker Hub
- - docker login
-   To sign in with credentials on the command line, use 'docker login -u <username>'
+---
 
-Replace <DOCKERHUB_USERNAME> with your Docker Hub username.
+## Deployment Options
 
-### Build with explicit platform targeting
+### ☁️ Cloud VM Deployment
+
+Deploy to Yandex Cloud with full infrastructure automation:
+
+```bash
+# Basic deployment
+./scripts/deploy-all.zsh --mode vm
+
+# Clean deployment with custom DockerHub user
+./scripts/deploy-all.zsh --mode vm --clean --dockerhub-user myuser
+
+# Skip image building (use existing images)
+./scripts/deploy-all.zsh --mode vm --skip-build
+```
+
+**What it creates:**
+- VM instance with Ubuntu 22.04
+- Static IP address  
+- VPC network and subnet
+- Service account with required permissions
+- Docker containers running your application
+
+**Access your application:**
+- Frontend: `http://YOUR_VM_IP` (port 80)
+- Backend API: `http://YOUR_VM_IP:8090`
+- Database: `YOUR_VM_IP:15432`
+
+### 🏠 Local Development
+
+Use Docker Compose for local development:
+
+```bash
+# Start local development environment
+./scripts/deploy-all.zsh --mode local
+
+# Start with clean state
+./scripts/deploy-all.zsh --mode local --clean
+
+# Start without rebuilding images
+./scripts/deploy-all.zsh --mode local --skip-build
+```
+
+**Includes development tools:**
+- **Adminer** - Database administration at `http://localhost:8080`
+- **Mailhog** - Email testing at `http://localhost:8025`
+- **Java debugging** - Debug port 5005
+- **Hot reloading** - Volume mounts for development
+
+**Access your application:**
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8090` 
+- Database: `localhost:15432`
+
+---
+
+## Docker Compose Usage
+
+### Basic Commands
+
+```bash
+# Start all services
+docker-compose up -d
+
+# View logs  
+docker-compose logs -f
+
+# Stop all services
+docker-compose down
+
+# Rebuild and start
+docker-compose up -d --build
+```
+
+### Environment Configuration
+
+1. **Copy the environment template:**
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Edit `.env` with your settings:**
+   ```bash
+   # Docker Configuration
+   DOCKERHUB_USER=vladimirryrik
+   
+   # Database Settings
+   POSTGRES_DB=ajastadb
+   POSTGRES_USER=admin  
+   POSTGRES_PASSWORD=adminpw
+   
+   # Application Settings
+   JWT_SECRET=your-secret-key
+   
+   # Yandex Cloud (for VM deployment)
+   YC_CLOUD_ID=your-cloud-id
+   YC_FOLDER_ID=your-folder-id
+   ```
+
+3. **Deploy:**
+   ```bash
+   ./scripts/deploy-all.zsh --mode local
+   ```
+
+### Development Override
+
+The `docker-compose.override.yml` automatically provides:
+
+- **Development database** with separate credentials
+- **Debug logging** enabled
+- **Java remote debugging** on port 5005  
+- **Volume mounts** for development files
+- **Additional services** (Adminer, Mailhog)
+
+---
+
+## Management Tools
+
+### 🔍 Status Monitoring
+
+Check the health of your deployments:
+
+```bash
+# Check all deployments
+./scripts/status-all.zsh
+
+# Check specific deployment
+./scripts/status-all.zsh --mode vm
+./scripts/status-all.zsh --mode local
+
+# Detailed status with logs
+./scripts/status-all.zsh --verbose --logs --health
+```
+
+### 📋 Log Management
+
+Aggregate and monitor logs:
+
+```bash
+# View logs from all services
+./scripts/logs-all.zsh
+
+# Follow logs in real-time
+./scripts/logs-all.zsh --mode local --follow
+
+# Show backend logs from last hour
+./scripts/logs-all.zsh --service backend --since 1h
+
+# Save logs to files
+./scripts/logs-all.zsh --save
+```
+
+### 🧹 Cleanup and Maintenance
+
+Clean up resources when needed:
+
+```bash
+# Interactive cleanup of both deployments
+./scripts/cleanup-all.zsh
+
+# Force cleanup VM without prompts
+./scripts/cleanup-all.zsh --mode vm --force
+
+# Clean containers but keep data and images
+./scripts/cleanup-all.zsh --keep-data --keep-images
+
+# Deep clean everything
+./scripts/cleanup-all.zsh --deep-clean
+```
+
+---
+
+## Manual Docker Commands
+
+If you prefer manual container management:
+
+### Build Images
+
+```bash
+# Build with platform targeting for compatibility
 docker build --platform linux/amd64 -t vladimirryrik/ajasta-backend:alpine ./ajasta-backend
-docker build --platform linux/amd64 -t vladimirryrik/ajasta-frontend:alpine ./ajasta-react
+docker build --platform linux/amd64 -t vladimirryrik/ajasta-frontend:alpine ./ajasta-react  
+docker build --platform linux/amd64 -t vladimirryrik/ajasta-postgres:alpine ./ajasta-postgres
+```
 
-- Postgres:
-  docker tag ajasta-postgres:alpine <DOCKERHUB_USERNAME>/ajasta-postgres:alpine
-  docker push <DOCKERHUB_USERNAME>/ajasta-postgres:alpine
+### Manual Container Setup
 
-- Backend:
-  docker tag ajasta-backend:alpine <DOCKERHUB_USERNAME>/ajasta-backend:alpine
-  docker push <DOCKERHUB_USERNAME>/ajasta-backend:alpine
+```bash
+# Create network
+docker network create ajasta-net
 
-- Frontend (build-time API URL example for production):
-  docker build --build-arg API_BASE_URL="http://<PUBLIC_BACKEND_HOST>:8090/api" -t <DOCKERHUB_USERNAME>/ajasta-frontend:alpine ./ajasta-react
-  docker push <DOCKERHUB_USERNAME>/ajasta-frontend:alpine
+# Create volume  
+docker volume create ajasta_pg_data
 
-6) Backup and restore volumes
-Use the provided script to back up named volumes (default: ajasta_pg_data) to ./backups.
+# Run PostgreSQL
+docker run -d --name ajasta-postgres \
+  --network ajasta-net \
+  -p 15432:5432 \
+  -e POSTGRES_DB=ajastadb \
+  -e POSTGRES_USER=admin \
+  -e POSTGRES_PASSWORD=adminpw \
+  -v ajasta_pg_data:/var/lib/postgresql/data \
+  postgres:16-alpine
 
-- Backup:
-  bash scripts/backup_volumes.sh
+# Run backend
+docker run -d --name ajasta-backend \
+  --network ajasta-net \
+  -p 8090:8090 \
+  -e DB_URL=jdbc:postgresql://ajasta-postgres:5432/ajastadb \
+  -e DB_USERNAME=admin \
+  -e DB_PASSWORD=adminpw \
+  -e JWT_SECRET=change-me-production \
+  vladimirryrik/ajasta-backend:alpine
 
-- Environment variables:
-  - VOLUMES: space-separated volumes to back up (default: "ajasta_pg_data")
-  - BACKUP_DIR: destination directory (default: "./backups")
+# Run frontend  
+docker run -d --name ajasta-frontend \
+  --network ajasta-net \
+  -p 3000:80 \
+  vladimirryrik/ajasta-frontend:alpine
+```
 
-- Examples:
-  VOLUMES="ajasta_pg_data" bash scripts/backup_volumes.sh
-  BACKUP_DIR=/var/backups bash scripts/backup_volumes.sh
+---
 
-The script prints restore instructions at the end.
+## Environment Variables
 
-7) Stop and clean up
-- Stop containers:
-  docker stop ajasta-frontend ajasta-backend ajasta-postgres
+### Core Configuration
 
-- Remove containers:
-  docker rm ajasta-frontend ajasta-backend ajasta-postgres
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOCKERHUB_USER` | `vladimirryrik` | DockerHub username for images |
+| `POSTGRES_DB` | `ajastadb` | Database name |
+| `POSTGRES_USER` | `admin` | Database username |
+| `POSTGRES_PASSWORD` | `adminpw` | Database password |
+| `JWT_SECRET` | `change-me-production-secret-key` | JWT signing secret |
 
-- Inspect network and volumes:
-  docker network ls; docker network inspect ajasta-net
-  docker volume ls; docker volume inspect ajasta_pg_data
+### Optional Integrations
 
-Notes
-- All Dockerfiles are located in their respective module directories.
-- The frontend image bakes API_BASE_URL at build time using a sed replacement in src/services/ApiService.js.
-- The backend listens on 8090 and reads configuration from environment variables.
+| Variable | Description |
+|----------|-------------|
+| `MAIL_USERNAME` | SMTP email username |
+| `MAIL_PASSWORD` | SMTP email password |
+| `AWS_ACCESS_KEY_ID` | AWS access key for S3 |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
+| `AWS_S3_BUCKET` | S3 bucket name |
+| `STRIPE_PUBLIC_KEY` | Stripe public key |
+| `STRIPE_SECRET_KEY` | Stripe secret key |
+
+### Yandex Cloud (VM Deployment)
+
+| Variable | Description |
+|----------|-------------|  
+| `YC_CLOUD_ID` | Your Yandex Cloud ID |
+| `YC_FOLDER_ID` | Your folder ID |
+| `YC_ZONE` | Deployment zone (default: `ru-central1-b`) |
+| `SSH_USERNAME` | SSH user for VM access (default: `ajasta`) |
+
+See `.env.example` for complete configuration options.
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**VM SSH Connection Failed:**
+```bash
+# Check VM status
+yc compute instance get --name ajasta-host
+
+# Add SSH key manually  
+SSH_USERNAME=ajasta SSH_PUBKEY_FILE=./scripts/ajasta_ed25519.pub ./scripts/add-ssh-key.zsh ajasta-host
+
+# Test connection
+./scripts/ssh-ajasta.zsh 'echo Connection successful'
+```
+
+**Docker Containers Not Starting:**
+```bash
+# Check container logs
+./scripts/logs-all.zsh --service backend
+
+# Check system resources
+docker system df
+
+# Clean up if needed
+./scripts/cleanup-all.zsh --mode local --force
+```
+
+**Port Conflicts:**
+```bash
+# Check what's using ports
+sudo netstat -tlnp | grep -E ':(3000|8090|15432)'
+
+# Use different ports in .env
+echo "FRONTEND_PORT=3001" >> .env  
+echo "BACKEND_PORT=8091" >> .env
+echo "POSTGRES_PORT=15433" >> .env
+```
+
+### Getting Help
+
+```bash
+# Show help for any script
+./scripts/deploy-all.zsh --help
+./scripts/status-all.zsh --help  
+./scripts/logs-all.zsh --help
+./scripts/cleanup-all.zsh --help
+
+# Check application status
+./scripts/status-all.zsh --verbose
+
+# View recent logs
+./scripts/logs-all.zsh --lines 100
+```
+
+### Support Resources
+
+- **VM Management:** Use Yandex Cloud Console for resource monitoring
+- **Local Development:** Check Docker Desktop for container management
+- **Database Access:** Use Adminer at `http://localhost:8080` (local) or connect directly to port 15432
+- **API Testing:** Backend API documentation available at `/swagger-ui` endpoint
+
+---
+
+## Development Workflow
+
+### Typical Development Process
+
+1. **Setup environment:**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your settings
+   ```
+
+2. **Start development environment:**
+   ```bash
+   ./scripts/deploy-all.zsh --mode local
+   ```
+
+3. **Monitor services:**
+   ```bash
+   ./scripts/status-all.zsh --mode local --verbose
+   ```
+
+4. **View logs during development:**
+   ```bash
+   ./scripts/logs-all.zsh --mode local --follow
+   ```
+
+5. **Deploy to cloud for testing:**
+   ```bash
+   ./scripts/deploy-all.zsh --mode vm
+   ```
+
+6. **Cleanup when done:**
+   ```bash
+   ./scripts/cleanup-all.zsh --keep-data
+   ```
+
+### Code Changes
+
+- **Backend:** Rebuild with `docker-compose up -d --build ajasta-backend`
+- **Frontend:** Rebuild with `docker-compose up -d --build ajasta-frontend`  
+- **Database:** Schema changes persist in volumes
+- **Configuration:** Update `.env` and restart: `docker-compose restart`
+
+---
+
+## Architecture Notes
+
+- **Frontend** serves static files via Nginx with SPA routing support
+- **Backend** uses Spring Boot with PostgreSQL integration
+- **Database** uses persistent volumes for data preservation  
+- **Networking** uses custom Docker networks for service communication
+- **Security** includes health checks, resource limits, and secure defaults
