@@ -210,6 +210,10 @@ SERVICEEOF
 systemctl daemon-reload
 systemctl enable ajasta-containers
 
+# Start the service immediately
+echo "🚀 Starting containers..."
+systemctl start ajasta-containers
+
 # Set ownership
 chown -R ajasta:ajasta /opt/ajasta
 
