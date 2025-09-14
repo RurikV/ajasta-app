@@ -2,8 +2,6 @@
 # This file is automatically loaded by docker-compose and provides development-specific configurations
 # It overrides settings from docker-compose.yml for local development convenience
 
-version: '3.8'
-
 services:
   # PostgreSQL Database - Development Configuration
   ajasta-postgres:
