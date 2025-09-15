@@ -58,7 +58,7 @@ const ResourceBookingPage = () => {
       }
     };
     fetchResource();
-  }, [id]);
+  }, [id, showError]);
 
   // Stop dragging on mouse up anywhere
   useEffect(() => {
