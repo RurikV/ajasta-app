@@ -40,9 +40,8 @@ const ResourceBookingPage = () => {
   const [resource, setResource] = useState(null);
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
 
-  // Selection state
+  // Selection state (single selection)
   const [selected, setSelected] = useState(() => new Set());
-  const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
     const fetchResource = async () => {
@@ -59,13 +58,6 @@ const ResourceBookingPage = () => {
     };
     fetchResource();
   }, [id, showError]);
-
-  // Stop dragging on mouse up anywhere
-  useEffect(() => {
-    const onUp = () => setDragging(false);
-    window.addEventListener('mouseup', onUp);
-    return () => window.removeEventListener('mouseup', onUp);
-  }, []);
 
   const slots = useMemo(() => {
     if (!resource) return [];
@@ -113,25 +105,15 @@ const ResourceBookingPage = () => {
     return false;
   };
 
-  const toggleKey = (key) => {
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
-  };
-
-  const handleMouseDown = (key, disabled) => {
+  const handleSelectClick = (key, disabled) => {
     if (disabled) return;
-    setDragging(true);
-    toggleKey(key);
-  };
-
-  const handleMouseEnter = (key, disabled) => {
-    if (!dragging || disabled) return;
     setSelected(prev => {
       const next = new Set(prev);
-      next.add(key);
+      if (next.has(key)) {
+        next.delete(key); // toggle off
+      } else {
+        next.add(key); // allow multi-select
+      }
       return next;
     });
   };
@@ -184,9 +166,7 @@ const ResourceBookingPage = () => {
                       <td
                         key={`${time}-${n}`}
                         data-testid={`slot-${time}-${n}`}
-                        onMouseDown={() => handleMouseDown(key, disabled)}
-                        onMouseEnter={() => handleMouseEnter(key, disabled)}
-                        onClick={() => !dragging && handleMouseDown(key, disabled)}
+                        onClick={() => handleSelectClick(key, disabled)}
                         style={{
                           padding: 8,
                           textAlign: 'center',
@@ -200,7 +180,11 @@ const ResourceBookingPage = () => {
                         aria-disabled={disabled}
                       >
                         {/* visual slot */}
-                        {isSelected ? 'Selected' : ''}
+                        {isSelected ? (
+                          <span style={{ fontSize: 12, color: '#555' }}>
+                            {time} - {minutesToHHMM(parseTimeToMinutes(time) + 30)}
+                          </span>
+                        ) : ''}
                       </td>
                     );
                   })}

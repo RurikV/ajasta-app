@@ -1,6 +1,8 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import ResourceBookingPage from '../ResourceBookingPage';
+import ApiService from '../../../services/ApiService';
 
 // Mock react-router-dom (CJS-friendly virtual mock)
 jest.mock('react-router-dom', () => {
@@ -21,8 +23,6 @@ jest.mock('../../../services/ApiService', () => ({
   }
 }));
 
-import ApiService from '../../../services/ApiService';
-
 const mockResource = {
   id: 1,
   name: 'City Turf Court A',
@@ -35,14 +35,20 @@ const mockResource = {
 };
 
 const setup = async () => {
-  ApiService.getResourceById.mockResolvedValue({ statusCode: 200, data: mockResource });
+  let resolveGet;
+  const promise = new Promise(res => { resolveGet = res; });
+  ApiService.getResourceById.mockReturnValue(promise);
   render(
     <MemoryRouter>
       <ResourceBookingPage />
     </MemoryRouter>
   );
+  // Resolve the API call within act so the ensuing state update is wrapped
+  await act(async () => {
+    resolveGet({ statusCode: 200, data: mockResource });
+  });
   // Wait for header/unit columns to appear
-  await waitFor(() => expect(screen.getByText(/Unit 1/i)).toBeInTheDocument());
+  await screen.findByText(/Unit 1/i);
 };
 
 describe('ResourceBookingPage selection', () => {
@@ -57,31 +63,42 @@ describe('ResourceBookingPage selection', () => {
     expect(screen.getByText('Unit 3')).toBeInTheDocument();
   });
 
-  it('clicking a cell toggles light green highlight', async () => {
-    await setup();
-    const cell = screen.getByTestId('slot-09:00-1');
-
-    // First click: select (mousedown handler toggles selection)
-    fireEvent.mouseDown(cell);
-    expect(cell).toHaveStyle('background-color: lightgreen');
-
-    // Second click: deselect
-    fireEvent.mouseDown(cell);
-    expect(cell).not.toHaveStyle('background-color: lightgreen');
-  });
-
-  it('dragging selects multiple cells', async () => {
+  it('allows multi-select and toggling a slot off', async () => {
     await setup();
     const first = screen.getByTestId('slot-09:00-1');
     const second = screen.getByTestId('slot-09:30-1');
 
-    fireEvent.mouseDown(first);
-    // simulate drag across to second slot
-    fireEvent.mouseEnter(second);
-    // release drag
-    fireEvent.mouseUp(window);
+    // Click first: selected
+    fireEvent.click(first);
+    expect(first).toHaveStyle('background-color: lightgreen');
+    expect(second).not.toHaveStyle('background-color: lightgreen');
 
+    // Click second: both selected (multi-select)
+    fireEvent.click(second);
     expect(first).toHaveStyle('background-color: lightgreen');
     expect(second).toHaveStyle('background-color: lightgreen');
+
+    // Click first again: toggles off first, second remains
+    fireEvent.click(first);
+    expect(first).not.toHaveStyle('background-color: lightgreen');
+    expect(second).toHaveStyle('background-color: lightgreen');
+  });
+
+  it('hover/drag does not select additional cells, and no "Selected" label is shown', async () => {
+    await setup();
+    const first = screen.getByTestId('slot-09:00-1');
+    const second = screen.getByTestId('slot-09:30-1');
+
+    fireEvent.click(first);
+    // simulate hover/drag behavior (should have no effect)
+    fireEvent.mouseEnter(second);
+    fireEvent.mouseOver(second);
+
+    // Still only first selected
+    expect(first).toHaveStyle('background-color: lightgreen');
+    expect(second).not.toHaveStyle('background-color: lightgreen');
+
+    // ensure the literal label 'Selected' is not rendered anywhere
+    expect(screen.queryByText(/Selected/i)).toBeNull();
   });
 });
