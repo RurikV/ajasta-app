@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import AdminResourceFormPage from '../AdminResourceFormPage';
+import ApiService from '../../../services/ApiService';
 
 // Mock navigate and params
 const mockedNavigate = jest.fn();
@@ -27,8 +28,6 @@ jest.mock('../../../services/ApiService', () => ({
     getResourceById: jest.fn()
   }
 }));
-
-import ApiService from '../../../services/ApiService';
 
 const setup = () => {
   return render(
@@ -72,11 +71,9 @@ describe('AdminResourceFormPage (Add Resource)', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /Save Resource Item/i }));
 
-    await waitFor(() => {
-      expect(ApiService.addResource).toHaveBeenCalledTimes(1);
-      expect(ApiService.addResource).toHaveBeenCalledWith(expect.any(FormData));
-      expect(mockedNavigate).toHaveBeenCalledWith('/admin/resources');
-    });
+    await waitFor(() => expect(ApiService.addResource).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(ApiService.addResource).toHaveBeenCalledWith(expect.any(FormData)));
+    await waitFor(() => expect(mockedNavigate).toHaveBeenCalledWith('/admin/resources'));
   });
 
   it('shows error when addResource fails', async () => {
