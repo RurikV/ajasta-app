@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import ResourceBookingPage from '../ResourceBookingPage';
 import ApiService from '../../../services/ApiService';
@@ -38,15 +38,13 @@ const setup = async () => {
   let resolveGet;
   const promise = new Promise(res => { resolveGet = res; });
   ApiService.getResourceById.mockReturnValue(promise);
-  await act(async () => {
-    render(
-      <MemoryRouter>
-        <ResourceBookingPage />
-      </MemoryRouter>
-    );
-    // Resolve the API call within the same act to wrap the ensuing state update
-    resolveGet({ statusCode: 200, data: mockResource });
-  });
+  render(
+    <MemoryRouter>
+      <ResourceBookingPage />
+    </MemoryRouter>
+  );
+  // Resolve the API call to trigger state update; Testing Library will handle act internally via findBy*
+  resolveGet({ statusCode: 200, data: mockResource });
   // Wait for header/unit columns to appear
   await screen.findByText(/Unit 1/i);
 };
