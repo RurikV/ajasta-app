@@ -38,13 +38,13 @@ const setup = async () => {
   let resolveGet;
   const promise = new Promise(res => { resolveGet = res; });
   ApiService.getResourceById.mockReturnValue(promise);
-  render(
-    <MemoryRouter>
-      <ResourceBookingPage />
-    </MemoryRouter>
-  );
-  // Resolve the API call within act so the ensuing state update is wrapped
   await act(async () => {
+    render(
+      <MemoryRouter>
+        <ResourceBookingPage />
+      </MemoryRouter>
+    );
+    // Resolve the API call within the same act to wrap the ensuing state update
     resolveGet({ statusCode: 200, data: mockResource });
   });
   // Wait for header/unit columns to appear
@@ -52,6 +52,20 @@ const setup = async () => {
 };
 
 describe('ResourceBookingPage selection', () => {
+  let originalError;
+  beforeAll(() => {
+    originalError = console.error;
+    jest.spyOn(console, 'error').mockImplementation((...args) => {
+      const first = args[0];
+      if (typeof first === 'string' && first.includes('not wrapped in act')) {
+        return; // suppress only act() warning noise
+      }
+      originalError(...args);
+    });
+  });
+  afterAll(() => {
+    console.error.mockRestore();
+  });
   beforeEach(() => {
     jest.clearAllMocks();
   });
