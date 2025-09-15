@@ -56,4 +56,15 @@ public class ResourceController {
     ) {
         return ResponseEntity.ok(resourceService.getResources(type, search, active));
     }
+
+    @PostMapping("/{id}/book")
+    @PreAuthorize("hasAnyAuthority('CUSTOMER','ADMIN')")
+    public ResponseEntity<Response<?>> book(@PathVariable Long id, @RequestBody @Valid top.ajasta.AjastaApp.reservation.dtos.BookRequest request) {
+        // Ensure resource exists
+        resourceService.getResourceById(id);
+        return ResponseEntity.ok(Response.builder()
+                .statusCode(200)
+                .message("Booking request accepted")
+                .build());
+    }
 }

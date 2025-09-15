@@ -191,9 +191,9 @@ const ResourceBookingPage = () => {
                           padding: 8,
                           textAlign: 'center',
                           border: '1px solid #eee',
-                          backgroundColor: isSelected ? 'lightgreen' : 'transparent',
+                          backgroundColor: disabled ? '#f0f0f0' : (isSelected ? 'lightgreen' : 'transparent'),
+                          color: disabled ? '#888' : 'inherit',
                           cursor: disabled ? 'not-allowed' : 'pointer',
-                          opacity: disabled ? 0.5 : 1,
                           userSelect: 'none'
                         }}
                         title={disabled ? 'Unavailable' : 'Available'}
