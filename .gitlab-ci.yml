@@ -9,17 +9,17 @@ variables:
 
   # Application Configuration
   # Convert CI_PROJECT_PATH to lowercase for Docker registry compatibility
-  CI_PROJECT_PATH_LOWER: "${CI_PROJECT_PATH,,}"
-  BACKEND_IMAGE_NAME: "$CI_PROJECT_PATH_LOWER/backend"
-  FRONTEND_IMAGE_NAME: "$CI_PROJECT_PATH_LOWER/frontend"
+  # Note: Lowercase conversion is done in job scripts for shell compatibility
+  BACKEND_IMAGE_NAME: "$CI_PROJECT_PATH/backend"
+  FRONTEND_IMAGE_NAME: "$CI_PROJECT_PATH/frontend"
 
   # Yandex Cloud Configuration
   YC_ZONE: "ru-central1-a"
   YC_INSTANCE_NAME: "ajasta-app-vm"
   YC_INSTANCE_TYPE: "standard-v3"
   YC_CORES: "2"
-  YC_MEMORY: "4GB"
-  YC_DISK_SIZE: "20GB"
+  YC_MEMORY: "2GB"
+  YC_DISK_SIZE: "10GB"
 
   # Build optimization for idempotency
   DOCKER_BUILDKIT: "1"
@@ -86,10 +86,13 @@ build:backend:
   <<: *docker_base
   stage: build
   script:
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
     # Check if image with this commit SHA already exists (idempotency)
     - |
       if docker manifest inspect \
-         $DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_IMAGE_TAG \
+         $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
          > /dev/null 2>&1; then
         echo "Backend image already exists for commit $DOCKER_IMAGE_TAG," \
              "skipping build"
@@ -98,12 +101,12 @@ build:backend:
     # Build with cache optimization for idempotency
     - cd ajasta-backend
     - docker build
-        --cache-from $DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_LATEST_TAG
-        --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_IMAGE_TAG
-        --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_LATEST_TAG
+        --cache-from $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG
+        --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG
+        --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG
         .
-    - docker push $DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_IMAGE_TAG
-    - docker push $DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_LATEST_TAG
+    - docker push $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG
+    - docker push $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG
   artifacts:
     reports:
       dotenv: build.env
@@ -116,10 +119,13 @@ build:frontend:
   <<: *docker_base
   stage: build
   script:
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
     # Check if image with this commit SHA already exists (idempotency)
     - |
       if docker manifest inspect \
-         $DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_IMAGE_TAG \
+         $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
          > /dev/null 2>&1; then
         echo "Frontend image already exists for commit $DOCKER_IMAGE_TAG," \
              "skipping build"
@@ -134,13 +140,13 @@ build:frontend:
         API_BASE_URL="http://localhost:8090/api"
       fi
     - docker build
-        --cache-from $DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_LATEST_TAG
+        --cache-from $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG
         --build-arg API_BASE_URL="$API_BASE_URL"
-        --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_IMAGE_TAG
-        --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_LATEST_TAG
+        --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG
+        --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG
         .
-    - docker push $DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_IMAGE_TAG
-    - docker push $DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_LATEST_TAG
+    - docker push $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG
+    - docker push $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG
   only:
     - main
     - develop
@@ -217,18 +223,22 @@ package:compose:
              "is installed."
         exit 1
       fi
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
     # Create deployment package with environment-specific configuration
     - mkdir -p deploy
     # Substitute image tags in docker-compose for deployment
     - envsubst \
-        '${DOCKER_REGISTRY} ${BACKEND_IMAGE_NAME} ${FRONTEND_IMAGE_NAME} \
+        '${DOCKER_REGISTRY} ${BACKEND_IMAGE_LOWER} ${FRONTEND_IMAGE_LOWER} \
         ${DOCKER_IMAGE_TAG}' \
         < docker-compose.yml > deploy/docker-compose.yml
     - cp -r scripts deploy/
     - echo "DOCKER_IMAGE_TAG=$DOCKER_IMAGE_TAG" > deploy/.env
-    - BACKEND_IMG="$DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+    - BACKEND_IMG="$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG"
     - echo "BACKEND_IMAGE=$BACKEND_IMG" >> deploy/.env
-    - FRONTEND_IMG="$DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+    - FRONTEND_IMG="$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG"
     - echo "FRONTEND_IMAGE=$FRONTEND_IMG" >> deploy/.env
   artifacts:
     paths:
@@ -305,9 +315,13 @@ cleanup:registry:
   <<: *docker_base
   stage: deploy
   script:
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
     # Keep only latest 10 images for each service
     - |
-      for image in $BACKEND_IMAGE_NAME $FRONTEND_IMAGE_NAME; do
+      for image in $BACKEND_IMAGE_LOWER $FRONTEND_IMAGE_LOWER; do
         REPO_URL="$CI_API_V4_URL/projects/$CI_PROJECT_ID/registry/repositories"
         TAGS=$(curl -s -H "Authorization: Bearer $CI_JOB_TOKEN" \
           "$REPO_URL/$image/tags" | jq -r '.[].name' | head -n -10)
