@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
@@ -13,11 +13,7 @@ const AdminCategoriesPage = () => {
     const { ErrorDisplay, showError } = useError();
     const navigate = useNavigate();
 
-    useEffect(() => {
-        fetchCategories();
-    }, []);
-
-    const fetchCategories = async () => {
+    const fetchCategories = useCallback(async () => {
         try {
             const response = await ApiService.getAllCategories();
             if (response.statusCode === 200) {
@@ -28,7 +24,11 @@ const AdminCategoriesPage = () => {
             showError(error.response?.data?.message || error.message);
 
         }
-    }
+    }, [showError]);
+
+    useEffect(() => {
+        fetchCategories();
+    }, [fetchCategories]);
 
 
     const handleAddCategory = () => {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
@@ -13,14 +13,7 @@ const AdminMenuPage = () => {
     const navigate = useNavigate();
 
 
-    useEffect(() => {
-        fetchMenus();
-
-    }, [])
-
-
-
-    const fetchMenus = async () => {
+    const fetchMenus = useCallback(async () => {
         try {
             const response = await ApiService.getAllMenus();
             if (response.statusCode === 200) {
@@ -29,7 +22,12 @@ const AdminMenuPage = () => {
         } catch (error) {
             showError(error.response?.data?.message || error.message);
         }
-    };
+    }, [showError]);
+
+    useEffect(() => {
+        fetchMenus();
+
+    }, [fetchMenus]);
 
     const handleAddMenuItem = () => {
         navigate('/admin/menu-items/new');

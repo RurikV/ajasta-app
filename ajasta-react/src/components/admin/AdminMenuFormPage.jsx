@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
@@ -25,16 +25,8 @@ const AdminMenuFormPage = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
 
 
-    useEffect(() => {
-        fetchCategories();
-        if (id) {
-            fetchMenu()
-        }
-    }, [id]);
-
-
     //FETCH ALL CATEGORIES
-    const fetchCategories = async () => {
+    const fetchCategories = useCallback(async () => {
         try {
             const response = await ApiService.getAllCategories();
             if (response.statusCode === 200) {
@@ -43,11 +35,11 @@ const AdminMenuFormPage = () => {
         } catch (error) {
             showError(error.response?.data?.message || error.message);
         }
-    };
+    }, [showError]);
 
 
     //FETCH MENU BY ID WHEN WE ARE USING THIS FORM TO UPDATE A MENU
-    const fetchMenu = async () => {
+    const fetchMenu = useCallback(async () => {
         try {
             const response = await ApiService.getMenuById(id);
             if (response.statusCode === 200) {
@@ -60,7 +52,14 @@ const AdminMenuFormPage = () => {
         } catch (error) {
             showError(error.response?.data?.message || error.message);
         }
-    };
+    }, [id, showError]);
+
+    useEffect(() => {
+        fetchCategories();
+        if (id) {
+            fetchMenu()
+        }
+    }, [id, fetchCategories, fetchMenu]);
 
 
     const handleInputChange = (e) => {

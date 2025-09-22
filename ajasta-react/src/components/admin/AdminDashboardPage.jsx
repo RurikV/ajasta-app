@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
@@ -34,15 +34,7 @@ const AdminDashboardPage = () => {
     });
 
 
-    useEffect(() => {
-
-        fetchDashboardData();
-
-    }, []);
-
-
-
-    const fetchDashboardData = async () => {
+    const fetchDashboardData = useCallback(async () => {
 
         try {
 
@@ -127,7 +119,13 @@ const AdminDashboardPage = () => {
             showError(error.response?.data?.message || error.message);
 
         }
-    }
+    }, [showError]);
+
+    useEffect(() => {
+
+        fetchDashboardData();
+
+    }, [fetchDashboardData]);
 
     const handleViewOrder = (id) => {
         navigate(`/admin/orders/${id}`);
