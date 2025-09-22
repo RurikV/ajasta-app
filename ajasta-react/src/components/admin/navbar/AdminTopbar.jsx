@@ -27,7 +27,7 @@ const AdminTopbar = () => {
     };
 
     fetchProfile();
-  }, []);
+  }, [showError]);
 
   const handleLogout = () => {
     ApiService.logout();

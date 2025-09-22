@@ -56,7 +56,7 @@ const OrderHistoryPage = () => {
         };
 
         fetchOrders();
-    }, []);
+    }, [showError]);
 
 
     const formatDate = (dateString) => {

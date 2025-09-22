@@ -36,7 +36,7 @@ const MenuDetailsPage = () => {
         };
 
         fetchMenu();
-    }, [id]);
+    }, [id, showError]);
 
     const handleBackToMenu = () => {
         navigate(-1); // Go back to previous page

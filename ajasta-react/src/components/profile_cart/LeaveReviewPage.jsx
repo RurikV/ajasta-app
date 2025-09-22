@@ -42,7 +42,7 @@ const LeaveReviewPage = () => {
             showError("No Menu Item specified")
         }
 
-    }, [menuId]);
+    }, [menuId, showError]);
 
 
 

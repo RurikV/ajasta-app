@@ -28,7 +28,7 @@ const HomePage = () => {
         };
 
         fetchCategories();
-    }, []);
+    }, [showError]);
 
 
     const handleCategoryClick = (categoryId) => {

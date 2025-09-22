@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
@@ -15,7 +15,7 @@ const CartPage = () => {
 
 
     
-    const fetchCart = async () => {
+    const fetchCart = useCallback(async () => {
         try {
             const response = await ApiService.getCart();
             if (response.statusCode === 200) {
@@ -26,14 +26,14 @@ const CartPage = () => {
         } catch (error) {
             showError(error.response?.data?.message || error.message);
         }
-    };
+    }, [showError]);
 
 
     useEffect(() => {
 
         fetchCart();
 
-    }, []);
+    }, [fetchCart]);
 
 
     const handleIncrement = async (menuId) => {
