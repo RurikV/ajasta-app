@@ -219,15 +219,15 @@ package:compose:
     - mkdir -p deploy
     # Substitute image tags in docker-compose for deployment
     - envsubst \
-        '${DOCKER_REGISTRY} ${BACKEND_IMAGE_NAME} ${FRONTEND_IMAGE_NAME} ${DOCKER_IMAGE_TAG}' \
+        '${DOCKER_REGISTRY} ${BACKEND_IMAGE_NAME} ${FRONTEND_IMAGE_NAME} \
+        ${DOCKER_IMAGE_TAG}' \
         < docker-compose.yml > deploy/docker-compose.yml
     - cp -r scripts deploy/
     - echo "DOCKER_IMAGE_TAG=$DOCKER_IMAGE_TAG" > deploy/.env
-    - echo "BACKEND_IMAGE=$DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_IMAGE_TAG" \
-        >> deploy/.env
-    - echo \
-        "FRONTEND_IMAGE=$DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_IMAGE_TAG" \
-        >> deploy/.env
+    - BACKEND_IMG="$DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+    - echo "BACKEND_IMAGE=$BACKEND_IMG" >> deploy/.env
+    - FRONTEND_IMG="$DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+    - echo "FRONTEND_IMAGE=$FRONTEND_IMG" >> deploy/.env
   artifacts:
     paths:
       - deploy/
@@ -242,7 +242,8 @@ package:compose:
   stage: deploy
   image: alpine:latest
   before_script:
-    # Install dependencies - compatible with both Alpine (Docker) and macOS (shell executor)
+    # Install dependencies - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
     - |
       if command -v apk >/dev/null 2>&1; then
         # Alpine Linux (Docker executor)
@@ -251,7 +252,8 @@ package:compose:
         # macOS (shell executor) - curl and openssh are usually pre-installed,
         # bash might need update
         brew install curl openssh
-        # bash is pre-installed on macOS, but we can ensure it's updated if needed
+        # bash is pre-installed on macOS, but we can ensure it's updated
+        # if needed
         brew install bash || true
       else
         echo "Neither apk nor brew found. Please ensure curl, bash, and" \
@@ -304,14 +306,14 @@ cleanup:registry:
     # Keep only latest 10 images for each service
     - |
       for image in $BACKEND_IMAGE_NAME $FRONTEND_IMAGE_NAME; do
+        REPO_URL="$CI_API_V4_URL/projects/$CI_PROJECT_ID/registry/repositories"
         TAGS=$(curl -s -H "Authorization: Bearer $CI_JOB_TOKEN" \
-          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/registry/repositories/$image/tags" \
-          | jq -r '.[].name' | head -n -10)
+          "$REPO_URL/$image/tags" | jq -r '.[].name' | head -n -10)
         for tag in $TAGS; do
-          if [ "$tag" != "$DOCKER_LATEST_TAG" ] && [ "$tag" != "$DOCKER_IMAGE_TAG" ]; then
+          if [ "$tag" != "$DOCKER_LATEST_TAG" ] && \
+             [ "$tag" != "$DOCKER_IMAGE_TAG" ]; then
             curl -X DELETE -H "Authorization: Bearer $CI_JOB_TOKEN" \
-              "$CI_API_V4_URL/projects/$CI_PROJECT_ID/registry/repositories/$image/tags/$tag" \
-              || true
+              "$REPO_URL/$image/tags/$tag" || true
           fi
         done
       done
