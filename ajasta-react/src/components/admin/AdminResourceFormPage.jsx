@@ -14,6 +14,7 @@ const AdminResourceFormPage = () => {
     location: '',
     description: '',
     imageFile: null,
+    pricePerSlot: '', // Price per 30-minute slot
     active: true,
     unitsCount: 1,
     openTime: '08:00',
@@ -40,6 +41,7 @@ const AdminResourceFormPage = () => {
           ...response.data,
           type: response.data.type || '',
           active: !!response.data.active,
+          pricePerSlot: response.data.pricePerSlot || '',
           imageFile: null
         });
       }
@@ -91,6 +93,7 @@ const AdminResourceFormPage = () => {
       if (resource.type) formData.append('type', resource.type);
       if (resource.location) formData.append('location', resource.location);
       if (resource.description) formData.append('description', resource.description);
+      if (resource.pricePerSlot && resource.pricePerSlot.toString().trim()) formData.append('pricePerSlot', resource.pricePerSlot.toString());
       if (resource.active !== undefined && resource.active !== null) formData.append('active', resource.active);
       if (resource.imageFile) formData.append('imageFile', resource.imageFile);
       if (resource.unitsCount !== undefined && resource.unitsCount !== null) formData.append('unitsCount', String(resource.unitsCount));
@@ -176,6 +179,20 @@ const AdminResourceFormPage = () => {
             value={resource.description}
             onChange={handleInputChange}
             rows="4"
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="pricePerSlot">Price per 30-minute slot (€)</label>
+          <input
+            type="number"
+            id="pricePerSlot"
+            name="pricePerSlot"
+            min="0"
+            step="0.01"
+            value={resource.pricePerSlot}
+            onChange={handleInputChange}
+            placeholder="Enter price (e.g., 25.00)"
           />
         </div>
 
