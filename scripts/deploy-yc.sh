@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # Yandex Cloud Deployment Script for Ajasta App
-# Идемпотентный деплой в Yandex Cloud с проверками существования ресурсов
 
 set -euo pipefail
 
@@ -15,8 +14,8 @@ YC_ZONE=${YC_ZONE:-ru-central1-a}
 YC_INSTANCE_NAME=${YC_INSTANCE_NAME:-ajasta-app-vm}
 YC_INSTANCE_TYPE=${YC_INSTANCE_TYPE:-standard-v3}
 YC_CORES=${YC_CORES:-2}
-YC_MEMORY=${YC_MEMORY:-4GB}
-YC_DISK_SIZE=${YC_DISK_SIZE:-20GB}
+YC_MEMORY=${YC_MEMORY:-2GB}
+YC_DISK_SIZE=${YC_DISK_SIZE:-10GB}
 YC_SUBNET_NAME="ajasta-subnet"
 YC_NETWORK_NAME="ajasta-network"
 YC_SECURITY_GROUP_NAME="ajasta-sg"
@@ -187,6 +186,7 @@ ensure_vm_instance() {
         ssh_key=$(cat ~/.ssh/yc_key.pub)
         
         instance_id=$(yc compute instance create \
+            --preemptible \
             --name "$YC_INSTANCE_NAME" \
             --description "VM for Ajasta App ($ENVIRONMENT)" \
             --zone "$YC_ZONE" \
