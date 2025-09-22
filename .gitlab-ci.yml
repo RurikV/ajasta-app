@@ -1,0 +1,266 @@
+# GitLab CI/CD Pipeline for Ajasta App
+# Идемпотентная сборка и деплой в Yandex Cloud
+
+variables:
+  # Docker Registry Configuration
+  DOCKER_REGISTRY: $CI_REGISTRY
+  DOCKER_IMAGE_TAG: $CI_COMMIT_SHA
+  DOCKER_LATEST_TAG: "latest"
+  
+  # Application Configuration
+  BACKEND_IMAGE_NAME: "$CI_PROJECT_PATH/backend"
+  FRONTEND_IMAGE_NAME: "$CI_PROJECT_PATH/frontend"
+  
+  # Yandex Cloud Configuration
+  YC_ZONE: "ru-central1-a"
+  YC_INSTANCE_NAME: "ajasta-app-vm"
+  YC_INSTANCE_TYPE: "standard-v3"
+  YC_CORES: "2"
+  YC_MEMORY: "4GB"
+  YC_DISK_SIZE: "20GB"
+  
+  # Build optimization for idempotency
+  DOCKER_BUILDKIT: "1"
+  BUILDX_EXPERIMENTAL: "1"
+
+stages:
+  - validate
+  - build
+  - test
+  - package
+  - deploy
+
+# Template for Docker operations
+.docker_base: &docker_base
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+    - docker info
+
+# Validate stage - check code quality and configuration
+validate:syntax:
+  stage: validate
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache yamllint shellcheck
+  script:
+    - yamllint .gitlab-ci.yml
+    - yamllint docker-compose.yml
+    - find scripts -name "*.sh" -o -name "*.zsh" | xargs shellcheck || true
+  only:
+    - merge_requests
+    - main
+    - develop
+
+validate:docker:
+  <<: *docker_base
+  stage: validate
+  script:
+    - docker run --rm -i hadolint/hadolint < ajasta-backend/Dockerfile
+    - docker run --rm -i hadolint/hadolint < ajasta-react/Dockerfile
+  only:
+    - merge_requests
+    - main
+    - develop
+
+# Build stage - compile and prepare artifacts
+build:backend:
+  <<: *docker_base
+  stage: build
+  script:
+    # Check if image with this commit SHA already exists (idempotency)
+    - |
+      if docker manifest inspect $DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_IMAGE_TAG > /dev/null 2>&1; then
+        echo "Backend image already exists for commit $DOCKER_IMAGE_TAG, skipping build"
+        exit 0
+      fi
+    # Build with cache optimization for idempotency
+    - cd ajasta-backend
+    - docker build 
+        --cache-from $DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_LATEST_TAG
+        --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_IMAGE_TAG
+        --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_LATEST_TAG
+        .
+    - docker push $DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_IMAGE_TAG
+    - docker push $DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_LATEST_TAG
+  artifacts:
+    reports:
+      dotenv: build.env
+  only:
+    - main
+    - develop
+    - tags
+
+build:frontend:
+  <<: *docker_base
+  stage: build
+  script:
+    # Check if image with this commit SHA already exists (idempotency)
+    - |
+      if docker manifest inspect $DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_IMAGE_TAG > /dev/null 2>&1; then
+        echo "Frontend image already exists for commit $DOCKER_IMAGE_TAG, skipping build"
+        exit 0
+      fi
+    # Build with configurable API URL for different environments
+    - cd ajasta-react
+    - |
+      if [ "$CI_COMMIT_REF_NAME" = "main" ]; then
+        API_BASE_URL="http://$YC_VM_EXTERNAL_IP:8090/api"
+      else
+        API_BASE_URL="http://localhost:8090/api"
+      fi
+    - docker build 
+        --cache-from $DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_LATEST_TAG
+        --build-arg API_BASE_URL="$API_BASE_URL"
+        --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_IMAGE_TAG
+        --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_LATEST_TAG
+        .
+    - docker push $DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_IMAGE_TAG
+    - docker push $DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_LATEST_TAG
+  only:
+    - main
+    - develop
+    - tags
+
+# Test stage - run automated tests
+test:backend:
+  stage: test
+  image: maven:3.9.8-eclipse-temurin-21-alpine
+  variables:
+    MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+  cache:
+    key: "$CI_JOB_NAME"
+    paths:
+      - .m2/repository/
+      - ajasta-backend/target/
+  script:
+    - cd ajasta-backend
+    - mvn clean verify
+  artifacts:
+    reports:
+      junit:
+        - ajasta-backend/target/surefire-reports/TEST-*.xml
+        - ajasta-backend/target/failsafe-reports/TEST-*.xml
+    paths:
+      - ajasta-backend/target/
+  only:
+    - merge_requests
+    - main
+    - develop
+
+test:frontend:
+  stage: test
+  image: node:20-alpine
+  cache:
+    key: "$CI_JOB_NAME"
+    paths:
+      - ajasta-react/node_modules/
+  script:
+    - cd ajasta-react
+    - npm ci --no-audit --no-fund
+    - npm run test -- --coverage --watchAll=false
+    - npm run build
+  coverage: '/Lines\s*:\s*(\d+\.\d+)%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: ajasta-react/coverage/cobertura-coverage.xml
+    paths:
+      - ajasta-react/coverage/
+      - ajasta-react/build/
+  only:
+    - merge_requests
+    - main
+    - develop
+
+# Package stage - create deployment artifacts
+package:compose:
+  stage: package
+  image: alpine:latest
+  script:
+    - apk add --no-cache envsubst
+    # Create deployment package with environment-specific configuration
+    - mkdir -p deploy
+    # Substitute image tags in docker-compose for deployment
+    - envsubst '${DOCKER_REGISTRY} ${BACKEND_IMAGE_NAME} ${FRONTEND_IMAGE_NAME} ${DOCKER_IMAGE_TAG}' < docker-compose.yml > deploy/docker-compose.yml
+    - cp -r scripts deploy/
+    - echo "DOCKER_IMAGE_TAG=$DOCKER_IMAGE_TAG" > deploy/.env
+    - echo "BACKEND_IMAGE=$DOCKER_REGISTRY/$BACKEND_IMAGE_NAME:$DOCKER_IMAGE_TAG" >> deploy/.env
+    - echo "FRONTEND_IMAGE=$DOCKER_REGISTRY/$FRONTEND_IMAGE_NAME:$DOCKER_IMAGE_TAG" >> deploy/.env
+  artifacts:
+    paths:
+      - deploy/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - tags
+
+# Deploy stage - deploy to Yandex Cloud
+.deploy_base: &deploy_base
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    # Install dependencies
+    - apk add --no-cache curl bash openssh-client
+    # Install Yandex Cloud CLI
+    - curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
+    - export PATH=$PATH:/root/yandex-cloud/bin
+    # Authenticate with Yandex Cloud
+    - yc config set token $YC_TOKEN
+    - yc config set cloud-id $YC_CLOUD_ID
+    - yc config set folder-id $YC_FOLDER_ID
+    # Setup SSH
+    - eval $(ssh-agent -s)
+    - echo "$YC_SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan -H $YC_VM_EXTERNAL_IP >> ~/.ssh/known_hosts 2>/dev/null || true
+
+deploy:staging:
+  <<: *deploy_base
+  environment:
+    name: staging
+    url: http://$YC_VM_EXTERNAL_IP
+  script:
+    - ./deploy/scripts/deploy-yc.sh staging
+  only:
+    - develop
+  when: manual
+
+deploy:production:
+  <<: *deploy_base
+  environment:
+    name: production
+    url: http://$YC_VM_EXTERNAL_IP
+  script:
+    - ./deploy/scripts/deploy-yc.sh production
+  only:
+    - main
+    - tags
+  when: manual
+
+# Cleanup old images for storage optimization (idempotency maintenance)
+cleanup:registry:
+  <<: *docker_base
+  stage: deploy
+  script:
+    # Keep only latest 10 images for each service
+    - |
+      for image in $BACKEND_IMAGE_NAME $FRONTEND_IMAGE_NAME; do
+        TAGS=$(curl -s -H "Authorization: Bearer $CI_JOB_TOKEN" \
+          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/registry/repositories/$image/tags" | \
+          jq -r '.[].name' | head -n -10)
+        for tag in $TAGS; do
+          if [ "$tag" != "$DOCKER_LATEST_TAG" ] && [ "$tag" != "$DOCKER_IMAGE_TAG" ]; then
+            curl -X DELETE -H "Authorization: Bearer $CI_JOB_TOKEN" \
+              "$CI_API_V4_URL/projects/$CI_PROJECT_ID/registry/repositories/$image/tags/$tag" || true
+          fi
+        done
+      done
+  only:
+    - schedules
+  when: manual
