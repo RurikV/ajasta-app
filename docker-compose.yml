@@ -1,3 +1,4 @@
+---
 services:
   # PostgreSQL Database
   ajasta-postgres:
@@ -15,7 +16,8 @@ services:
     networks:
       - ajasta-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} -d ${POSTGRES_DB:-ajastadb}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} \
+        -d ${POSTGRES_DB:-ajastadb}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -34,26 +36,27 @@ services:
       DB_URL: jdbc:postgresql://ajasta-postgres:5432/${POSTGRES_DB:-ajastadb}
       DB_USERNAME: ${POSTGRES_USER:-admin}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-adminpw}
-      
+
       # Application Configuration
       JWT_SECRET: ${JWT_SECRET:-change-me-production-secret-key}
-      
+
       # Mail Configuration (optional)
       MAIL_USERNAME: ${MAIL_USERNAME:-}
       MAIL_PASSWORD: ${MAIL_PASSWORD:-}
-      
+
       # AWS Configuration (optional)
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
-      
+
       # Stripe Configuration (optional)
       STRIPE_PUBLIC_KEY: ${STRIPE_PUBLIC_KEY:-}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      
+
       # JVM Configuration
-      JAVA_OPTS: ${JAVA_OPTS:--XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0}
+      JAVA_OPTS: ${JAVA_OPTS:--XX:+UseContainerSupport \
+        -XX:MaxRAMPercentage=75.0}
     ports:
       - "${BACKEND_PORT:-8090}:8090"
     networks:
@@ -78,7 +81,8 @@ services:
     networks:
       - ajasta-net
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost/ || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider \
+        http://localhost/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

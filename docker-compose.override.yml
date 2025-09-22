@@ -1,6 +1,9 @@
+---
 # Docker Compose Override for Development
-# This file is automatically loaded by docker-compose and provides development-specific configurations
-# It overrides settings from docker-compose.yml for local development convenience
+# This file is automatically loaded by docker-compose and provides
+# development-specific configurations
+# It overrides settings from docker-compose.yml for local development
+# convenience
 
 services:
   # PostgreSQL Database - Development Configuration
@@ -15,7 +18,7 @@ services:
     volumes:
       # Add volume mount for database initialization scripts
       - ./ajasta-postgres/init:/docker-entrypoint-initdb.d:ro
-    command: 
+    command:
       # Enable verbose logging for development
       - postgres
       - -c
@@ -32,21 +35,21 @@ services:
       DB_URL: jdbc:postgresql://ajasta-postgres:5432/ajastadb_dev
       DB_USERNAME: dev_user
       DB_PASSWORD: dev_password
-      
+
       # Development JWT secret (not secure, only for dev)
       JWT_SECRET: dev-secret-key-not-for-production
-      
+
       # Spring Boot development profile
       SPRING_PROFILES_ACTIVE: dev
-      
+
       # Enable debug logging
       LOGGING_LEVEL_ROOT: INFO
       LOGGING_LEVEL_COM_AJASTA: DEBUG
-      
+
       # JVM debugging options
       JAVA_OPTS: >-
-        -XX:+UseContainerSupport 
-        -XX:MaxRAMPercentage=75.0 
+        -XX:+UseContainerSupport
+        -XX:MaxRAMPercentage=75.0
         -Dspring.devtools.restart.enabled=true
         -Dspring.devtools.livereload.enabled=true
         -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
@@ -54,19 +57,20 @@ services:
       - "8090:8090"   # Application port
       - "5005:5005"   # Java debug port
     volumes:
-      # Mount source code for development (if needed for file uploads or configs)
+      # Mount source code for development (if needed for file uploads or
+      # configs)
       - ./ajasta-backend/uploads:/app/uploads
       - ./ajasta-backend/logs:/app/logs
     # Override restart policy for development
     restart: "no"
 
-  # React Frontend - Development Configuration  
+  # React Frontend - Development Configuration
   ajasta-frontend:
     environment:
       # Development API base URL (points to local backend)
       REACT_APP_API_BASE_URL: http://localhost:8090/api
       REACT_APP_ENVIRONMENT: development
-      
+
       # Enable React development mode
       NODE_ENV: development
     ports:
@@ -79,7 +83,7 @@ services:
     # Override restart policy for development
     restart: "no"
 
-# Additional development services
+  # Additional development services
   # Adminer - Database administration tool
   adminer:
     image: adminer:4.8.1
