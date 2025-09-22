@@ -1,5 +1,4 @@
 # GitLab CI/CD Pipeline for Ajasta App
-# Идемпотентная сборка и деплой в Yandex Cloud
 
 variables:
   # Docker Registry Configuration
@@ -44,7 +43,18 @@ validate:syntax:
   stage: validate
   image: alpine:latest
   before_script:
-    - apk add --no-cache yamllint shellcheck
+    # Install packages - compatible with both Alpine (Docker) and macOS (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache yamllint shellcheck
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor)
+        brew install yamllint shellcheck
+      else
+        echo "Neither apk nor brew found. Please ensure required packages are installed."
+        exit 1
+      fi
   script:
     - yamllint .gitlab-ci.yml
     - yamllint docker-compose.yml
@@ -181,7 +191,18 @@ package:compose:
   stage: package
   image: alpine:latest
   script:
-    - apk add --no-cache envsubst
+    # Install envsubst - compatible with both Alpine (Docker) and macOS (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache gettext
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor) - envsubst is part of gettext package
+        brew install gettext
+      else
+        echo "Neither apk nor brew found. Please ensure gettext package is installed."
+        exit 1
+      fi
     # Create deployment package with environment-specific configuration
     - mkdir -p deploy
     # Substitute image tags in docker-compose for deployment
@@ -204,8 +225,20 @@ package:compose:
   stage: deploy
   image: alpine:latest
   before_script:
-    # Install dependencies
-    - apk add --no-cache curl bash openssh-client
+    # Install dependencies - compatible with both Alpine (Docker) and macOS (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache curl bash openssh-client
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor) - curl and openssh are usually pre-installed, bash might need update
+        brew install curl openssh
+        # bash is pre-installed on macOS, but we can ensure it's updated if needed
+        brew install bash || true
+      else
+        echo "Neither apk nor brew found. Please ensure curl, bash, and openssh are installed."
+        exit 1
+      fi
     # Install Yandex Cloud CLI
     - curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
     - export PATH=$PATH:/root/yandex-cloud/bin
