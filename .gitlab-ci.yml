@@ -8,8 +8,10 @@ variables:
   DOCKER_LATEST_TAG: "latest"
 
   # Application Configuration
-  BACKEND_IMAGE_NAME: "$CI_PROJECT_PATH/backend"
-  FRONTEND_IMAGE_NAME: "$CI_PROJECT_PATH/frontend"
+  # Convert CI_PROJECT_PATH to lowercase for Docker registry compatibility
+  CI_PROJECT_PATH_LOWER: "${CI_PROJECT_PATH,,}"
+  BACKEND_IMAGE_NAME: "$CI_PROJECT_PATH_LOWER/backend"
+  FRONTEND_IMAGE_NAME: "$CI_PROJECT_PATH_LOWER/frontend"
 
   # Yandex Cloud Configuration
   YC_ZONE: "ru-central1-a"
