@@ -157,8 +157,18 @@ build:frontend:
 test:backend:
   stage: test
   image: maven:3.9.8-eclipse-temurin-21-alpine
+  services:
+    - postgres:16-alpine
   variables:
     MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+    # PostgreSQL service configuration
+    POSTGRES_DB: testdb
+    POSTGRES_USER: testuser
+    POSTGRES_PASSWORD: testpass
+    # Spring Boot test configuration
+    SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/testdb
+    SPRING_DATASOURCE_USERNAME: testuser
+    SPRING_DATASOURCE_PASSWORD: testpass
   cache:
     key: "$CI_JOB_NAME"
     paths:
