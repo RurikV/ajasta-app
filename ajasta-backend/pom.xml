@@ -27,7 +27,7 @@
 		<url/>
 	</scm>
 	<properties>
-		<java.version>25</java.version>
+		<java.version>21</java.version>
 		<springframework.version>6.2.11</springframework.version>
 	</properties>
 	<dependencyManagement>
