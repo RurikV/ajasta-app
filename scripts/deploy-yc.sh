@@ -216,8 +216,13 @@ ensure_vm_instance() {
             ssh-keygen -t rsa -b 2048 -f ~/.ssh/yc_key -N "" -C "yc-deploy-key"
         fi
         
-        local ssh_key
-        ssh_key=$(cat ~/.ssh/yc_key.pub)
+        # Create temporary file for SSH key
+        local temp_ssh_key_file
+        temp_ssh_key_file=$(mktemp)
+        cat ~/.ssh/yc_key.pub > "$temp_ssh_key_file"
+        
+        # Ensure cleanup of temporary file
+        trap "rm -f '$temp_ssh_key_file'" EXIT
         
         instance_id=$(yc compute instance create \
             --preemptible \
@@ -228,10 +233,13 @@ ensure_vm_instance() {
             --create-boot-disk "image-folder-id=standard-images,image-family=ubuntu-2204-lts,size=$YC_DISK_SIZE,type=network-hdd" \
             --cores "$YC_CORES" \
             --memory "$YC_MEMORY" \
-            --ssh-key "$ssh_key" \
+            --ssh-key "$temp_ssh_key_file" \
             --service-account-id "$sa_id" \
             --metadata-from-file user-data="$SCRIPT_DIR/cloud-init.yml" \
             --format json | jq -r '.id')
+        
+        # Clean up temporary SSH key file
+        rm -f "$temp_ssh_key_file"
             
         log_success "Created VM instance with ID: $instance_id"
         

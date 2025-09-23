@@ -32,16 +32,53 @@ stages:
   - package
   - deploy
 
-# Template for Docker operations
+# Template for Docker operations with retry mechanisms and timeout handling
 .docker_base: &docker_base
   image: docker:24-dind
   services:
     - docker:24-dind
+  variables:
+    # Docker daemon configuration for better network handling
+    DOCKER_DRIVER: overlay2
+    DOCKER_TLS_CERTDIR: "/certs"
+    # Registry connection timeouts and retries
+    DOCKER_CLI_EXPERIMENTAL: enabled
   before_script:
+    # Configure Docker daemon with retry and timeout settings
     - |
-      echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER \
-        --password-stdin $CI_REGISTRY
-    - docker info
+      mkdir -p ~/.docker
+      cat > ~/.docker/config.json << EOF
+      {
+        "experimental": "enabled",
+        "registry-mirrors": [],
+        "max-concurrent-downloads": 3,
+        "max-concurrent-uploads": 3
+      }
+      EOF
+    # Retry mechanism for Docker login with exponential backoff
+    - |
+      retry_count=0
+      max_retries=5
+      base_wait=2
+      while [ $retry_count -lt $max_retries ]; do
+        echo "Attempting Docker login (attempt $((retry_count + 1))/$max_retries)..."
+        if echo $CI_REGISTRY_PASSWORD | timeout 30 docker login -u $CI_REGISTRY_USER \
+           --password-stdin $CI_REGISTRY; then
+          echo "✅ Docker login successful"
+          break
+        else
+          retry_count=$((retry_count + 1))
+          if [ $retry_count -lt $max_retries ]; then
+            wait_time=$((base_wait * retry_count))
+            echo "⚠️ Docker login failed, retrying in ${wait_time}s..."
+            sleep $wait_time
+          else
+            echo "❌ Docker login failed after $max_retries attempts"
+            exit 1
+          fi
+        fi
+      done
+    - timeout 10 docker info || (echo "Docker info timeout" && exit 1)
 
 # Validate stage - check code quality and configuration
 validate:syntax:
@@ -90,24 +127,79 @@ build:backend:
     # Convert project path to lowercase for Docker registry compatibility
     - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
     - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
-    # Check if image with this commit SHA already exists (idempotency)
+    # Check if image with this commit SHA already exists (idempotency) - with retry
     - |
-      if docker manifest inspect \
-         $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
-         > /dev/null 2>&1; then
-        echo "Backend image already exists for commit $DOCKER_IMAGE_TAG," \
-             "skipping build"
+      echo "Checking if backend image already exists..."
+      retry_count=0
+      max_retries=3
+      image_exists=false
+      while [ $retry_count -lt $max_retries ]; do
+        if timeout 60 docker manifest inspect \
+           $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
+           > /dev/null 2>&1; then
+          echo "✅ Backend image already exists for commit $DOCKER_IMAGE_TAG, skipping build"
+          image_exists=true
+          break
+        else
+          retry_count=$((retry_count + 1))
+          if [ $retry_count -lt $max_retries ]; then
+            echo "⚠️ Manifest inspect failed, retrying ($((retry_count + 1))/$max_retries)..."
+            sleep 5
+          fi
+        fi
+      done
+      if [ "$image_exists" = true ]; then
         exit 0
       fi
-    # Build with cache optimization for idempotency
+      echo "Image does not exist or manifest check failed, proceeding with build..."
+    # Build with cache optimization and retry mechanisms
     - cd ajasta-backend
-    - docker build
-        --cache-from $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG
-        --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG
-        --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG
-        .
-    - docker push $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG
-    - docker push $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG
+    - |
+      echo "Building backend Docker image..."
+      retry_count=0
+      max_retries=3
+      while [ $retry_count -lt $max_retries ]; do
+        if timeout 600 docker build \
+           --cache-from $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
+           --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           . ; then
+          echo "✅ Backend Docker build successful"
+          break
+        else
+          retry_count=$((retry_count + 1))
+          if [ $retry_count -lt $max_retries ]; then
+            echo "⚠️ Docker build failed, retrying ($((retry_count + 1))/$max_retries)..."
+            sleep 10
+          else
+            echo "❌ Docker build failed after $max_retries attempts"
+            exit 1
+          fi
+        fi
+      done
+    # Push images with retry mechanism
+    - |
+      for tag in "$DOCKER_IMAGE_TAG" "$DOCKER_LATEST_TAG"; do
+        echo "Pushing $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag..."
+        retry_count=0
+        max_retries=5
+        while [ $retry_count -lt $max_retries ]; do
+          if timeout 300 docker push $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag; then
+            echo "✅ Successfully pushed $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag"
+            break
+          else
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+              wait_time=$((5 * retry_count))
+              echo "⚠️ Push failed, retrying in ${wait_time}s ($((retry_count + 1))/$max_retries)..."
+              sleep $wait_time
+            else
+              echo "❌ Failed to push $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag after $max_retries attempts"
+              exit 1
+            fi
+          fi
+        done
+      done
   artifacts:
     reports:
       dotenv: build.env
@@ -123,15 +215,31 @@ build:frontend:
     # Convert project path to lowercase for Docker registry compatibility
     - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
     - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
-    # Check if image with this commit SHA already exists (idempotency)
+    # Check if image with this commit SHA already exists (idempotency) - with retry
     - |
-      if docker manifest inspect \
-         $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
-         > /dev/null 2>&1; then
-        echo "Frontend image already exists for commit $DOCKER_IMAGE_TAG," \
-             "skipping build"
+      echo "Checking if frontend image already exists..."
+      retry_count=0
+      max_retries=3
+      image_exists=false
+      while [ $retry_count -lt $max_retries ]; do
+        if timeout 60 docker manifest inspect \
+           $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
+           > /dev/null 2>&1; then
+          echo "✅ Frontend image already exists for commit $DOCKER_IMAGE_TAG, skipping build"
+          image_exists=true
+          break
+        else
+          retry_count=$((retry_count + 1))
+          if [ $retry_count -lt $max_retries ]; then
+            echo "⚠️ Manifest inspect failed, retrying ($((retry_count + 1))/$max_retries)..."
+            sleep 5
+          fi
+        fi
+      done
+      if [ "$image_exists" = true ]; then
         exit 0
       fi
+      echo "Image does not exist or manifest check failed, proceeding with build..."
     # Build with configurable API URL for different environments
     - cd ajasta-react
     - |
@@ -140,14 +248,53 @@ build:frontend:
       else
         API_BASE_URL="http://localhost:8090/api"
       fi
-    - docker build
-        --cache-from $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG
-        --build-arg API_BASE_URL="$API_BASE_URL"
-        --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG
-        --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG
-        .
-    - docker push $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG
-    - docker push $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG
+    - |
+      echo "Building frontend Docker image..."
+      retry_count=0
+      max_retries=3
+      while [ $retry_count -lt $max_retries ]; do
+        if timeout 600 docker build \
+           --cache-from $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           --build-arg API_BASE_URL="$API_BASE_URL" \
+           --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
+           --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           . ; then
+          echo "✅ Frontend Docker build successful"
+          break
+        else
+          retry_count=$((retry_count + 1))
+          if [ $retry_count -lt $max_retries ]; then
+            echo "⚠️ Docker build failed, retrying ($((retry_count + 1))/$max_retries)..."
+            sleep 10
+          else
+            echo "❌ Docker build failed after $max_retries attempts"
+            exit 1
+          fi
+        fi
+      done
+    # Push images with retry mechanism
+    - |
+      for tag in "$DOCKER_IMAGE_TAG" "$DOCKER_LATEST_TAG"; do
+        echo "Pushing $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag..."
+        retry_count=0
+        max_retries=5
+        while [ $retry_count -lt $max_retries ]; do
+          if timeout 300 docker push $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag; then
+            echo "✅ Successfully pushed $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag"
+            break
+          else
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+              wait_time=$((5 * retry_count))
+              echo "⚠️ Push failed, retrying in ${wait_time}s ($((retry_count + 1))/$max_retries)..."
+              sleep $wait_time
+            else
+              echo "❌ Failed to push $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag after $max_retries attempts"
+              exit 1
+            fi
+          fi
+        done
+      done
   only:
     - main
     - develop
