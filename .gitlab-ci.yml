@@ -61,9 +61,10 @@ stages:
       max_retries=5
       base_wait=2
       while [ $retry_count -lt $max_retries ]; do
-        echo "Attempting Docker login (attempt $((retry_count + 1))/$max_retries)..."
-        if echo $CI_REGISTRY_PASSWORD | timeout 30 docker login -u $CI_REGISTRY_USER \
-           --password-stdin $CI_REGISTRY; then
+        echo "Attempting Docker login (attempt" \
+             "$((retry_count + 1))/$max_retries)..."
+        if echo $CI_REGISTRY_PASSWORD | timeout 30 docker login \
+           -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY; then
           echo "✅ Docker login successful"
           break
         else
@@ -127,7 +128,8 @@ build:backend:
     # Convert project path to lowercase for Docker registry compatibility
     - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
     - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
-    # Check if image with this commit SHA already exists (idempotency) - with retry
+    # Check if image with this commit SHA already exists (idempotency)
+    # - with retry
     - |
       echo "Checking if backend image already exists..."
       retry_count=0
@@ -137,13 +139,15 @@ build:backend:
         if timeout 60 docker manifest inspect \
            $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
            > /dev/null 2>&1; then
-          echo "✅ Backend image already exists for commit $DOCKER_IMAGE_TAG, skipping build"
+          echo "✅ Backend image already exists for commit $DOCKER_IMAGE_TAG," \
+               "skipping build"
           image_exists=true
           break
         else
           retry_count=$((retry_count + 1))
           if [ $retry_count -lt $max_retries ]; then
-            echo "⚠️ Manifest inspect failed, retrying ($((retry_count + 1))/$max_retries)..."
+            echo "⚠️ Manifest inspect failed, retrying" \
+                 "($((retry_count + 1))/$max_retries)..."
             sleep 5
           fi
         fi
@@ -151,7 +155,8 @@ build:backend:
       if [ "$image_exists" = true ]; then
         exit 0
       fi
-      echo "Image does not exist or manifest check failed, proceeding with build..."
+      echo "Image does not exist or manifest check failed," \
+           "proceeding with build..."
     # Build with cache optimization and retry mechanisms
     - cd ajasta-backend
     - |
@@ -160,7 +165,8 @@ build:backend:
       max_retries=3
       while [ $retry_count -lt $max_retries ]; do
         if timeout 600 docker build \
-           --cache-from $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           --cache-from \
+           $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
            --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
            --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
            . ; then
@@ -169,7 +175,8 @@ build:backend:
         else
           retry_count=$((retry_count + 1))
           if [ $retry_count -lt $max_retries ]; then
-            echo "⚠️ Docker build failed, retrying ($((retry_count + 1))/$max_retries)..."
+            echo "⚠️ Docker build failed, retrying" \
+                 "($((retry_count + 1))/$max_retries)..."
             sleep 10
           else
             echo "❌ Docker build failed after $max_retries attempts"
@@ -184,17 +191,22 @@ build:backend:
         retry_count=0
         max_retries=5
         while [ $retry_count -lt $max_retries ]; do
-          if timeout 300 docker push $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag; then
-            echo "✅ Successfully pushed $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag"
+          if timeout 300 docker push \
+             $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag; then
+            echo "✅ Successfully pushed" \
+                 "$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag"
             break
           else
             retry_count=$((retry_count + 1))
             if [ $retry_count -lt $max_retries ]; then
               wait_time=$((5 * retry_count))
-              echo "⚠️ Push failed, retrying in ${wait_time}s ($((retry_count + 1))/$max_retries)..."
+              echo "⚠️ Push failed, retrying in ${wait_time}s" \
+                   "($((retry_count + 1))/$max_retries)..."
               sleep $wait_time
             else
-              echo "❌ Failed to push $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag after $max_retries attempts"
+              echo "❌ Failed to push" \
+                   "$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag" \
+                   "after $max_retries attempts"
               exit 1
             fi
           fi
@@ -215,7 +227,8 @@ build:frontend:
     # Convert project path to lowercase for Docker registry compatibility
     - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
     - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
-    # Check if image with this commit SHA already exists (idempotency) - with retry
+    # Check if image with this commit SHA already exists (idempotency)
+    # - with retry
     - |
       echo "Checking if frontend image already exists..."
       retry_count=0
@@ -225,13 +238,15 @@ build:frontend:
         if timeout 60 docker manifest inspect \
            $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
            > /dev/null 2>&1; then
-          echo "✅ Frontend image already exists for commit $DOCKER_IMAGE_TAG, skipping build"
+          echo "✅ Frontend image already exists for commit $DOCKER_IMAGE_TAG," \
+               "skipping build"
           image_exists=true
           break
         else
           retry_count=$((retry_count + 1))
           if [ $retry_count -lt $max_retries ]; then
-            echo "⚠️ Manifest inspect failed, retrying ($((retry_count + 1))/$max_retries)..."
+            echo "⚠️ Manifest inspect failed, retrying" \
+                 "($((retry_count + 1))/$max_retries)..."
             sleep 5
           fi
         fi
@@ -239,7 +254,8 @@ build:frontend:
       if [ "$image_exists" = true ]; then
         exit 0
       fi
-      echo "Image does not exist or manifest check failed, proceeding with build..."
+      echo "Image does not exist or manifest check failed," \
+           "proceeding with build..."
     # Build with configurable API URL for different environments
     - cd ajasta-react
     - |
@@ -254,7 +270,8 @@ build:frontend:
       max_retries=3
       while [ $retry_count -lt $max_retries ]; do
         if timeout 600 docker build \
-           --cache-from $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           --cache-from \
+           $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
            --build-arg API_BASE_URL="$API_BASE_URL" \
            --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
            --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
@@ -264,7 +281,8 @@ build:frontend:
         else
           retry_count=$((retry_count + 1))
           if [ $retry_count -lt $max_retries ]; then
-            echo "⚠️ Docker build failed, retrying ($((retry_count + 1))/$max_retries)..."
+            echo "⚠️ Docker build failed, retrying" \
+                 "($((retry_count + 1))/$max_retries)..."
             sleep 10
           else
             echo "❌ Docker build failed after $max_retries attempts"
@@ -279,17 +297,22 @@ build:frontend:
         retry_count=0
         max_retries=5
         while [ $retry_count -lt $max_retries ]; do
-          if timeout 300 docker push $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag; then
-            echo "✅ Successfully pushed $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag"
+          if timeout 300 docker push \
+             $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag; then
+            echo "✅ Successfully pushed" \
+                 "$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag"
             break
           else
             retry_count=$((retry_count + 1))
             if [ $retry_count -lt $max_retries ]; then
               wait_time=$((5 * retry_count))
-              echo "⚠️ Push failed, retrying in ${wait_time}s ($((retry_count + 1))/$max_retries)..."
+              echo "⚠️ Push failed, retrying in ${wait_time}s" \
+                   "($((retry_count + 1))/$max_retries)..."
               sleep $wait_time
             else
-              echo "❌ Failed to push $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag after $max_retries attempts"
+              echo "❌ Failed to push" \
+                   "$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag" \
+                   "after $max_retries attempts"
               exit 1
             fi
           fi
