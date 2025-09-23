@@ -241,10 +241,7 @@ package:compose:
     # Create deployment package with environment-specific configuration
     - mkdir -p deploy
     # Substitute image tags in docker-compose for deployment
-    - envsubst \
-        '${DOCKER_REGISTRY} ${BACKEND_IMAGE_LOWER} ${FRONTEND_IMAGE_LOWER} \
-        ${DOCKER_IMAGE_TAG}' \
-        < docker-compose.yml > deploy/docker-compose.yml
+    - envsubst '${DOCKER_REGISTRY} ${BACKEND_IMAGE_LOWER} ${FRONTEND_IMAGE_LOWER} ${DOCKER_IMAGE_TAG}' < docker-compose.yml > deploy/docker-compose.yml
     - cp -r scripts deploy/
     - echo "DOCKER_IMAGE_TAG=$DOCKER_IMAGE_TAG" > deploy/.env
     - BACKEND_IMG="$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG"
