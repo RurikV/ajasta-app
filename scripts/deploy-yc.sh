@@ -29,19 +29,19 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 log() {
-    echo -e "${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
+    echo -e "${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1" >&2
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    echo -e "${GREEN}[SUCCESS]${NC} $1" >&2
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    echo -e "${YELLOW}[WARNING]${NC} $1" >&2
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
 # Check if Yandex Cloud CLI is installed and configured
@@ -53,12 +53,46 @@ check_yc_cli() {
         exit 1
     fi
     
-    if ! yc config list &> /dev/null; then
-        log_error "Yandex Cloud CLI is not configured"
+    # Configure YC CLI with provided credentials
+    log "Configuring Yandex Cloud CLI with provided credentials..."
+    
+    if [[ -n "${YC_TOKEN:-}" ]]; then
+        yc config set token "$YC_TOKEN"
+        log "Set YC token"
+    else
+        log_error "YC_TOKEN environment variable is not set"
         exit 1
     fi
     
-    log_success "Yandex Cloud CLI is ready"
+    if [[ -n "${YC_CLOUD_ID:-}" ]]; then
+        yc config set cloud-id "$YC_CLOUD_ID"
+        log "Set YC cloud-id: $YC_CLOUD_ID"
+    else
+        log_error "YC_CLOUD_ID environment variable is not set"
+        exit 1
+    fi
+    
+    if [[ -n "${YC_FOLDER_ID:-}" ]]; then
+        yc config set folder-id "$YC_FOLDER_ID"
+        log "Set YC folder-id: $YC_FOLDER_ID"
+    else
+        log_error "YC_FOLDER_ID environment variable is not set"
+        exit 1
+    fi
+    
+    # Test the configuration
+    if ! yc config list &> /dev/null; then
+        log_error "Yandex Cloud CLI configuration failed"
+        exit 1
+    fi
+    
+    # Verify authentication works by testing a simple command
+    if ! yc compute instance list &> /dev/null; then
+        log_error "Yandex Cloud authentication failed - token may be invalid or expired"
+        exit 1
+    fi
+    
+    log_success "Yandex Cloud CLI is ready and authenticated"
 }
 
 # Create or get VPC network (idempotent)
@@ -121,10 +155,10 @@ ensure_security_group() {
             --name "$YC_SECURITY_GROUP_NAME" \
             --description "Security group for Ajasta App" \
             --network-id "$network_id" \
-            --rule "direction=ingress,port=22,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
-            --rule "direction=ingress,port=80,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
-            --rule "direction=ingress,port=8090,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
-            --rule "direction=ingress,port=5432,protocol=tcp,v4-cidrs=[10.0.0.0/24]" \
+            --rule "direction=ingress,from-port=22,to-port=22,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
+            --rule "direction=ingress,from-port=80,to-port=80,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
+            --rule "direction=ingress,from-port=8090,to-port=8090,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
+            --rule "direction=ingress,from-port=5432,to-port=5432,protocol=tcp,v4-cidrs=[10.0.0.0/24]" \
             --rule "direction=egress,protocol=any,v4-cidrs=[0.0.0.0/0]" \
             --format json | jq -r '.id')
         log_success "Created security group with ID: $sg_id"
@@ -249,7 +283,7 @@ deploy_application() {
     
     # Execute deployment on VM
     log "Executing deployment on VM..."
-    ssh -o StrictHostKeyChecking=no -i ~/.ssh/yc_key "ubuntu@$external_ip" << EOF
+    ssh -o StrictHostKeyChecking=no -i ~/.ssh/yc_key "ubuntu@$external_ip" << 'EOF'
 set -euo pipefail
 
 # Load environment variables
@@ -294,13 +328,6 @@ main() {
     log "Starting Yandex Cloud deployment for environment: $ENVIRONMENT"
     
     check_yc_cli
-    
-    # Ensure required environment variables are set
-    if [[ -z "${YC_TOKEN:-}" ]] || [[ -z "${YC_CLOUD_ID:-}" ]] || [[ -z "${YC_FOLDER_ID:-}" ]]; then
-        log_error "Required environment variables are not set:"
-        log_error "YC_TOKEN, YC_CLOUD_ID, YC_FOLDER_ID"
-        exit 1
-    fi
     
     # Create infrastructure (idempotent)
     local network_id
