@@ -155,12 +155,22 @@ ensure_security_group() {
             --name "$YC_SECURITY_GROUP_NAME" \
             --description "Security group for Ajasta App" \
             --network-id "$network_id" \
-            --rule "direction=ingress,from-port=22,to-port=22,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
-            --rule "direction=ingress,from-port=80,to-port=80,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
-            --rule "direction=ingress,from-port=8090,to-port=8090,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
-            --rule "direction=ingress,from-port=5432,to-port=5432,protocol=tcp,v4-cidrs=[10.0.0.0/24]" \
-            --rule "direction=egress,protocol=any,v4-cidrs=[0.0.0.0/0]" \
+            --rule "direction=ingress,port=22,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
+            --rule "direction=ingress,port=80,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
+            --rule "direction=ingress,port=8090,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
+            --rule "direction=ingress,port=5432,protocol=tcp,v4-cidrs=[10.0.0.0/24]" \
+            --rule "direction=egress,protocol=tcp,v4-cidrs=[0.0.0.0/0]" \
+            --rule "direction=egress,protocol=udp,v4-cidrs=[0.0.0.0/0]" \
+            --rule "direction=egress,protocol=icmp,v4-cidrs=[0.0.0.0/0]" \
             --format json | jq -r '.id')
+        
+        # Validate that security group creation was successful
+        if [[ -z "$sg_id" || "$sg_id" == "null" ]]; then
+            log_error "Failed to create security group - security group ID is empty"
+            log_error "Check Yandex Cloud quotas, permissions, and network configuration"
+            exit 1
+        fi
+        
         log_success "Created security group with ID: $sg_id"
     else
         log_success "Security group already exists with ID: $sg_id"
