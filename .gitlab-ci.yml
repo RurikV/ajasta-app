@@ -73,30 +73,58 @@ stages:
         "max-concurrent-uploads": 3
       }
       EOF
-    # Retry mechanism for Docker login with exponential backoff
+    # Retry mechanism for GitLab Container Registry login with exponential backoff
     - |
       retry_count=0
       max_retries=5
       base_wait=2
       while [ $retry_count -lt $max_retries ]; do
-        echo "Attempting Docker login (attempt" \
+        echo "Attempting GitLab registry login (attempt" \
              "$((retry_count + 1))/$max_retries)..."
         if echo $CI_REGISTRY_PASSWORD | timeout 30 docker login \
            -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY; then
-          echo "✅ Docker login successful"
+          echo "✅ GitLab registry login successful"
           break
         else
           retry_count=$((retry_count + 1))
           if [ $retry_count -lt $max_retries ]; then
             wait_time=$((base_wait * retry_count))
-            echo "⚠️ Docker login failed, retrying in ${wait_time}s..."
+            echo "⚠️ GitLab registry login failed, retrying in ${wait_time}s..."
             sleep $wait_time
           else
-            echo "❌ Docker login failed after $max_retries attempts"
+            echo "❌ GitLab registry login failed after $max_retries attempts"
             exit 1
           fi
         fi
       done
+    # Login to Docker Hub to avoid rate limiting (optional credentials)
+    - |
+      if [ -n "${DOCKER_HUB_USER:-}" ] && [ -n "${DOCKER_HUB_PASSWORD:-}" ]; then
+        echo "Attempting Docker Hub login..."
+        retry_count=0
+        max_retries=3
+        while [ $retry_count -lt $max_retries ]; do
+          if echo $DOCKER_HUB_PASSWORD | timeout 30 docker login \
+             -u $DOCKER_HUB_USER --password-stdin; then
+            echo "✅ Docker Hub login successful"
+            break
+          else
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+              echo "⚠️ Docker Hub login failed, retrying" \
+                   "($((retry_count + 1))/$max_retries)..."
+              sleep 5
+            else
+              echo "⚠️ Docker Hub login failed after $max_retries attempts," \
+                   "proceeding without authentication"
+              break
+            fi
+          fi
+        done
+      else
+        echo "ℹ️ Docker Hub credentials not provided, proceeding without" \
+             "authentication (may hit rate limits)"
+      fi
     - timeout 10 docker info || (echo "Docker info timeout" && exit 1)
 
 # Validate stage - check code quality and configuration

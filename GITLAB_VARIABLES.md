@@ -25,6 +25,17 @@ These are automatically provided by GitLab:
 | `CI_REGISTRY_USER` | Registry username | Yes |
 | `CI_REGISTRY_PASSWORD` | Registry password | Yes |
 
+### Docker Hub Authentication (Optional)
+
+To avoid Docker Hub rate limiting issues during builds:
+
+| Variable | Description | Required | Type | Example |
+|----------|-------------|----------|------|---------|
+| `DOCKER_HUB_USER` | Docker Hub username | No | Variable | `myusername` |
+| `DOCKER_HUB_PASSWORD` | Docker Hub password or access token | No | Protected | `dckr_pat_...` |
+
+**Note:** Without Docker Hub authentication, you may encounter "401 Unauthorized" errors when pulling base images like `maven:3.9.8-eclipse-temurin-21-alpine` due to rate limiting.
+
 ### SSH Configuration
 
 | Variable | Description | Required | Type |
@@ -93,7 +104,29 @@ These are automatically provided by GitLab:
    - Add `YC_VM_EXTERNAL_IP` variable with the external IP
    - This enables proper frontend API configuration
 
-### 4. Registry Access
+### 4. Docker Hub Setup (Optional)
+
+To avoid Docker Hub rate limiting during builds:
+
+1. **Create Docker Hub Account:**
+   - Sign up at [hub.docker.com](https://hub.docker.com) if you don't have an account
+
+2. **Generate Access Token (Recommended):**
+   ```bash
+   # Go to Docker Hub → Account Settings → Security → Access Tokens
+   # Create new access token with "Public Repo Read" permissions
+   ```
+
+3. **Add variables to GitLab:**
+   - Go to Project Settings > CI/CD > Variables
+   - Add `DOCKER_HUB_USER` with your Docker Hub username
+   - Add `DOCKER_HUB_PASSWORD` with your access token (mark as Protected)
+
+4. **Alternative - Use Password:**
+   - Instead of access token, you can use your Docker Hub password
+   - Access tokens are more secure and recommended
+
+### 5. Registry Access
 
 Ensure your GitLab project has Container Registry enabled:
 - Go to Project Settings > General > Visibility
@@ -143,6 +176,11 @@ Hide values in job logs:
 3. **Registry Access Denied:**
    - Ensure Container Registry is enabled
    - Check service account has `container-registry.images.puller` role
+
+4. **Docker Hub Rate Limiting (401 Unauthorized):**
+   - Error: "failed to resolve source metadata for docker.io/library/maven"
+   - Solution: Add `DOCKER_HUB_USER` and `DOCKER_HUB_PASSWORD` variables
+   - Alternative: Use Docker Hub access token instead of password
 
 ### Validation Commands
 
