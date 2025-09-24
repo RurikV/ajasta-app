@@ -73,7 +73,7 @@ stages:
         "max-concurrent-uploads": 3
       }
       EOF
-    # Retry mechanism for GitLab Container Registry login with exponential backoff
+    # Retry mechanism for GitLab Container Registry login with backoff
     - |
       retry_count=0
       max_retries=5
@@ -99,7 +99,8 @@ stages:
       done
     # Login to Docker Hub to avoid rate limiting (optional credentials)
     - |
-      if [ -n "${DOCKER_HUB_USER:-}" ] && [ -n "${DOCKER_HUB_PASSWORD:-}" ]; then
+      if [ -n "${DOCKER_HUB_USER:-}" ] && \
+         [ -n "${DOCKER_HUB_PASSWORD:-}" ]; then
         echo "Attempting Docker Hub login..."
         retry_count=0
         max_retries=3
