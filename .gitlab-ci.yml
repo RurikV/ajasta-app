@@ -44,6 +44,8 @@ stages:
     # Registry connection timeouts and retries
     DOCKER_CLI_EXPERIMENTAL: enabled
   before_script:
+    # Install coreutils for timeout command in Alpine
+    - apk add --no-cache coreutils
     # Configure Docker daemon with retry and timeout settings
     - |
       mkdir -p ~/.docker
