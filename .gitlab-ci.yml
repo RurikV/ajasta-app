@@ -44,7 +44,8 @@ stages:
     # Registry connection timeouts and retries
     DOCKER_CLI_EXPERIMENTAL: enabled
   before_script:
-    # Install coreutils for timeout command - compatible with both Alpine (Docker) and macOS (shell executor)
+    # Install coreutils for timeout command - compatible with both Alpine
+    # (Docker) and macOS (shell executor)
     - |
       if command -v apk >/dev/null 2>&1; then
         # Alpine Linux (Docker executor)
@@ -58,7 +59,8 @@ stages:
           echo "timeout command already available on macOS"
         fi
       else
-        echo "Neither apk nor brew found. Assuming timeout command is available."
+        echo "Neither apk nor brew found. Assuming timeout command" \
+             "is available."
       fi
     # Configure Docker daemon with retry and timeout settings
     - |
