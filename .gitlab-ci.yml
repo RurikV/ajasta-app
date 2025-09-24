@@ -492,7 +492,7 @@ deploy:staging:
     name: staging
     url: http://$YC_VM_EXTERNAL_IP
   script:
-    - ./deploy/scripts/deploy-yc.sh staging
+    - cd deploy/scripts && ./deploy-all.zsh --mode vm
   only:
     - develop
   when: manual
@@ -503,7 +503,7 @@ deploy:production:
     name: production
     url: http://$YC_VM_EXTERNAL_IP
   script:
-    - ./deploy/scripts/deploy-yc.sh production
+    - cd deploy/scripts && ./deploy-all.zsh --mode vm
   only:
     - main
     - tags
