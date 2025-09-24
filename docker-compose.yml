@@ -25,7 +25,8 @@ services:
 
   # Spring Boot Backend API
   ajasta-backend:
-    image: ${BACKEND_IMAGE:-${DOCKERHUB_USER:-vladimirryrik}/ajasta-backend:alpine}
+    image: >-
+      ${BACKEND_IMAGE:-${DOCKERHUB_USER:-vladimirryrik}/ajasta-backend:alpine}
     container_name: ajasta-backend
     restart: unless-stopped
     depends_on:
@@ -70,7 +71,8 @@ services:
 
   # React Frontend (Nginx)
   ajasta-frontend:
-    image: ${FRONTEND_IMAGE:-${DOCKERHUB_USER:-vladimirryrik}/ajasta-frontend:alpine}
+    image: >-
+      ${FRONTEND_IMAGE:-${DOCKERHUB_USER:-vladimirryrik}/ajasta-frontend:alpine}
     container_name: ajasta-frontend
     restart: unless-stopped
     depends_on:
