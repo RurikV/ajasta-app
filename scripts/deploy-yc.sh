@@ -211,18 +211,73 @@ ensure_vm_instance() {
     if [[ -z "$instance_id" || "$instance_id" == "null" ]]; then
         log "Creating VM instance: $YC_INSTANCE_NAME"
         
-        # Create SSH key if not exists
-        if [[ ! -f ~/.ssh/yc_key ]]; then
-            ssh-keygen -t rsa -b 2048 -f ~/.ssh/yc_key -N "" -C "yc-deploy-key"
+        # Extract public key from YC_SSH_PRIVATE_KEY environment variable
+        local public_key
+        if [[ -n "${YC_SSH_PRIVATE_KEY:-}" ]]; then
+            # Create temporary files for SSH key processing
+            local temp_private_key temp_public_key temp_cloud_init
+            temp_private_key=$(mktemp)
+            temp_public_key=$(mktemp)
+            temp_cloud_init=$(mktemp)
+            
+            # Ensure cleanup of temporary files
+            trap "rm -f '$temp_private_key' '$temp_public_key' '$temp_cloud_init'" EXIT
+            
+            # Write private key to temporary file
+            echo "$YC_SSH_PRIVATE_KEY" > "$temp_private_key"
+            chmod 600 "$temp_private_key"
+            
+            # Extract public key
+            ssh-keygen -y -f "$temp_private_key" > "$temp_public_key"
+            public_key=$(cat "$temp_public_key")
+            
+            # Copy private key to expected location for later SSH connections
+            mkdir -p ~/.ssh
+            chmod 700 ~/.ssh
+            cp "$temp_private_key" ~/.ssh/yc_key
+            chmod 600 ~/.ssh/yc_key
+            cp "$temp_public_key" ~/.ssh/yc_key.pub
+        else
+            log_error "YC_SSH_PRIVATE_KEY environment variable is not set"
+            exit 1
         fi
         
-        # Create temporary file for SSH key
-        local temp_ssh_key_file
-        temp_ssh_key_file=$(mktemp)
-        cat ~/.ssh/yc_key.pub > "$temp_ssh_key_file"
+        # Create cloud-init with SSH key
+        cat > "$temp_cloud_init" << EOF
+#cloud-config
+# Cloud-init configuration for Ajasta App VM
+# Идемпотентная настройка VM с установкой Docker и Docker Compose
+
+# System update and upgrade
+package_update: true
+package_upgrade: true
+
+# Install required packages
+packages:
+  - curl
+  - wget
+  - git
+  - jq
+  - htop
+  - unzip
+  - software-properties-common
+  - apt-transport-https
+  - ca-certificates
+  - gnupg
+  - lsb-release
+
+# Create user and groups
+users:
+  - name: ubuntu
+    groups: [sudo, docker]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - $public_key
+EOF
         
-        # Ensure cleanup of temporary file
-        trap "rm -f '$temp_ssh_key_file'" EXIT
+        # Append the rest of cloud-init from original file
+        tail -n +30 "$SCRIPT_DIR/cloud-init.yml" >> "$temp_cloud_init"
         
         instance_id=$(yc compute instance create \
             --preemptible \
@@ -233,13 +288,19 @@ ensure_vm_instance() {
             --create-boot-disk "image-folder-id=standard-images,image-family=ubuntu-2204-lts,size=$YC_DISK_SIZE,type=network-hdd" \
             --cores "$YC_CORES" \
             --memory "$YC_MEMORY" \
-            --ssh-key "$temp_ssh_key_file" \
             --service-account-id "$sa_id" \
-            --metadata-from-file user-data="$SCRIPT_DIR/cloud-init.yml" \
+            --metadata-from-file user-data="$temp_cloud_init" \
             --format json | jq -r '.id')
         
-        # Clean up temporary SSH key file
-        rm -f "$temp_ssh_key_file"
+        # Clean up temporary files
+        rm -f "$temp_private_key" "$temp_public_key" "$temp_cloud_init"
+        
+        # Validate that instance creation was successful
+        if [[ -z "$instance_id" || "$instance_id" == "null" ]]; then
+            log_error "Failed to create VM instance - instance ID is empty"
+            log_error "Check Yandex Cloud quotas, permissions, and resource availability"
+            exit 1
+        fi
             
         log_success "Created VM instance with ID: $instance_id"
         
