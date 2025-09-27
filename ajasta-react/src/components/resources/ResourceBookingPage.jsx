@@ -18,6 +18,14 @@ const minutesToHHMM = (mins) => {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 };
 
+// Utility: get local date as yyyy-MM-dd (not UTC-based)
+const getLocalDateStr = (d = new Date()) => {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 const isTimeInRanges = (timeHHMM, rangesStr) => {
   if (!rangesStr || !timeHHMM) return false;
   const timeMins = parseTimeToMinutes(timeHHMM);
@@ -103,10 +111,24 @@ const ResourceBookingPage = () => {
 
   const isSlotUnavailable = (timeHHMM) => {
     if (!resource) return false;
-    if (isDateUnavailable(date)) return true;
-    // Daily time ranges
-    return !!(resource.dailyUnavailableRanges && isTimeInRanges(timeHHMM, resource.dailyUnavailableRanges));
 
+    // If selected date is unavailable by config
+    if (isDateUnavailable(date)) return true;
+
+    // Disable all slots for past dates
+    const todayStr = getLocalDateStr();
+    if (date < todayStr) return true;
+
+    // For today, disable slots that start before current local time
+    if (date === todayStr) {
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const slotStart = parseTimeToMinutes(timeHHMM);
+      if (slotStart != null && slotStart < nowMinutes) return true;
+    }
+
+    // Daily unavailable time ranges
+    return !!(resource.dailyUnavailableRanges && isTimeInRanges(timeHHMM, resource.dailyUnavailableRanges));
   };
 
   const handleSelectClick = (key, disabled) => {
