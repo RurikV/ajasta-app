@@ -19,6 +19,7 @@ import top.ajasta.AjastaApp.order.entity.Order;
 import top.ajasta.AjastaApp.order.entity.OrderItem;
 import top.ajasta.AjastaApp.order.repository.OrderItemRepository;
 import top.ajasta.AjastaApp.order.repository.OrderRepository;
+import top.ajasta.AjastaApp.payment.repository.PaymentRepository;
 import top.ajasta.AjastaApp.response.Response;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -54,6 +55,7 @@ public class OrderServiceImpl  implements OrderService{
     private final TemplateEngine templateEngine;
     private final CartService cartService;
     private final CartRepository cartRepository;
+    private final PaymentRepository paymentRepository;
 
 
     @Value("${base.payment.link}")
@@ -266,6 +268,36 @@ public class OrderServiceImpl  implements OrderService{
         return Response.<OrderDTO>builder()
                 .statusCode(HttpStatus.OK.value())
                 .message("Order status updated successfully")
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public Response<?> deleteOwnOrder(Long id) {
+        log.info("Inside deleteOwnOrder()");
+        User customer = userService.getCurrentLoggedInUser();
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Order Not Found"));
+
+        if (order.getUser() == null || !order.getUser().getId().equals(customer.getId())) {
+            throw new BadRequestException("You are not allowed to delete this order");
+        }
+
+        // Delete payment first if exists to avoid FK constraint issues
+        if (order.getPayment() != null) {
+            try {
+                paymentRepository.delete(order.getPayment());
+            } catch (Exception e) {
+                log.warn("Failed to delete payment for order {}: {}", id, e.getMessage());
+            }
+            order.setPayment(null);
+        }
+
+        orderRepository.delete(order);
+
+        return Response.builder()
+                .statusCode(HttpStatus.OK.value())
+                .message("Order deleted successfully")
                 .build();
     }
 

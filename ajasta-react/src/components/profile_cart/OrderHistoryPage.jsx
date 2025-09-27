@@ -7,6 +7,7 @@ import { useError } from '../common/ErrorDisplay';
 const OrderHistoryPage = () => {
 
     const [orders, setOrders] = useState(null);
+    const [message, setMessage] = useState(null);
     const navigate = useNavigate();
     const { ErrorDisplay, showError } = useError();
 
@@ -76,6 +77,23 @@ const OrderHistoryPage = () => {
         navigate(`/leave-review?orderId=${orderId}&menuId=${menuId}`);
     };
 
+    const handleDeleteOrder = async (orderId) => {
+        const confirm = window.confirm('Are you sure you want to delete this order? This action cannot be undone.');
+        if (!confirm) return;
+        try {
+            const resp = await ApiService.deleteOrder(orderId);
+            if (resp.statusCode === 200) {
+                setOrders((prev) => (prev || []).filter((o) => o.id !== orderId));
+                setMessage('Order deleted successfully');
+                setTimeout(() => setMessage(null), 3000);
+            } else {
+                showError(resp.message || 'Failed to delete order');
+            }
+        } catch (e) {
+            showError(e.response?.data?.message || e.message);
+        }
+    };
+
 
     if (!orders || orders.length === 0) {
         return (
@@ -92,6 +110,9 @@ const OrderHistoryPage = () => {
         <div className="order-history-container">
             {/* Render the ErrorDisplay component */}
             <ErrorDisplay />
+            {message && (
+                <p className="success">{message}</p>
+            )}
             <h1 className="order-history-title">Your Order History</h1>
             <div className="order-list">
                 {orders.map((order) => (
@@ -107,6 +128,13 @@ const OrderHistoryPage = () => {
                             <span className="order-total">
                                 Total: ${order.totalAmount.toFixed(2)}
                             </span>
+                            <button
+                                className="remove-btn"
+                                onClick={() => handleDeleteOrder(order.id)}
+                                style={{ marginLeft: 'auto' }}
+                            >
+                                Delete
+                            </button>
                         </div>
                         <div className="order-items">
                             <h2 className="order-items-title">Order Items:</h2>

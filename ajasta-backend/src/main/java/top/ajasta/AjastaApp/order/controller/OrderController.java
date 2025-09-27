@@ -67,5 +67,10 @@ public class OrderController {
         return ResponseEntity.ok(orderService.countUniqueCustomers());
     }
 
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasAuthority('CUSTOMER')")
+    public ResponseEntity<Response<?>> deleteOrder(@PathVariable Long id) {
+        return ResponseEntity.ok(orderService.deleteOwnOrder(id));
+    }
 
 }

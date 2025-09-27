@@ -258,6 +258,13 @@ export default class ApiService {
     }
 
 
+    static async deleteOrder(id) {
+        const resp = await axios.delete(`${this.BASE_URL}/orders/${id}`, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
     static async countTotalActiveCustomers() {
         const resp = await axios.get(`${this.BASE_URL}/orders/unique-customers`, {
             headers: this.getHeader()
