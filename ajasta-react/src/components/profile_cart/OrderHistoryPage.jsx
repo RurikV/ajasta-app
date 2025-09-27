@@ -138,31 +138,47 @@ const OrderHistoryPage = () => {
                         </div>
                         <div className="order-items">
                             <h2 className="order-items-title">Order Items:</h2>
-                            {order.orderItems.map((item) => (
-                                <div key={item.id} className="order-item">
-                                    <div className="item-details">
-                                        <span className="item-name">{item.menu.name}</span>
-                                        <span className="item-quantity">Quantity: {item.quantity}</span>
-                                        <span className="item-price">
-                                            Price: ${item.pricePerUnit.toFixed(2)}
-                                        </span>
-                                        <span className="subtotal">
-                                            Subtotal: ${item.subtotal.toFixed(2)}
-                                        </span>
-                                        {order.orderStatus.toLowerCase() === 'delivered' && !item.hasReview && (
-                                            <button
-                                                className="review-button"
-                                                onClick={() => handleLeaveReview(order.id, item.menu.id)}
-                                            >
-                                                Leave Review
-                                            </button>
-                                        )}
+                            {order.orderItems && order.orderItems.length > 0 ? (
+                                order.orderItems.map((item) => (
+                                    <div key={item.id} className="order-item">
+                                        <div className="item-details">
+                                            <span className="item-name">{item.menu?.name || 'Item'}</span>
+                                            <span className="item-quantity">Quantity: {item.quantity}</span>
+                                            <span className="item-price">
+                                                Price: ${item.pricePerUnit.toFixed(2)}
+                                            </span>
+                                            <span className="subtotal">
+                                                Subtotal: ${item.subtotal.toFixed(2)}
+                                            </span>
+                                            {order.orderStatus.toLowerCase() === 'delivered' && item.menu && !item.hasReview && (
+                                                <button
+                                                    className="review-button"
+                                                    onClick={() => handleLeaveReview(order.id, item.menu.id)}
+                                                >
+                                                    Leave Review
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div className="item-image-container">
+                                            {item.menu?.imageUrl && (
+                                                <img src={item.menu.imageUrl} alt={item.menu.name} className="item-image" />
+                                            )}
+                                        </div>
                                     </div>
-                                    <div className="item-image-container">
-                                        <img src={item.menu.imageUrl} alt={item.menu.name} className="item-image" />
+                                ))
+                            ) : (
+                                (order.booking || order.bookingDetails) && (
+                                    <div className="order-item">
+                                        <div className="item-details">
+                                            <span className="item-name">{order.bookingTitle || 'Booking'}</span>
+                                            <pre className="item-description" style={{ whiteSpace: 'pre-wrap', margin: '8px 0' }}>
+{order.bookingDetails || 'Booking details not available'}
+                                            </pre>
+                                            <span className="item-price">Total: ${order.totalAmount.toFixed(2)}</span>
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                )
+                            )}
                         </div>
                     </div>
                 ))}

@@ -192,7 +192,11 @@ public class OrderServiceImpl  implements OrderService{
 
         Page<OrderDTO> orderDTOPage  = orderPage.map(order -> {
             OrderDTO dto = modelMapper.map(order, OrderDTO.class);
-            dto.getOrderItems().forEach(orderItemDTO -> orderItemDTO.getMenu().setReviews(null));
+            dto.getOrderItems().forEach(orderItemDTO -> {
+                if (orderItemDTO.getMenu() != null) {
+                    orderItemDTO.getMenu().setReviews(null);
+                }
+            });
             return dto;
         });
 
@@ -310,6 +314,34 @@ public class OrderServiceImpl  implements OrderService{
                 .statusCode(HttpStatus.OK.value())
                 .message("Unique customer count retrieved successfully")
                 .data(uniqueCustomerCount)
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public void createBookingOrder(BigDecimal totalAmount, String bookingTitle, String bookingDetails) {
+        log.info("Inside createBookingOrder() amount={}, title={}...", totalAmount, bookingTitle);
+        User customer = userService.getCurrentLoggedInUser();
+
+        Order order = Order.builder()
+                .user(customer)
+                .orderDate(LocalDateTime.now())
+                .totalAmount(totalAmount == null ? BigDecimal.ZERO : totalAmount)
+                .orderStatus(OrderStatus.INITIALIZED)
+                .paymentStatus(PaymentStatus.PENDING)
+                .orderItems(new ArrayList<>())
+                .booking(Boolean.TRUE)
+                .bookingTitle(bookingTitle)
+                .bookingDetails(bookingDetails)
+                .build();
+
+        Order saved = orderRepository.save(order);
+        OrderDTO dto = modelMapper.map(saved, OrderDTO.class);
+
+        Response.<OrderDTO>builder()
+                .statusCode(HttpStatus.OK.value())
+                .message("Booking recorded in order history")
+                .data(dto)
                 .build();
     }
 

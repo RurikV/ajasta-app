@@ -30,6 +30,7 @@ public class ResourceController {
     private final NotificationService notificationService;
     private final UserService userService;
     private final TemplateEngine templateEngine;
+    private final top.ajasta.AjastaApp.order.services.OrderService orderService;
 
     @Value("${base.payment.link}")
     private String basePaymentLink;
@@ -107,6 +108,22 @@ public class ResourceController {
                 .isHtml(true)
                 .build());
 
+        // Record booking as an order entry in user's history (single slot)
+        java.math.BigDecimal perSlot = resource != null && resource.getPricePerSlot() != null
+                ? resource.getPricePerSlot()
+                : java.math.BigDecimal.ZERO;
+        try {
+            String bookingTitle = "Booking: " + (resource != null ? resource.getName() : ("Resource #" + id));
+            String bookingDetails = new StringBuilder()
+                    .append("Date: ").append(safe(request.getDate())).append("\n")
+                    .append("Time: ").append(safe(request.getStartTime())).append(" - ").append(safe(request.getEndTime())).append("\n")
+                    .append("Unit: ").append(request.getUnit() != null ? request.getUnit() : 1).append("\n")
+                    .append("Price per slot: ").append(totalAmount).append("\n")
+                    .append("Total: ").append(totalAmount)
+                    .toString();
+            orderService.createBookingOrder(perSlot, bookingTitle, bookingDetails);
+        } catch (Exception ignored) {}
+
         return ResponseEntity.ok(Response.builder()
                 .statusCode(200)
                 .message("Booking request accepted")
@@ -171,6 +188,28 @@ public class ResourceController {
                 .body(emailBody)
                 .isHtml(true)
                 .build());
+
+        // Record booking as an order entry in user's history (batch slots)
+        try {
+            String bookingTitle = "Booking: " + (resource != null ? resource.getName() : ("Resource #" + id)) + " (" + totalSlots + " slot(s))";
+            StringBuilder textSlots = new StringBuilder();
+            if (request.getSlots() != null) {
+                for (top.ajasta.AjastaApp.reservation.dtos.BookBatchRequest.Slot s : request.getSlots()) {
+                    textSlots.append("- ")
+                            .append(s.getStartTime()).append(" - ").append(s.getEndTime())
+                            .append(" | Unit ").append(s.getUnit() == null ? 1 : s.getUnit())
+                            .append("\n");
+                }
+            }
+            String bookingDetails = new StringBuilder()
+                    .append("Date: ").append(safe(request.getDate())).append("\n")
+                    .append("Total slots: ").append(totalSlots).append("\n")
+                    .append(textSlots)
+                    .append("Price per slot: ").append(pricePerSlot).append("\n")
+                    .append("Total: ").append(totalAmount)
+                    .toString();
+            orderService.createBookingOrder(totalAmountBD, bookingTitle, bookingDetails);
+        } catch (Exception ignored) {}
 
         return ResponseEntity.ok(Response.builder()
                 .statusCode(200)
@@ -245,6 +284,31 @@ public class ResourceController {
                 .body(emailBody)
                 .isHtml(true)
                 .build());
+
+        // Record booking as an order entry in user's history (multi-day)
+        try {
+            int totalDays = request.getDays() == null ? 0 : request.getDays().size();
+            String bookingTitle = "Booking: " + (resource != null ? resource.getName() : ("Resource #" + id)) +
+                    " (" + totalSlots + " slot(s) across " + totalDays + " day(s))";
+            StringBuilder details = new StringBuilder();
+            if (request.getDays() != null) {
+                for (top.ajasta.AjastaApp.reservation.dtos.BookMultiRequest.Day day : request.getDays()) {
+                    details.append("Date: ").append(safe(day.getDate())).append("\n");
+                    if (day.getSlots() != null) {
+                        for (top.ajasta.AjastaApp.reservation.dtos.BookBatchRequest.Slot s : day.getSlots()) {
+                            details.append("- ")
+                                    .append(s.getStartTime()).append(" - ").append(s.getEndTime())
+                                    .append(" | Unit ").append(s.getUnit() == null ? 1 : s.getUnit())
+                                    .append("\n");
+                        }
+                    }
+                }
+            }
+            details.append("Total slots: ").append(totalSlots).append("\n")
+                    .append("Price per slot: ").append(pricePerSlot).append("\n")
+                    .append("Total: ").append(totalAmount);
+            orderService.createBookingOrder(totalAmountBD, bookingTitle, details.toString());
+        } catch (Exception ignored) {}
 
         int totalDays = request.getDays() == null ? 0 : request.getDays().size();
         return ResponseEntity.ok(Response.builder()

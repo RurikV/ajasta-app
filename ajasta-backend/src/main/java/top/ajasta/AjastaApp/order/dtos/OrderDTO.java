@@ -31,4 +31,9 @@ public class OrderDTO {
     private UserDTO user; // Customer who is making/made the order
 
     private List<OrderItemDTO> orderItems;
+
+    // Booking metadata mirrored from Order entity
+    private Boolean booking;
+    private String bookingTitle;
+    private String bookingDetails;
 }
