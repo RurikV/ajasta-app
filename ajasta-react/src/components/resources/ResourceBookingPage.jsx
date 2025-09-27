@@ -55,6 +55,7 @@ const ResourceBookingPage = () => {
 
   // Holds: reservation holds for 30 minutes after booking (per slot key)
   const [holds, setHolds] = useState({}); // { [key]: expiresAtMs }
+  const [holdsOwner, setHoldsOwner] = useState(null);
   const tickRef = useRef(null);
   const [tick, setTick] = useState(0); // trigger re-render each second
 
@@ -78,6 +79,15 @@ const ResourceBookingPage = () => {
 
   // Local storage key for holds
   const getHoldsKey = () => (resource ? `resourceHolds_${resource.id}` : null);
+  const getOwnerKey = () => (resource ? `resourceHolds_${resource.id}_owner` : null);
+  const getCurrentUserKey = () => {
+    try {
+      const fromApi = typeof ApiService.getToken === 'function' ? ApiService.getToken() : null;
+      return fromApi || localStorage.getItem('token') || 'anon';
+    } catch {
+      return localStorage.getItem('token') || 'anon';
+    }
+  };
 
   // Load holds from localStorage when resource changes
   useEffect(() => {
@@ -91,9 +101,13 @@ const ResourceBookingPage = () => {
       const cleaned = Object.fromEntries(Object.entries(parsed).filter(([, exp]) => typeof exp === 'number' && exp > now));
       setHolds(cleaned);
       if (k) localStorage.setItem(k, JSON.stringify(cleaned));
+      const ok = getOwnerKey();
+      const owner = ok ? localStorage.getItem(ok) : null;
+      setHoldsOwner(owner || null);
     } catch (e) {
       // ignore parse errors
       setHolds({});
+      setHoldsOwner(null);
     }
   }, [resource]);
 
@@ -106,9 +120,21 @@ const ResourceBookingPage = () => {
       const now = Date.now();
       setHolds((prev) => {
         const cleaned = Object.fromEntries(Object.entries(prev).filter(([, exp]) => exp > now));
-        if (getHoldsKey()) {
-          try { localStorage.setItem(getHoldsKey(), JSON.stringify(cleaned)); } catch {}
-        }
+        const holdsKey = getHoldsKey();
+        const ownerKey = getOwnerKey();
+        try {
+          if (holdsKey) {
+            if (Object.keys(cleaned).length === 0) {
+              // No active holds left: clear storage and owner marker
+              localStorage.removeItem(holdsKey);
+              if (ownerKey) localStorage.removeItem(ownerKey);
+              // Also clear state owner to hide countdown banner for the former owner
+              setHoldsOwner(null);
+            } else {
+              localStorage.setItem(holdsKey, JSON.stringify(cleaned));
+            }
+          }
+        } catch {}
         return cleaned;
       });
     }, 1000);
@@ -134,6 +160,12 @@ const ResourceBookingPage = () => {
     const k = getHoldsKey();
     if (k) {
       try { localStorage.setItem(k, JSON.stringify(next)); } catch {}
+    }
+    const ok = getOwnerKey();
+    const owner = getCurrentUserKey();
+    setHoldsOwner(owner);
+    if (ok) {
+      try { localStorage.setItem(ok, owner); } catch {}
     }
   };
 
@@ -312,11 +344,13 @@ const ResourceBookingPage = () => {
     }
   };
 
-  // Compute earliest hold expiry countdown
+  // Compute earliest hold expiry countdown (only visible to the user who owns the holds)
   const nowMs = Date.now();
   const activeHolds = Object.entries(holds).filter(([, exp]) => typeof exp === 'number' && exp > nowMs);
   const earliestExp = activeHolds.length > 0 ? Math.min(...activeHolds.map(([, exp]) => exp)) : null;
-  const secondsLeft = earliestExp != null ? Math.max(0, Math.floor((earliestExp - nowMs) / 1000)) : null;
+  const currentUserKey = getCurrentUserKey();
+  const ownsHolds = holdsOwner && currentUserKey && holdsOwner === currentUserKey;
+  const secondsLeft = ownsHolds && earliestExp != null ? Math.max(0, Math.floor((earliestExp - nowMs) / 1000)) : null;
  
   return (
     <div className="menu-page">
