@@ -78,7 +78,9 @@ class ResourceControllerTest {
 
         // Assert
         org.junit.jupiter.api.Assertions.assertEquals(200, responseEntity.getStatusCodeValue());
-        org.junit.jupiter.api.Assertions.assertTrue(Objects.requireNonNull(responseEntity.getBody()).getMessage().contains("accepted for 2 slot(s)"));
+        String msg = Objects.requireNonNull(responseEntity.getBody()).getMessage();
+        org.junit.jupiter.api.Assertions.assertTrue(msg.contains("2 slot(s)"));
+        org.junit.jupiter.api.Assertions.assertTrue(msg.toLowerCase().contains("email"));
 
         // Verify one email was sent
         ArgumentCaptor<NotificationDTO> cap = ArgumentCaptor.forClass(NotificationDTO.class);

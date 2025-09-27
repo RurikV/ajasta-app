@@ -64,7 +64,7 @@ describe('ResourceBookingPage booking flows', () => {
     fireEvent.click(screen.getByTestId('slot-09:00-1'));
     fireEvent.click(screen.getByTestId('slot-09:30-1'));
 
-    ApiService.bookResourceBatch.mockResolvedValueOnce({ statusCode: 200, message: 'Booking request accepted for 2 slot(s)' });
+    ApiService.bookResourceBatch.mockResolvedValueOnce({ statusCode: 200, message: "Your booking has been received for 2 slot(s). We've sent a secure payment link to your email." });
 
     fireEvent.click(screen.getByRole('button', { name: /Book Slots/i }));
 
@@ -78,8 +78,9 @@ describe('ResourceBookingPage booking flows', () => {
       { startTime: '09:30', endTime: '10:00', unit: 1 },
     ]);
 
-    // Success message appears
-    expect(await screen.findByText(/Booking request accepted for 2 slot/)).toBeInTheDocument();
+    // Success message appears (should mention email sent and include slot count)
+    expect(await screen.findByText(/2 slot\(s\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/email/i)).toBeInTheDocument();
 
     // Cells should now be held (yellow) and countdown visible
     const firstCell = screen.getByTestId('slot-09:00-1');
@@ -101,7 +102,7 @@ describe('ResourceBookingPage booking flows', () => {
     fireEvent.change(dateInput, { target: { value: '2025-01-12' } });
     fireEvent.click(screen.getByTestId('slot-09:30-1'));
 
-    ApiService.bookResourceMulti.mockResolvedValueOnce({ statusCode: 200, message: 'Booking request accepted for 2 slot(s) across 2 day(s)' });
+    ApiService.bookResourceMulti.mockResolvedValueOnce({ statusCode: 200, message: "Your booking has been received for 2 slot(s) across 2 day(s). We've sent a secure payment link to your email." });
 
     fireEvent.click(screen.getByRole('button', { name: /Book Slots/i }));
 

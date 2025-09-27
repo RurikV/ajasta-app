@@ -126,7 +126,7 @@ public class ResourceController {
 
         return ResponseEntity.ok(Response.builder()
                 .statusCode(200)
-                .message("Booking request accepted")
+                .message("Your booking has been received. We've sent a secure payment link to your email.")
                 .build());
     }
 
@@ -213,7 +213,7 @@ public class ResourceController {
 
         return ResponseEntity.ok(Response.builder()
                 .statusCode(200)
-                .message("Booking request accepted for " + totalSlots + " slot(s)")
+                .message("Your booking has been received for " + totalSlots + " slot(s). We've sent a secure payment link to your email.")
                 .build());
     }
 
@@ -313,7 +313,7 @@ public class ResourceController {
         int totalDays = request.getDays() == null ? 0 : request.getDays().size();
         return ResponseEntity.ok(Response.builder()
                 .statusCode(200)
-                .message("Booking request accepted for " + totalSlots + " slot(s) across " + totalDays + " day(s)")
+                .message("Your booking has been received for " + totalSlots + " slot(s) across " + totalDays + " day(s). We've sent a secure payment link to your email.")
                 .build());
     }
 }
