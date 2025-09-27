@@ -19,7 +19,9 @@ jest.mock('react-router-dom', () => {
 jest.mock('../../../services/ApiService', () => ({
   __esModule: true,
   default: {
-    getResourceById: jest.fn()
+    getResourceById: jest.fn(),
+    isAuthenticated: jest.fn(() => false),
+    bookResource: jest.fn()
   }
 }));
 

@@ -39,9 +39,12 @@ const ResourceBookingPage = () => {
   const { ErrorDisplay, showError } = useError();
   const [resource, setResource] = useState(null);
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [bookingSuccess, setBookingSuccess] = useState(false);
 
   // Selection state (single selection)
   const [selected, setSelected] = useState(() => new Set());
+
+  const isAuthenticated = ApiService.isAuthenticated();
 
   useEffect(() => {
     const fetchResource = async () => {
@@ -101,8 +104,8 @@ const ResourceBookingPage = () => {
     if (!resource) return false;
     if (isDateUnavailable(date)) return true;
     // Daily time ranges
-    if (resource.dailyUnavailableRanges && isTimeInRanges(timeHHMM, resource.dailyUnavailableRanges)) return true;
-    return false;
+    return !!(resource.dailyUnavailableRanges && isTimeInRanges(timeHHMM, resource.dailyUnavailableRanges));
+
   };
 
   const handleSelectClick = (key, disabled) => {
@@ -118,6 +121,52 @@ const ResourceBookingPage = () => {
     });
   };
 
+  const handleBookResource = async () => {
+    if (!isAuthenticated) {
+      showError("Please login to continue, If you don't have an account do well to register");
+      setTimeout(() => {
+        // Navigate to login if needed
+      }, 5000);
+      return;
+    }
+
+    if (selected.size === 0) {
+      showError("Please select at least one time slot to book");
+      return;
+    }
+
+    setBookingSuccess(false);
+    try {
+      // Convert selected slots to booking format
+      const selectedSlots = Array.from(selected).map(key => {
+        const [bookingDate, time, unit] = key.split('_');
+        return {
+          date: bookingDate,
+          startTime: time,
+          endTime: minutesToHHMM(parseTimeToMinutes(time) + 30),
+          unit: parseInt(unit)
+        };
+      });
+
+      const bookingData = {
+        date: date,
+        slots: selectedSlots
+      };
+
+      const response = await ApiService.bookResource(resource.id, bookingData);
+
+      if (response.statusCode === 200) {
+        setBookingSuccess(true);
+        setSelected(new Set()); // Clear selections after successful booking
+        setTimeout(() => setBookingSuccess(false), 4000);
+      } else {
+        showError(response.message);
+      }
+    } catch (error) {
+      showError(error.response?.data?.message || error.message);
+    }
+  };
+
   if (!resource) {
     return (
       <div className="menu-page">
@@ -130,6 +179,19 @@ const ResourceBookingPage = () => {
   const units = Math.max(1, Number(resource.unitsCount || 1));
   const unitCols = Array.from({ length: units }, (_, i) => i + 1);
 
+  // Pricing: price per 30-min slot comes from resource item defined in admin (EUR by default)
+  const pricePerSlot = Number(resource?.pricePerSlot ?? 0);
+  const currency = resource?.currency || 'EUR';
+  const formatMoney = (amount) => {
+    const value = Number(amount) || 0;
+    try {
+      return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(value);
+    } catch (e) {
+      // Fallback if Intl or currency code fails
+      return `${value.toFixed(2)} ${currency}`;
+    }
+  };
+
   return (
     <div className="menu-page">
       <ErrorDisplay />
@@ -140,6 +202,46 @@ const ResourceBookingPage = () => {
           Select date:
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ marginLeft: 8 }} />
         </label>
+      </div>
+
+      {/* Summary Price and Booking Section - Always visible but inactive when no slots selected */}
+      <div className="add-to-cart-section" style={{ 
+        marginTop: 20, 
+        padding: 16, 
+        border: '1px solid #ddd', 
+        borderRadius: 8, 
+        backgroundColor: selected.size > 0 ? '#f9f9f9' : '#f5f5f5',
+        opacity: selected.size > 0 ? 1 : 0.6
+      }}>
+        <h3>Booking Summary</h3>
+        <div className="booking-details">
+          <p>Booked slots: {selected.size}</p>
+          <p>Price per slot: {formatMoney(pricePerSlot)}</p>
+          <div className="total-price" style={{ fontSize: 18, fontWeight: 'bold', marginTop: 8 }}>
+            Total: {formatMoney(selected.size * pricePerSlot)}
+          </div>
+        </div>
+        <button
+          onClick={handleBookResource}
+          className="add-to-cart-btn"
+          disabled={selected.size === 0}
+          style={{ 
+            marginTop: 12, 
+            padding: '12px 24px', 
+            backgroundColor: selected.size > 0 ? '#007bff' : '#cccccc', 
+            color: selected.size > 0 ? 'white' : '#666666', 
+            border: 'none', 
+            borderRadius: 4, 
+            cursor: selected.size > 0 ? 'pointer' : 'not-allowed' 
+          }}
+        >
+          Book Slots
+        </button>
+        {bookingSuccess && (
+          <div className="cart-success-message" style={{ marginTop: 12, padding: 8, backgroundColor: '#d4edda', color: '#155724', borderRadius: 4 }}>
+            Booking confirmed successfully!
+          </div>
+        )}
       </div>
 
       <div className="scheduler-table-wrapper" style={{ overflowX: 'auto', marginTop: 16 }}>
