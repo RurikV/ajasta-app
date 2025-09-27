@@ -46,7 +46,7 @@ const ResourceBookingPage = () => {
   const { id } = useParams();
   const { ErrorDisplay, showError } = useError();
   const [resource, setResource] = useState(null);
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => getLocalDateStr());
   const [bookingSuccess, setBookingSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState(null);
 
@@ -130,6 +130,19 @@ const ResourceBookingPage = () => {
     // Daily unavailable time ranges
     return !!(resource.dailyUnavailableRanges && isTimeInRanges(timeHHMM, resource.dailyUnavailableRanges));
   };
+
+  // If today has no available slots, automatically move to the next day
+  useEffect(() => {
+    if (!resource) return;
+    const todayStr = getLocalDateStr();
+    if (date !== todayStr) return;
+    const anyAvailable = slots.some((time) => !isSlotUnavailable(time));
+    if (!anyAvailable) {
+      const next = new Date(todayStr + 'T00:00:00');
+      next.setDate(next.getDate() + 1);
+      setDate(getLocalDateStr(next));
+    }
+  }, [resource, date, slots, isSlotUnavailable]);
 
   const handleSelectClick = (key, disabled) => {
     if (disabled) return;
