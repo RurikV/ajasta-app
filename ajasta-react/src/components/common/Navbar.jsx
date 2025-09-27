@@ -119,7 +119,7 @@ const Navbar = () => {
                     <>
                         {isCustomer && (
                             <>
-                                <Link to="/orders" className="nav-link">{t('orders')}</Link>
+                                <Link to="/my-order-history" className="nav-link">{t('orders')}</Link>
                                 <Link to="/cart" className="nav-link">{t('cart')}</Link>
                             </>
                         )}

@@ -440,6 +440,13 @@ export default class ApiService {
         return resp.data;
     }
 
+    static async bookResourceBatch(id, body) {
+        const resp = await axios.post(`${this.BASE_URL}/resources/${id}/book-batch`, body, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
 
     /* CART SECTION */
     static async addItemToCart(cartDTO) {

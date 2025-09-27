@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Booking Confirmation</title>
+    <style>
+        body {
+            background-color: #f4f4f4 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            font-family: 'Arial', sans-serif;
+            font-size: 16px;
+            color: #333;
+            line-height: 1.5;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #ff6600;
+            margin-bottom: 20px;
+            text-align: center;
+            font-size: 24px;
+        }
+        p { margin-bottom: 16px; }
+        .details { margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px; }
+        .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #eee; }
+        .row:last-child { border-bottom: none; }
+        .label { font-weight: 600; color: #555; }
+        .value { color: #222; }
+        .total { font-weight: bold; margin-top: 10px; font-size: 18px; color: #ff6600; }
+        .button { display: inline-block; padding: 12px 24px; background-color: #ff6600; color: white; text-decoration: none; border-radius: 6px; margin-top: 20px; text-align: center; transition: background-color 0.3s ease; }
+        .button:hover { background-color: #cc5200; }
+        .footer { margin-top: 25px; text-align: center; color: #888; font-size: 14px; }
+        .greeting { font-style: italic; color: #4CAF50; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Booking Confirmation</h1>
+    <p class="greeting">Dear <span th:text="${customerName}">Customer</span>,</p>
+    <p>Thank you for your booking! We're excited to confirm your reservation.</p>
+
+    <div class="details">
+        <div class="row"><span class="label">Resource:</span> <span class="value" th:text="${resourceName}">Resource Name</span></div>
+        <div class="row"><span class="label">Location:</span> <span class="value" th:text="${resourceLocation}">Location</span></div>
+        <div class="row"><span class="label">Date:</span> <span class="value" th:text="${date}">2025-01-01</span></div>
+
+        <!-- Single-slot rendering -->
+        <div th:if="${slotsHtml} == null">
+            <div class="row"><span class="label">Time:</span> <span class="value" th:text="${timeRange}">09:00 - 09:30</span></div>
+            <div class="row"><span class="label">Unit:</span> <span class="value" th:text="${unit}">1</span></div>
+        </div>
+
+        <!-- Multi-slot rendering -->
+        <div th:if="${slotsHtml} != null">
+            <div class="row"><span class="label">Booked Slots:</span> <span class="value" th:text="${totalSlots}">1</span></div>
+            <div class="slots" th:utext="${slotsHtml}"></div>
+        </div>
+
+        <div class="row"><span class="label">Price per 30-min slot:</span> <span class="value" th:text="${pricePerSlot}">0.00</span></div>
+        <p class="total">Total Amount: <span th:text="${totalAmount}">0.00</span></p>
+    </div>
+
+    <a class="button" th:href="${paymentLink}">Complete Your Booking</a>
+    <p>Click the button above to securely complete your payment and finalize your booking.</p>
+
+    <div class="footer">
+        <p>If you have any questions, please contact us at support@ajasta.top.</p>
+        <p>&copy; <span th:text="${currentYear}">2025</span> Ajasta App. All rights reserved.</p>
+    </div>
+</div>
+</body>
+</html>

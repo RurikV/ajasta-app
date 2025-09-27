@@ -40,6 +40,7 @@ const ResourceBookingPage = () => {
   const [resource, setResource] = useState(null);
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [bookingSuccess, setBookingSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState(null);
 
   // Selection state (single selection)
   const [selected, setSelected] = useState(() => new Set());
@@ -135,33 +136,45 @@ const ResourceBookingPage = () => {
       return;
     }
 
+    // Ensure all selected slots are for the same date (UI enforces, but validate defensively)
+    const keys = Array.from(selected);
+    const dates = new Set(keys.map(k => k.split('_')[0]));
+    if (dates.size > 1) {
+      showError("Please select slots from a single date only");
+      return;
+    }
+
+    const bookingDate = keys[0].split('_')[0];
+
     setBookingSuccess(false);
+    setSuccessMessage(null);
     try {
-      // Convert selected slots to booking format
-      const selectedSlots = Array.from(selected).map(key => {
-        const [bookingDate, time, unit] = key.split('_');
+      const slotsPayload = keys.map(key => {
+        const [_date, time, unit] = key.split('_');
         return {
-          date: bookingDate,
           startTime: time,
           endTime: minutesToHHMM(parseTimeToMinutes(time) + 30),
-          unit: parseInt(unit)
+          unit: parseInt(unit, 10)
         };
       });
 
-      const bookingData = {
-        date: date,
-        slots: selectedSlots
-      };
-
-      const response = await ApiService.bookResource(resource.id, bookingData);
-
-      if (response.statusCode === 200) {
-        setBookingSuccess(true);
-        setSelected(new Set()); // Clear selections after successful booking
-        setTimeout(() => setBookingSuccess(false), 4000);
-      } else {
-        showError(response.message);
+      const body = { date: bookingDate, slots: slotsPayload };
+      const response = await ApiService.bookResourceBatch(resource.id, body);
+      if (response.statusCode !== 200) {
+        showError(response.message || 'Failed to book selected slots');
+        return;
       }
+
+      setBookingSuccess(true);
+      setSuccessMessage(response.message || `Booked ${slotsPayload.length} slot(s) successfully!`);
+      setSelected(new Set());
+      setTimeout(() => {
+        setBookingSuccess(false);
+        setSuccessMessage(null);
+        if (typeof window !== 'undefined' && window.location) {
+          window.location.assign('/my-order-history');
+        }
+      }, 5000);
     } catch (error) {
       showError(error.response?.data?.message || error.message);
     }
@@ -239,7 +252,7 @@ const ResourceBookingPage = () => {
         </button>
         {bookingSuccess && (
           <div className="cart-success-message" style={{ marginTop: 12, padding: 8, backgroundColor: '#d4edda', color: '#155724', borderRadius: 4 }}>
-            Booking confirmed successfully!
+            {successMessage || 'Booking confirmed successfully!'}
           </div>
         )}
       </div>
