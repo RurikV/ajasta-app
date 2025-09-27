@@ -447,6 +447,13 @@ export default class ApiService {
         return resp.data;
     }
 
+    static async bookResourceMulti(id, body) {
+        const resp = await axios.post(`${this.BASE_URL}/resources/${id}/book-multi`, body, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
 
     /* CART SECTION */
     static async addItemToCart(cartDTO) {

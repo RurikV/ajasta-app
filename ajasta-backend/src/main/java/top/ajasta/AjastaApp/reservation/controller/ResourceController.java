@@ -181,4 +181,75 @@ public class ResourceController {
     private String safe(String v) {
         return v == null ? "" : v;
     }
+
+    @PostMapping("/{id}/book-multi")
+    @PreAuthorize("hasAnyAuthority('CUSTOMER','ADMIN')")
+    public ResponseEntity<Response<?>> bookMulti(@PathVariable Long id, @RequestBody @Valid top.ajasta.AjastaApp.reservation.dtos.BookMultiRequest request) {
+        // Fetch resource and user
+        ResourceDTO resource = resourceService.getResourceById(id).getData();
+        User user = userService.getCurrentLoggedInUser();
+
+        String subject = "Booking Confirmation - " + (resource != null ? resource.getName() : ("Resource #" + id));
+
+        // Determine pricing
+        java.math.BigDecimal perSlot = resource != null && resource.getPricePerSlot() != null
+                ? resource.getPricePerSlot()
+                : java.math.BigDecimal.ZERO;
+
+        int totalSlots = 0;
+        StringBuilder slotsHtml = new StringBuilder();
+        if (request.getDays() != null) {
+            for (top.ajasta.AjastaApp.reservation.dtos.BookMultiRequest.Day day : request.getDays()) {
+                // Date header
+                slotsHtml.append("<div class=\"row\"><span class=\"label\">Date:</span> <span class=\"value\">")
+                        .append(safe(day.getDate()))
+                        .append("</span></div>");
+                if (day.getSlots() != null) {
+                    for (top.ajasta.AjastaApp.reservation.dtos.BookBatchRequest.Slot s : day.getSlots()) {
+                        totalSlots++;
+                        slotsHtml.append("<div class=\"row\">")
+                                .append("<span>")
+                                .append(s.getStartTime()).append(" - ").append(s.getEndTime())
+                                .append("</span>")
+                                .append("<span> | Unit ").append(s.getUnit() == null ? 1 : s.getUnit()).append("</span>")
+                                .append("</div>");
+                    }
+                }
+            }
+        }
+
+        java.math.BigDecimal totalAmountBD = perSlot.multiply(java.math.BigDecimal.valueOf(totalSlots));
+        String pricePerSlot = perSlot.toString();
+        String totalAmount = totalAmountBD.toString();
+
+        String paymentLink = basePaymentLink + "B" + id + "&amount=" + totalAmount;
+
+        Context context = new Context();
+        context.setVariable("customerName", user.getName() != null ? user.getName() : "Customer");
+        context.setVariable("resourceName", resource != null ? resource.getName() : ("#" + id));
+        context.setVariable("resourceLocation", resource != null ? resource.getLocation() : "");
+        context.setVariable("date", "Multiple dates");
+        context.setVariable("timeRange", "Multiple days");
+        context.setVariable("totalSlots", totalSlots);
+        context.setVariable("slotsHtml", slotsHtml.toString());
+        context.setVariable("pricePerSlot", pricePerSlot);
+        context.setVariable("totalAmount", totalAmount);
+        context.setVariable("paymentLink", paymentLink);
+        context.setVariable("currentYear", java.time.Year.now());
+
+        String emailBody = templateEngine.process("booking-confirmation", context);
+
+        notificationService.sendEmail(NotificationDTO.builder()
+                .recipient(user.getEmail())
+                .subject(subject)
+                .body(emailBody)
+                .isHtml(true)
+                .build());
+
+        int totalDays = request.getDays() == null ? 0 : request.getDays().size();
+        return ResponseEntity.ok(Response.builder()
+                .statusCode(200)
+                .message("Booking request accepted for " + totalSlots + " slot(s) across " + totalDays + " day(s)")
+                .build());
+    }
 }

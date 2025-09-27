@@ -136,37 +136,41 @@ const ResourceBookingPage = () => {
       return;
     }
 
-    // Ensure all selected slots are for the same date (UI enforces, but validate defensively)
     const keys = Array.from(selected);
-    const dates = new Set(keys.map(k => k.split('_')[0]));
-    if (dates.size > 1) {
-      showError("Please select slots from a single date only");
-      return;
+    const byDate = new Map();
+    for (const key of keys) {
+      const [d, time, unit] = key.split('_');
+      const slot = {
+        startTime: time,
+        endTime: minutesToHHMM(parseTimeToMinutes(time) + 30),
+        unit: parseInt(unit, 10)
+      };
+      if (!byDate.has(d)) byDate.set(d, []);
+      byDate.get(d).push(slot);
     }
-
-    const bookingDate = keys[0].split('_')[0];
 
     setBookingSuccess(false);
     setSuccessMessage(null);
     try {
-      const slotsPayload = keys.map(key => {
-        const [_date, time, unit] = key.split('_');
-        return {
-          startTime: time,
-          endTime: minutesToHHMM(parseTimeToMinutes(time) + 30),
-          unit: parseInt(unit, 10)
-        };
-      });
+      let response;
+      if (byDate.size === 1) {
+        const [[onlyDate, slotsPayload]] = Array.from(byDate.entries());
+        const body = { date: onlyDate, slots: slotsPayload };
+        response = await ApiService.bookResourceBatch(resource.id, body);
+      } else {
+        const days = Array.from(byDate.entries()).map(([d, slots]) => ({ date: d, slots }));
+        const body = { days };
+        response = await ApiService.bookResourceMulti(resource.id, body);
+      }
 
-      const body = { date: bookingDate, slots: slotsPayload };
-      const response = await ApiService.bookResourceBatch(resource.id, body);
       if (response.statusCode !== 200) {
         showError(response.message || 'Failed to book selected slots');
         return;
       }
 
+      const count = keys.length;
       setBookingSuccess(true);
-      setSuccessMessage(response.message || `Booked ${slotsPayload.length} slot(s) successfully!`);
+      setSuccessMessage(response.message || `Booked ${count} slot(s) successfully!`);
       setSelected(new Set());
       setTimeout(() => {
         setBookingSuccess(false);
