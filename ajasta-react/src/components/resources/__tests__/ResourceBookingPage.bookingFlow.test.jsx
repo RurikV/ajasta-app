@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import ResourceBookingPage from '../ResourceBookingPage';
 import ApiService from '../../../services/ApiService';
@@ -47,20 +47,14 @@ const setup = async () => {
   await screen.findByText(/Unit 1/i);
 };
 
-beforeAll(() => {
-  jest.useFakeTimers();
-});
-
-afterAll(() => {
-  jest.useRealTimers();
-});
+// Timers not required for new hold countdown behavior
 
 describe('ResourceBookingPage booking flows', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  it('single-day selection calls bookResourceBatch with correct payload and redirects', async () => {
+  it('single-day selection calls bookResourceBatch and holds slots with countdown', async () => {
     await setup();
     // Set a known date
     const dateInput = screen.getByLabelText(/Select date:/i);
@@ -71,8 +65,6 @@ describe('ResourceBookingPage booking flows', () => {
     fireEvent.click(screen.getByTestId('slot-09:30-1'));
 
     ApiService.bookResourceBatch.mockResolvedValueOnce({ statusCode: 200, message: 'Booking request accepted for 2 slot(s)' });
-
-    const assignSpy = jest.spyOn(window.location, 'assign').mockImplementation(() => {});
 
     fireEvent.click(screen.getByRole('button', { name: /Book Slots/i }));
 
@@ -89,15 +81,15 @@ describe('ResourceBookingPage booking flows', () => {
     // Success message appears
     expect(await screen.findByText(/Booking request accepted for 2 slot/)).toBeInTheDocument();
 
-    // Fast-forward 5s to trigger redirect
-    await act(async () => {
-      jest.advanceTimersByTime(5000);
-    });
-    expect(assignSpy).toHaveBeenCalledWith('/my-order-history');
-    assignSpy.mockRestore();
+    // Cells should now be held (yellow) and countdown visible
+    const firstCell = screen.getByTestId('slot-09:00-1');
+    const secondCell = screen.getByTestId('slot-09:30-1');
+    expect(firstCell).toHaveStyle('background-color: yellow');
+    expect(secondCell).toHaveStyle('background-color: yellow');
+    expect(screen.getByText(/Reservation hold active/i)).toBeInTheDocument();
   });
 
-  it('multi-day selection calls bookResourceMulti with grouped days', async () => {
+  it('multi-day selection calls bookResourceMulti with grouped days and holds slots across days', async () => {
     await setup();
 
     // Day 1
@@ -110,7 +102,6 @@ describe('ResourceBookingPage booking flows', () => {
     fireEvent.click(screen.getByTestId('slot-09:30-1'));
 
     ApiService.bookResourceMulti.mockResolvedValueOnce({ statusCode: 200, message: 'Booking request accepted for 2 slot(s) across 2 day(s)' });
-    const assignSpy = jest.spyOn(window.location, 'assign').mockImplementation(() => {});
 
     fireEvent.click(screen.getByRole('button', { name: /Book Slots/i }));
 
@@ -124,10 +115,13 @@ describe('ResourceBookingPage booking flows', () => {
 
     expect(await screen.findByText(/across 2 day/)).toBeInTheDocument();
 
-    await act(async () => {
-      jest.advanceTimersByTime(5000);
-    });
-    expect(assignSpy).toHaveBeenCalledWith('/my-order-history');
-    assignSpy.mockRestore();
+    // Verify holds across days: switch between dates and check yellow
+    fireEvent.change(dateInput, { target: { value: '2025-01-11' } });
+    expect(screen.getByTestId('slot-09:00-1')).toHaveStyle('background-color: yellow');
+
+    fireEvent.change(dateInput, { target: { value: '2025-01-12' } });
+    expect(screen.getByTestId('slot-09:30-1')).toHaveStyle('background-color: yellow');
+
+    expect(screen.getByText(/Reservation hold active/i)).toBeInTheDocument();
   });
 });

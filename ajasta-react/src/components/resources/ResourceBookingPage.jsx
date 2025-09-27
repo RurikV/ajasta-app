@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
@@ -53,6 +53,11 @@ const ResourceBookingPage = () => {
   // Selection state (single selection)
   const [selected, setSelected] = useState(() => new Set());
 
+  // Holds: reservation holds for 30 minutes after booking (per slot key)
+  const [holds, setHolds] = useState({}); // { [key]: expiresAtMs }
+  const tickRef = useRef(null);
+  const [tick, setTick] = useState(0); // trigger re-render each second
+
   const isAuthenticated = ApiService.isAuthenticated();
 
   useEffect(() => {
@@ -70,6 +75,74 @@ const ResourceBookingPage = () => {
     };
     fetchResource();
   }, [id, showError]);
+
+  // Local storage key for holds
+  const getHoldsKey = () => (resource ? `resourceHolds_${resource.id}` : null);
+
+  // Load holds from localStorage when resource changes
+  useEffect(() => {
+    if (!resource) return;
+    try {
+      const k = getHoldsKey();
+      const raw = k ? localStorage.getItem(k) : null;
+      let parsed = raw ? JSON.parse(raw) : {};
+      const now = Date.now();
+      // prune expired
+      const cleaned = Object.fromEntries(Object.entries(parsed).filter(([, exp]) => typeof exp === 'number' && exp > now));
+      setHolds(cleaned);
+      if (k) localStorage.setItem(k, JSON.stringify(cleaned));
+    } catch (e) {
+      // ignore parse errors
+      setHolds({});
+    }
+  }, [resource]);
+
+  // Start interval to tick each second and prune expired holds
+  useEffect(() => {
+    if (!resource) return;
+    if (tickRef.current) clearInterval(tickRef.current);
+    tickRef.current = setInterval(() => {
+      setTick((t) => t + 1);
+      const now = Date.now();
+      setHolds((prev) => {
+        const cleaned = Object.fromEntries(Object.entries(prev).filter(([, exp]) => exp > now));
+        if (getHoldsKey()) {
+          try { localStorage.setItem(getHoldsKey(), JSON.stringify(cleaned)); } catch {}
+        }
+        return cleaned;
+      });
+    }, 1000);
+    return () => {
+      if (tickRef.current) clearInterval(tickRef.current);
+    };
+  }, [resource]);
+
+  const isHeld = (key) => {
+    const exp = holds[key];
+    return typeof exp === 'number' && exp > Date.now();
+  };
+
+  const addHolds = (keys) => {
+    if (!resource || !keys || keys.length === 0) return;
+    const expiry = Date.now() + 30 * 60 * 1000; // 30 minutes
+    const next = { ...holds };
+    keys.forEach((k) => {
+      const current = next[k] || 0;
+      next[k] = Math.max(current, expiry);
+    });
+    setHolds(next);
+    const k = getHoldsKey();
+    if (k) {
+      try { localStorage.setItem(k, JSON.stringify(next)); } catch {}
+    }
+  };
+
+  const formatSeconds = (total) => {
+    if (total == null) return '';
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  };
 
   const slots = useMemo(() => {
     if (!resource) return [];
@@ -206,14 +279,9 @@ const ResourceBookingPage = () => {
       const count = keys.length;
       setBookingSuccess(true);
       setSuccessMessage(response.message || `Booked ${count} slot(s) successfully!`);
+      // Add reservation holds for booked slots (30 minutes)
+      addHolds(keys);
       setSelected(new Set());
-      setTimeout(() => {
-        setBookingSuccess(false);
-        setSuccessMessage(null);
-        if (typeof window !== 'undefined' && window.location) {
-          window.location.assign('/my-order-history');
-        }
-      }, 5000);
     } catch (error) {
       showError(error.response?.data?.message || error.message);
     }
@@ -244,6 +312,12 @@ const ResourceBookingPage = () => {
     }
   };
 
+  // Compute earliest hold expiry countdown
+  const nowMs = Date.now();
+  const activeHolds = Object.entries(holds).filter(([, exp]) => typeof exp === 'number' && exp > nowMs);
+  const earliestExp = activeHolds.length > 0 ? Math.min(...activeHolds.map(([, exp]) => exp)) : null;
+  const secondsLeft = earliestExp != null ? Math.max(0, Math.floor((earliestExp - nowMs) / 1000)) : null;
+ 
   return (
     <div className="menu-page">
       <ErrorDisplay />
@@ -272,6 +346,11 @@ const ResourceBookingPage = () => {
           <div className="total-price" style={{ fontSize: 18, fontWeight: 'bold', marginTop: 8 }}>
             Total: {formatMoney(selected.size * pricePerSlot)}
           </div>
+          {secondsLeft != null && (
+            <div className="hold-countdown" style={{ marginTop: 8, color: '#856404' }}>
+              Reservation hold active. Expires in {formatSeconds(secondsLeft)}
+            </div>
+          )}
         </div>
         <button
           onClick={handleBookResource}
@@ -315,7 +394,8 @@ const ResourceBookingPage = () => {
                   {unitCols.map((n) => {
                     const key = `${date}_${time}_${n}`;
                     const isSelected = selected.has(key);
-                    const disabled = disabledRow;
+                    const held = isHeld(key);
+                    const disabled = disabledRow || held;
                     return (
                       <td
                         key={`${time}-${n}`}
@@ -325,12 +405,12 @@ const ResourceBookingPage = () => {
                           padding: 8,
                           textAlign: 'center',
                           border: '1px solid #eee',
-                          backgroundColor: disabled ? '#f0f0f0' : (isSelected ? 'lightgreen' : 'transparent'),
-                          color: disabled ? '#888' : 'inherit',
-                          cursor: disabled ? 'not-allowed' : 'pointer',
+                          backgroundColor: disabledRow ? '#f0f0f0' : (held ? 'yellow' : (isSelected ? 'lightgreen' : 'transparent')),
+                          color: (disabledRow ? '#888' : 'inherit'),
+                          cursor: (disabled ? 'not-allowed' : 'pointer'),
                           userSelect: 'none'
                         }}
-                        title={disabled ? 'Unavailable' : 'Available'}
+                        title={disabledRow ? 'Unavailable' : (held ? 'Reserved (awaiting payment)' : 'Available')}
                         aria-disabled={disabled}
                       >
                         {/* visual slot */}
