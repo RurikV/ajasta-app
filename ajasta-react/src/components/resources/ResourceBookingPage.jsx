@@ -427,6 +427,31 @@ const ResourceBookingPage = () => {
       return;
     }
 
+    // Validate split (if enabled)
+    if (splitEnabled) {
+      const err = (participants && participants.length > 0) ? (function(){
+        const n = Math.max(1, participants.length);
+        const minShare = (selected.size * pricePerSlot) / n;
+        if ((participants[0]?.amount ?? 0) + 1e-9 < minShare) {
+          return `First participant's amount must be at least ${formatMoney(minShare)} (equal share).`;
+        }
+        for (let i = 1; i < n; i++) {
+          const em = (participants[i]?.email || '').trim();
+          const re = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+          if (!re.test(em)) return `Participant #${i + 1} email looks invalid.`;
+        }
+        const sum = participants.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+        const total = selected.size * pricePerSlot;
+        if (Math.abs(sum - total) > 0.01) return 'Split amounts must add up to the total amount.';
+        return null;
+      })() : 'Please configure participants for split.';
+      if (err) {
+        setSplitError(err);
+        showError(err);
+        return;
+      }
+    }
+
     const keys = Array.from(selected);
     const byDate = new Map();
     for (const key of keys) {
@@ -470,16 +495,8 @@ const ResourceBookingPage = () => {
     }
   };
 
-  if (!resource) {
-    return (
-      <div className="menu-page">
-        <ErrorDisplay />
-        <p>Loading scheduler...</p>
-      </div>
-    );
-  }
 
-  const units = Math.max(1, Number(resource.unitsCount || 1));
+  const units = Math.max(1, Number((resource?.unitsCount ?? 1)));
   const unitCols = Array.from({ length: units }, (_, i) => i + 1);
 
   // Pricing: price per 30-min slot comes from resource item defined in admin (EUR by default)
@@ -528,7 +545,170 @@ const ResourceBookingPage = () => {
   })) : null;
   
   const secondsLeft = hasOwnActiveHolds && earliestExp != null ? Math.max(0, Math.floor((earliestExp - nowMs) / 1000)) : null;
- 
+
+  // --- Split among participants (emails) ---
+  const [splitEnabled, setSplitEnabled] = useState(false);
+  const [participants, setParticipants] = useState([]); // [{email, amount}]; index 0 is booker
+  const [savedEmails, setSavedEmails] = useState([]);
+  const [profileEmail, setProfileEmail] = useState('');
+  const [splitError, setSplitError] = useState(null);
+
+  const totalAmount = useMemo(() => Number((selected.size * pricePerSlot).toFixed(2)), [selected.size, pricePerSlot]);
+
+  const isValidEmail = useCallback((val) => {
+    if (!val) return false;
+    const re = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+    return re.test(String(val).trim());
+  }, []);
+
+  // Fetch saved emails and profile when auth
+  useEffect(() => {
+    let mounted = true;
+    const run = async () => {
+      if (!isAuthenticated) return;
+      try {
+        const [emailsResp, meResp] = await Promise.allSettled([
+          ApiService.getSavedEmails(),
+          ApiService.myProfile()
+        ]);
+        if (mounted && emailsResp.status === 'fulfilled' && emailsResp.value?.statusCode === 200) {
+          setSavedEmails(Array.isArray(emailsResp.value.data) ? emailsResp.value.data : []);
+        }
+        if (mounted && meResp.status === 'fulfilled' && meResp.value?.statusCode === 200) {
+          setProfileEmail(meResp.value?.data?.email || '');
+        }
+      } catch {}
+    };
+    run();
+    return () => { mounted = false; };
+  }, [isAuthenticated]);
+
+  const recomputeEqualSplit = useCallback((count, total) => {
+    const n = Math.max(1, count);
+    const cents = Math.round(Number(total || 0) * 100);
+    const base = Math.floor(cents / n);
+    const remainder = cents - base * n;
+    const arr = Array.from({ length: n }, (_, i) => (base + (i < remainder ? 1 : 0)) / 100);
+    // Ensure exactly two decimals
+    return arr.map(v => Number(v.toFixed(2)));
+  }, []);
+
+  // Initialize or recompute split when enabled, totalAmount or participants count change
+  useEffect(() => {
+    if (!splitEnabled) return;
+    const count = Math.max(1, participants.length || 1);
+    const split = recomputeEqualSplit(count, totalAmount);
+    const next = Array.from({ length: count }, (_, i) => ({
+      email: i === 0 ? (profileEmail || participants[0]?.email || '') : (participants[i]?.email || ''),
+      amount: split[i]
+    }));
+    setParticipants(next);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [splitEnabled, totalAmount, participants.length, profileEmail]);
+
+  const validateSplit = useCallback((list) => {
+    if (!splitEnabled) return null;
+    const n = Math.max(1, list.length || 1);
+    const minShare = n > 0 ? totalAmount / n : 0;
+    // First participant min rule
+    if (list[0]?.amount != null && list[0].amount + 1e-9 < minShare) {
+      return `First participant's amount must be at least ${formatMoney(minShare)} (equal share).`;
+    }
+    // Email validation for others (and first if provided)
+    for (let i = 1; i < n; i++) {
+      const em = (list[i]?.email || '').trim();
+      if (!isValidEmail(em)) {
+        return `Participant #${i + 1} email looks invalid.`;
+      }
+    }
+    // Ensure sum equals total (within 1 cent)
+    const sum = list.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    if (Math.abs(sum - totalAmount) > 0.01) {
+      return 'Split amounts must add up to the total amount.';
+    }
+    return null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [splitEnabled, totalAmount, isValidEmail]);
+
+  useEffect(() => {
+    if (!splitEnabled) { setSplitError(null); return; }
+    setSplitError(validateSplit(participants || []));
+  }, [splitEnabled, participants, validateSplit]);
+
+  const handleToggleSplit = (e) => {
+    const on = e.target.checked;
+    setSplitEnabled(on);
+    if (on && participants.length === 0) {
+      const init = [{ email: profileEmail || '', amount: totalAmount }];
+      setParticipants(init);
+    }
+    if (!on) setSplitError(null);
+  };
+
+  const handleAddParticipant = () => {
+    const next = [...participants, { email: '', amount: 0 }];
+    // lengths effect will recompute equal split
+    setParticipants(next);
+  };
+
+  const handleRemoveParticipant = (idx) => {
+    if (idx === 0) return; // cannot remove first
+    const next = participants.filter((_, i) => i !== idx);
+    setParticipants(next);
+  };
+
+  const handleEmailChange = (idx, val) => {
+    const next = participants.map((p, i) => i === idx ? { ...p, email: val } : p);
+    setParticipants(next);
+  };
+
+  const handleEmailBlur = async (idx) => {
+    try {
+      const val = (participants[idx]?.email || '').trim();
+      if (!isAuthenticated || !isValidEmail(val)) return;
+      if (savedEmails.includes(val.toLowerCase())) return;
+      const resp = await ApiService.addSavedEmail(val);
+      if (resp?.statusCode === 200) {
+        setSavedEmails(prev => Array.from(new Set([...(prev || []), val.toLowerCase()])));
+      }
+    } catch {}
+  };
+
+  const handleAmountChange = (idx, val) => {
+    const amount = Math.max(0, Number(val) || 0);
+    const list = participants.map((p, i) => i === idx ? { ...p, amount } : { ...p });
+    const n = list.length || 1;
+    if (n === 1) {
+      list[0].amount = totalAmount;
+      setParticipants(list);
+      return;
+    }
+    const othersIdx = [...Array(n).keys()].filter(i => i !== idx);
+    const sumOthers = othersIdx.reduce((acc, i) => acc + (Number(list[i].amount) || 0), 0);
+    const remaining = Number((totalAmount - sumOthers).toFixed(2));
+    if (idx === 0) {
+      // Adjust last participant to keep sum
+      const last = othersIdx[othersIdx.length - 1];
+      list[0].amount = amount;
+      list[last].amount = Math.max(0, Number((remaining).toFixed(2)));
+    } else {
+      // Adjust first participant to keep sum
+      list[0].amount = Math.max(0, Number((remaining).toFixed(2)));
+    }
+    setParticipants(list);
+  };
+
+  const isBookDisabled = selected.size === 0 || hasOwnActiveHolds || (splitEnabled && !!splitError);
+
+  if (!resource) {
+    return (
+      <div className="menu-page">
+        <ErrorDisplay />
+        <p>Loading scheduler...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="menu-page">
       <ErrorDisplay />
@@ -568,20 +748,85 @@ const ResourceBookingPage = () => {
             </div>
           )}
         </div>
+
+        {/* Split among participants */}
+        <div style={{ marginTop: 12 }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <input type="checkbox" checked={splitEnabled} onChange={handleToggleSplit} disabled={selected.size === 0} />
+            Split total among participants
+          </label>
+        </div>
+        {splitEnabled && (
+          <div style={{ marginTop: 8, borderTop: '1px dashed #ddd', paddingTop: 8 }}>
+            <datalist id="savedEmailsList">
+              {(savedEmails || []).map((em) => (
+                <option key={em} value={em} />
+              ))}
+            </datalist>
+            <div style={{ fontSize: 14, color: '#555', marginBottom: 6 }}>
+              Default split is even among participants. You can adjust amounts if needed.
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left', padding: 6 }}>Participant</th>
+                    <th style={{ textAlign: 'left', padding: 6 }}>Email</th>
+                    <th style={{ textAlign: 'right', padding: 6, width: 160 }}>Amount</th>
+                    <th style={{ padding: 6, width: 60 }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {participants.map((p, idx) => {
+                    const isFirst = idx === 0;
+                    const label = isFirst ? 'You' : `Participant #${idx + 1}`;
+                    return (
+                      <tr key={idx}>
+                        <td style={{ padding: 6, whiteSpace: 'nowrap' }}>{label}</td>
+                        <td style={{ padding: 6 }}>
+                          {isFirst ? (
+                            <input type="text" value={profileEmail || p.email || ''} onChange={(e)=>handleEmailChange(idx,e.target.value)} disabled placeholder="your email" style={{ width: '100%', padding: 6 }} />
+                          ) : (
+                            <input type="email" list="savedEmailsList" value={p.email || ''} onChange={(e)=>handleEmailChange(idx,e.target.value)} onBlur={()=>handleEmailBlur(idx)} placeholder="email@example.com" style={{ width: '100%', padding: 6, borderColor: p.email && !isValidEmail(p.email) ? '#dc3545' : '#ccc' }} />
+                          )}
+                        </td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>
+                          <input type="number" min="0" step="0.01" value={Number(p.amount ?? 0)} onChange={(e)=>handleAmountChange(idx, e.target.value)} style={{ width: 140, padding: 6, textAlign: 'right' }} />
+                        </td>
+                        <td style={{ padding: 6, textAlign: 'center' }}>
+                          {!isFirst && (
+                            <button type="button" onClick={()=>handleRemoveParticipant(idx)} style={{ padding: '4px 8px', background: 'transparent', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer' }}>Remove</button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <button type="button" onClick={handleAddParticipant} style={{ padding: '6px 10px', backgroundColor: '#e9ecef', color: '#333', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer' }}>+ Add participant</button>
+            </div>
+            {splitError && (
+              <div style={{ marginTop: 8, color: '#dc3545' }}>{splitError}</div>
+            )}
+          </div>
+        )}
+
         <button
           onClick={handleBookResource}
           className="add-to-cart-btn"
-          disabled={selected.size === 0 || hasOwnActiveHolds}
+          disabled={isBookDisabled}
           style={{ 
             marginTop: 12, 
             padding: '12px 24px', 
-            backgroundColor: selected.size > 0 && !hasOwnActiveHolds ? '#007bff' : '#cccccc', 
-            color: selected.size > 0 && !hasOwnActiveHolds ? 'white' : '#666666', 
+            backgroundColor: !isBookDisabled ? '#007bff' : '#cccccc', 
+            color: !isBookDisabled ? 'white' : '#666666', 
             border: 'none', 
             borderRadius: 4, 
-            cursor: selected.size > 0 && !hasOwnActiveHolds ? 'pointer' : 'not-allowed' 
+            cursor: !isBookDisabled ? 'pointer' : 'not-allowed' 
           }}
-          title={hasOwnActiveHolds ? 'You have an active reservation hold. Finish payment or wait until it expires to reserve more.' : undefined}
+          title={hasOwnActiveHolds ? 'You have an active reservation hold. Finish payment or wait until it expires to reserve more.' : (splitError || undefined)}
         >
           Book Slots
         </button>

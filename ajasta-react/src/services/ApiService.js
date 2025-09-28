@@ -115,6 +115,21 @@ export default class ApiService {
         return resp.data;
     }
 
+    // Saved emails (user profile)
+    static async getSavedEmails() {
+        const resp = await axios.get(`${this.BASE_URL}/users/saved-emails`, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+    static async addSavedEmail(email) {
+        const resp = await axios.post(`${this.BASE_URL}/users/saved-emails?email=${encodeURIComponent(email)}`, null, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
 
     static async deactivateProfile() {
         const resp = await axios.delete(`${this.BASE_URL}/users/deactivate`, {

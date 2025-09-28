@@ -105,7 +105,7 @@ public class UserServiceImpl implements UserService {
                 log.info("Deleted old profile image from s3");
             }
             //upload new image
-            String imageName = UUID.randomUUID().toString() + "_" + imageFile.getOriginalFilename();
+            String imageName = UUID.randomUUID() + "_" + imageFile.getOriginalFilename();
             URL newImageUrl = awss3Service.uploadFile("profile/" + imageName, imageFile);
 
             user.setProfileUrl(newImageUrl.toString());
@@ -175,6 +175,45 @@ public class UserServiceImpl implements UserService {
                 .message("Account deactivated successfully")
                 .build();
 
+    }
+
+    @Override
+    public Response<List<String>> getSavedEmails() {
+        User user = getCurrentLoggedInUser();
+        List<String> emails = user.getSavedEmails();
+        if (emails == null) {
+            emails = new java.util.ArrayList<>();
+        }
+        return Response.<List<String>>builder()
+                .statusCode(HttpStatus.OK.value())
+                .message("success")
+                .data(emails)
+                .build();
+    }
+
+    @Override
+    public Response<?> addSavedEmail(String email) {
+        if (email == null || email.trim().isEmpty()) {
+            throw new BadRequestException("Email is required");
+        }
+        String norm = email.trim().toLowerCase();
+        if (!norm.matches("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$")) {
+            throw new BadRequestException("Invalid email format");
+        }
+        User user = getCurrentLoggedInUser();
+        List<String> emails = user.getSavedEmails();
+        if (emails == null) {
+            emails = new java.util.ArrayList<>();
+            user.setSavedEmails(emails);
+        }
+        if (!emails.contains(norm)) {
+            emails.add(norm);
+            userRepository.save(user);
+        }
+        return Response.builder()
+                .statusCode(HttpStatus.OK.value())
+                .message("Saved")
+                .build();
     }
 }
 

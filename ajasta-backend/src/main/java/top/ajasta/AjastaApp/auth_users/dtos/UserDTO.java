@@ -33,5 +33,7 @@ public class UserDTO {
 
     private List<RoleDTO> roles;
 
+    private List<String> savedEmails;
+
     private MultipartFile imageFile;
 }
