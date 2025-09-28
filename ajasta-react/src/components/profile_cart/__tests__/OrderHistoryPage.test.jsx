@@ -1,8 +1,15 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import OrderHistoryPage from '../OrderHistoryPage';
-import ApiService from '../../../services/ApiService';
+
+// Mock react-router-dom as virtual to avoid real dependency resolution
+jest.mock('react-router-dom', () => ({
+  __esModule: true,
+  MemoryRouter: ({ children }) => children,
+  useNavigate: () => () => {},
+}), { virtual: true });
+const OrderHistoryPage = require('../OrderHistoryPage').default;
+const ApiService = require('../../../services/ApiService').default;
 
 jest.mock('../../../services/ApiService', () => ({
   __esModule: true,
@@ -49,7 +56,7 @@ describe('OrderHistoryPage booking metadata rendering', () => {
 
     expect(await screen.findByText(/Your Order History/i)).toBeInTheDocument();
     expect(screen.getByText('Booking: Court A (2 slot(s))')).toBeInTheDocument();
-    expect(screen.getByText(/Total: \$/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Total: \$/i).length).toBeGreaterThan(0);
     // The details are rendered inside a <pre> block
     expect(screen.getByText(/09:00 - 09:30/)).toBeInTheDocument();
     expect(screen.getByText(/09:30 - 10:00/)).toBeInTheDocument();

@@ -105,7 +105,6 @@ const ErrorDisplay = ({ message, onDismiss }) => {
                             className="error-modal-copy"
                             onClick={handleCopy}
                             style={copyBtn}
-                            aria-label="Copy error message"
                         >
                             {copied ? 'Copied!' : 'Copy'}
                         </button>

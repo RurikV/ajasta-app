@@ -9,7 +9,7 @@ jest.mock('react-router-dom', () => ({
   __esModule: true,
   MemoryRouter: ({ children }) => children,
   useParams: () => ({ id: '1' }),
-}));
+}), { virtual: true });
 
 // Mock ApiService
 jest.mock('../../../services/ApiService', () => ({
@@ -50,6 +50,8 @@ const setup = async () => {
 describe('ResourceBookingPage summary and pricing', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // Ensure authentication mocks are properly set up
+    ApiService.isAuthenticated.mockReturnValue(true);
   });
 
   it('shows booking summary with price per slot and disabled button when nothing selected', async () => {
@@ -69,6 +71,10 @@ describe('ResourceBookingPage summary and pricing', () => {
 
   it('updates total and enables button after selecting slots', async () => {
     await setup();
+    // Set a future date to avoid time-based disabling
+    const dateInput = screen.getByLabelText(/Select date:/i);
+    fireEvent.change(dateInput, { target: { value: '2099-01-15' } });
+    
     const first = screen.getByTestId('slot-09:00-1');
     const second = screen.getByTestId('slot-09:30-1');
 

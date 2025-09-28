@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import ErrorDisplay from '../ErrorDisplay';
 
 describe('ErrorDisplay modal', () => {
@@ -26,11 +26,9 @@ describe('ErrorDisplay modal', () => {
     render(<ErrorDisplay message={'Copy me'} onDismiss={() => {}} />);
 
     const copyBtn = screen.getByRole('button', { name: /Copy/i });
-    await act(async () => {
-      fireEvent.click(copyBtn);
-    });
+    fireEvent.click(copyBtn);
 
     expect(writeText).toHaveBeenCalledWith('Copy me');
-    expect(screen.getByRole('button', { name: /Copied!/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Copied!/i })).toBeInTheDocument();
   });
 });

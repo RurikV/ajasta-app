@@ -1,8 +1,5 @@
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
-import ResourceBookingPage from '../ResourceBookingPage';
-import ApiService from '../../../services/ApiService';
 
 // Mock react-router-dom (CJS-friendly virtual mock)
 jest.mock('react-router-dom', () => {
@@ -20,10 +17,16 @@ jest.mock('../../../services/ApiService', () => ({
   __esModule: true,
   default: {
     getResourceById: jest.fn(),
-    isAuthenticated: jest.fn(() => false),
-    bookResource: jest.fn()
+    isAuthenticated: jest.fn(() => true),
+    bookResourceBatch: jest.fn(),
+    bookResourceMulti: jest.fn()
   }
 }));
+
+// Import component and ApiService after mocks
+import { MemoryRouter } from 'react-router-dom';
+import ResourceBookingPage from '../ResourceBookingPage';
+import ApiService from '../../../services/ApiService';
 
 const mockResource = {
   id: 1,
@@ -68,6 +71,8 @@ describe('ResourceBookingPage selection', () => {
   });
   beforeEach(() => {
     jest.clearAllMocks();
+    // Ensure authentication mocks are properly set up
+    ApiService.isAuthenticated.mockReturnValue(true);
   });
 
   it('renders 3 unit columns for City Turf Court A', async () => {
@@ -79,6 +84,10 @@ describe('ResourceBookingPage selection', () => {
 
   it('allows multi-select and toggling a slot off', async () => {
     await setup();
+    // Set a future date to avoid time-based disabling
+    const dateInput = screen.getByLabelText(/Select date:/i);
+    fireEvent.change(dateInput, { target: { value: '2099-01-15' } });
+    
     const first = screen.getByTestId('slot-09:00-1');
     const second = screen.getByTestId('slot-09:30-1');
 

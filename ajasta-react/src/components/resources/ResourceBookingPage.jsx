@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
@@ -57,9 +57,22 @@ const ResourceBookingPage = () => {
   const [holds, setHolds] = useState({}); // { [key]: expiresAtMs }
   const [holdsOwner, setHoldsOwner] = useState(null);
   const tickRef = useRef(null);
-  const [tick, setTick] = useState(0); // trigger re-render each second
+  const [, setTick] = useState(0); // trigger re-render each second
 
   const isAuthenticated = ApiService.isAuthenticated();
+    // eslint-disable-next-line no-console
+    console.log('[DEBUG_LOG] render isAuthenticated=', isAuthenticated);
+      // eslint-disable-next-line no-console
+      console.log('[DEBUG_LOG] ApiService keys', Object.keys(ApiService || {}));
+        // eslint-disable-next-line no-console
+        console.log('[DEBUG_LOG] typeof ApiService.isAuthenticated =', typeof (ApiService && ApiService.isAuthenticated));
+        try {
+          // eslint-disable-next-line no-console
+          console.log('[DEBUG_LOG] ApiService.isAuthenticated() ->', typeof ApiService.isAuthenticated === 'function' ? ApiService.isAuthenticated() : 'not-a-function');
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.log('[DEBUG_LOG] ApiService.isAuthenticated call error', e && e.message);
+        }
 
   useEffect(() => {
     const fetchResource = async () => {
@@ -78,16 +91,16 @@ const ResourceBookingPage = () => {
   }, [id, showError]);
 
   // Local storage key for holds
-  const getHoldsKey = () => (resource ? `resourceHolds_${resource.id}` : null);
-  const getOwnerKey = () => (resource ? `resourceHolds_${resource.id}_owner` : null);
-  const getCurrentUserKey = () => {
+  const getHoldsKey = useCallback(() => (resource ? `resourceHolds_${resource.id}` : null), [resource]);
+  const getOwnerKey = useCallback(() => (resource ? `resourceHolds_${resource.id}_owner` : null), [resource]);
+  const getCurrentUserKey = useCallback(() => {
     try {
       const fromApi = typeof ApiService.getToken === 'function' ? ApiService.getToken() : null;
       return fromApi || localStorage.getItem('token') || 'anon';
     } catch {
       return localStorage.getItem('token') || 'anon';
     }
-  };
+  }, []);
 
   // Load holds from localStorage when resource changes
   useEffect(() => {
@@ -109,7 +122,7 @@ const ResourceBookingPage = () => {
       setHolds({});
       setHoldsOwner(null);
     }
-  }, [resource]);
+  }, [resource, getHoldsKey, getOwnerKey]);
 
   // Start interval to tick each second and prune expired holds
   useEffect(() => {
@@ -141,7 +154,7 @@ const ResourceBookingPage = () => {
     return () => {
       if (tickRef.current) clearInterval(tickRef.current);
     };
-  }, [resource]);
+  }, [resource, getHoldsKey, getOwnerKey]);
 
   const isHeld = (key) => {
     const exp = holds[key];
@@ -199,26 +212,19 @@ const ResourceBookingPage = () => {
     }
   }, [date]);
 
-  const isDateUnavailable = (dateStr) => {
+
+  const isSlotUnavailable = useCallback((timeHHMM) => {
     if (!resource) return false;
-    // Weekday unavailability
+
+    // Date unavailability checks (weekday and specific dates)
     if (resource.unavailableWeekdays) {
       const list = resource.unavailableWeekdays.split(',').map(s => s.trim()).filter(Boolean);
       if (weekdayIndex != null && list.includes(String(weekdayIndex))) return true;
     }
-    // Specific dates
     if (resource.unavailableDates) {
       const dates = resource.unavailableDates.split(',').map(s => s.trim()).filter(Boolean);
-      if (dates.includes(dateStr)) return true;
+      if (dates.includes(date)) return true;
     }
-    return false;
-  };
-
-  const isSlotUnavailable = (timeHHMM) => {
-    if (!resource) return false;
-
-    // If selected date is unavailable by config
-    if (isDateUnavailable(date)) return true;
 
     // Disable all slots for past dates
     const todayStr = getLocalDateStr();
@@ -234,7 +240,7 @@ const ResourceBookingPage = () => {
 
     // Daily unavailable time ranges
     return !!(resource.dailyUnavailableRanges && isTimeInRanges(timeHHMM, resource.dailyUnavailableRanges));
-  };
+  }, [resource, date, weekdayIndex]);
 
   // If today has no available slots, automatically move to the next day
   useEffect(() => {
@@ -263,6 +269,8 @@ const ResourceBookingPage = () => {
   };
 
   const handleBookResource = async () => {
+      // eslint-disable-next-line no-console
+      console.log('[DEBUG_LOG] handleBookResource invoked', { isAuthenticated, selectedSize: selected.size });
     if (!isAuthenticated) {
       showError("Please login to continue, If you don't have an account do well to register");
       setTimeout(() => {
@@ -349,8 +357,9 @@ const ResourceBookingPage = () => {
   const activeHolds = Object.entries(holds).filter(([, exp]) => typeof exp === 'number' && exp > nowMs);
   const earliestExp = activeHolds.length > 0 ? Math.min(...activeHolds.map(([, exp]) => exp)) : null;
   const currentUserKey = getCurrentUserKey();
-  const ownsHolds = holdsOwner && currentUserKey && holdsOwner === currentUserKey;
-  const secondsLeft = ownsHolds && earliestExp != null ? Math.max(0, Math.floor((earliestExp - nowMs) / 1000)) : null;
+  const ownsHolds = !!(holdsOwner && currentUserKey && holdsOwner === currentUserKey);
+  const hasOwnActiveHolds = ownsHolds && activeHolds.length > 0;
+  const secondsLeft = hasOwnActiveHolds && earliestExp != null ? Math.max(0, Math.floor((earliestExp - nowMs) / 1000)) : null;
  
   return (
     <div className="menu-page">
@@ -370,8 +379,8 @@ const ResourceBookingPage = () => {
         padding: 16, 
         border: '1px solid #ddd', 
         borderRadius: 8, 
-        backgroundColor: selected.size > 0 ? '#f9f9f9' : '#f5f5f5',
-        opacity: selected.size > 0 ? 1 : 0.6
+        backgroundColor: selected.size > 0 && !hasOwnActiveHolds ? '#f9f9f9' : '#f5f5f5',
+        opacity: selected.size > 0 && !hasOwnActiveHolds ? 1 : 0.6
       }}>
         <h3>Booking Summary</h3>
         <div className="booking-details">
@@ -380,6 +389,11 @@ const ResourceBookingPage = () => {
           <div className="total-price" style={{ fontSize: 18, fontWeight: 'bold', marginTop: 8 }}>
             Total: {formatMoney(selected.size * pricePerSlot)}
           </div>
+          {hasOwnActiveHolds && (
+            <div className="hold-warning" style={{ marginTop: 8, color: '#b36b00', fontWeight: 600 }}>
+              You already have {activeHolds.length} reserved slot(s) awaiting payment. You cannot reserve additional slots until you complete payment or the hold expires.
+            </div>
+          )}
           {secondsLeft != null && (
             <div className="hold-countdown" style={{ marginTop: 8, color: '#856404' }}>
               Reservation hold active. Expires in {formatSeconds(secondsLeft)}
@@ -389,16 +403,17 @@ const ResourceBookingPage = () => {
         <button
           onClick={handleBookResource}
           className="add-to-cart-btn"
-          disabled={selected.size === 0}
+          disabled={selected.size === 0 || hasOwnActiveHolds}
           style={{ 
             marginTop: 12, 
             padding: '12px 24px', 
-            backgroundColor: selected.size > 0 ? '#007bff' : '#cccccc', 
-            color: selected.size > 0 ? 'white' : '#666666', 
+            backgroundColor: selected.size > 0 && !hasOwnActiveHolds ? '#007bff' : '#cccccc', 
+            color: selected.size > 0 && !hasOwnActiveHolds ? 'white' : '#666666', 
             border: 'none', 
             borderRadius: 4, 
-            cursor: selected.size > 0 ? 'pointer' : 'not-allowed' 
+            cursor: selected.size > 0 && !hasOwnActiveHolds ? 'pointer' : 'not-allowed' 
           }}
+          title={hasOwnActiveHolds ? 'You have an active reservation hold. Finish payment or wait until it expires to reserve more.' : undefined}
         >
           Book Slots
         </button>
@@ -429,7 +444,7 @@ const ResourceBookingPage = () => {
                     const key = `${date}_${time}_${n}`;
                     const isSelected = selected.has(key);
                     const held = isHeld(key);
-                    const disabled = disabledRow || held;
+                    const disabled = disabledRow || held || hasOwnActiveHolds;
                     return (
                       <td
                         key={`${time}-${n}`}
@@ -448,11 +463,13 @@ const ResourceBookingPage = () => {
                         aria-disabled={disabled}
                       >
                         {/* visual slot */}
-                        {isSelected ? (
+                        {held ? (
+                          <span style={{ fontSize: 12, color: '#333', fontWeight: 600 }}>reserved</span>
+                        ) : (isSelected ? (
                           <span style={{ fontSize: 12, color: '#555' }}>
                             {time} - {minutesToHHMM(parseTimeToMinutes(time) + 30)}
                           </span>
-                        ) : ''}
+                        ) : '')}
                       </td>
                     );
                   })}

@@ -1,17 +1,15 @@
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import ResourceBookingPage from '../ResourceBookingPage';
-import ApiService from '../../../services/ApiService';
 
 // Mock react-router-dom
 jest.mock('react-router-dom', () => ({
   __esModule: true,
   MemoryRouter: ({ children }) => children,
   useParams: () => ({ id: '1' }),
-}));
+}), { virtual: true });
 
-// Mock ApiService
+// Mock ApiService BEFORE importing component
 jest.mock('../../../services/ApiService', () => ({
   __esModule: true,
   default: {
@@ -21,6 +19,10 @@ jest.mock('../../../services/ApiService', () => ({
     bookResourceMulti: jest.fn(),
   }
 }));
+
+// Import component and mocked ApiService after mocks are set up
+import ResourceBookingPage from '../ResourceBookingPage';
+import ApiService from '../../../services/ApiService';
 
 const resource = {
   id: 1,
@@ -52,13 +54,17 @@ const setup = async () => {
 describe('ResourceBookingPage booking flows', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // Ensure no residual holds between tests
+    localStorage.clear();
+    // Ensure authentication mocks are properly set up
+    ApiService.isAuthenticated.mockReturnValue(true);
   });
 
   it('single-day selection calls bookResourceBatch and holds slots with countdown', async () => {
     await setup();
-    // Set a known date
+    // Set a known future date to avoid past-date disabling
     const dateInput = screen.getByLabelText(/Select date:/i);
-    fireEvent.change(dateInput, { target: { value: '2025-01-10' } });
+    fireEvent.change(dateInput, { target: { value: '2099-01-10' } });
 
     // Select two slots: 09:00 and 09:30
     fireEvent.click(screen.getByTestId('slot-09:00-1'));
@@ -66,13 +72,19 @@ describe('ResourceBookingPage booking flows', () => {
 
     ApiService.bookResourceBatch.mockResolvedValueOnce({ statusCode: 200, message: "Your booking has been received for 2 slot(s). We've sent a secure payment link to your email." });
 
-    fireEvent.click(screen.getByRole('button', { name: /Book Slots/i }));
+    const bookBtn = screen.getByRole('button', { name: /Book Slots/i });
+    await waitFor(() => expect(bookBtn).toBeEnabled());
+    fireEvent.click(bookBtn);
+
+    // Debug print
+    // eslint-disable-next-line no-console
+    console.log('[DEBUG_LOG] bookResourceBatch calls:', ApiService.bookResourceBatch.mock.calls.length);
 
     // Ensure API called with correct body
     expect(ApiService.bookResourceBatch).toHaveBeenCalledTimes(1);
     const [id, body] = ApiService.bookResourceBatch.mock.calls[0];
     expect(id).toBe(1);
-    expect(body.date).toBe('2025-01-10');
+    expect(body.date).toBe('2099-01-10');
     expect(body.slots).toEqual([
       { startTime: '09:00', endTime: '09:30', unit: 1 },
       { startTime: '09:30', endTime: '10:00', unit: 1 },
@@ -93,34 +105,36 @@ describe('ResourceBookingPage booking flows', () => {
   it('multi-day selection calls bookResourceMulti with grouped days and holds slots across days', async () => {
     await setup();
 
-    // Day 1
+    // Day 1 (future)
     const dateInput = screen.getByLabelText(/Select date:/i);
-    fireEvent.change(dateInput, { target: { value: '2025-01-11' } });
+    fireEvent.change(dateInput, { target: { value: '2099-01-11' } });
     fireEvent.click(screen.getByTestId('slot-09:00-1'));
 
-    // Day 2
-    fireEvent.change(dateInput, { target: { value: '2025-01-12' } });
+    // Day 2 (future)
+    fireEvent.change(dateInput, { target: { value: '2099-01-12' } });
     fireEvent.click(screen.getByTestId('slot-09:30-1'));
 
     ApiService.bookResourceMulti.mockResolvedValueOnce({ statusCode: 200, message: "Your booking has been received for 2 slot(s) across 2 day(s). We've sent a secure payment link to your email." });
 
-    fireEvent.click(screen.getByRole('button', { name: /Book Slots/i }));
+    const bookBtn2 = screen.getByRole('button', { name: /Book Slots/i });
+    await waitFor(() => expect(bookBtn2).toBeEnabled());
+    fireEvent.click(bookBtn2);
 
     expect(ApiService.bookResourceMulti).toHaveBeenCalledTimes(1);
     const [id, body] = ApiService.bookResourceMulti.mock.calls[0];
     expect(id).toBe(1);
     expect(body.days).toEqual([
-      { date: '2025-01-11', slots: [{ startTime: '09:00', endTime: '09:30', unit: 1 }] },
-      { date: '2025-01-12', slots: [{ startTime: '09:30', endTime: '10:00', unit: 1 }] },
+      { date: '2099-01-11', slots: [{ startTime: '09:00', endTime: '09:30', unit: 1 }] },
+      { date: '2099-01-12', slots: [{ startTime: '09:30', endTime: '10:00', unit: 1 }] },
     ]);
 
     expect(await screen.findByText(/across 2 day/)).toBeInTheDocument();
 
     // Verify holds across days: switch between dates and check yellow
-    fireEvent.change(dateInput, { target: { value: '2025-01-11' } });
+    fireEvent.change(dateInput, { target: { value: '2099-01-11' } });
     expect(screen.getByTestId('slot-09:00-1')).toHaveStyle('background-color: yellow');
 
-    fireEvent.change(dateInput, { target: { value: '2025-01-12' } });
+    fireEvent.change(dateInput, { target: { value: '2099-01-12' } });
     expect(screen.getByTestId('slot-09:30-1')).toHaveStyle('background-color: yellow');
 
     expect(screen.getByText(/Reservation hold active/i)).toBeInTheDocument();
