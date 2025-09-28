@@ -54,7 +54,7 @@ const ResourceBookingPage = () => {
   const [selected, setSelected] = useState(() => new Set());
 
   // Holds: reservation holds for 30 minutes after booking (per slot key)
-  const [holds, setHolds] = useState({}); // { [key]: expiresAtMs }
+  const [holds, setHolds] = useState({}); // { [key]: { expiresAt: number, owner: string } }
   const [holdsOwner, setHoldsOwner] = useState(null);
   const tickRef = useRef(null);
   const [, setTick] = useState(0); // trigger re-render each second
@@ -90,19 +90,36 @@ const ResourceBookingPage = () => {
     fetchResource();
   }, [id, showError]);
 
-  // Local storage key for holds
-  const getHoldsKey = useCallback(() => (resource ? `resourceHolds_${resource.id}` : null), [resource]);
-  const getOwnerKey = useCallback(() => (resource ? `resourceHolds_${resource.id}_owner` : null), [resource]);
+  // Get current user key from JWT token for user-scoped localStorage
   const getCurrentUserKey = useCallback(() => {
     try {
-      const fromApi = typeof ApiService.getToken === 'function' ? ApiService.getToken() : null;
-      return fromApi || localStorage.getItem('token') || 'anon';
+      const token = typeof ApiService.getToken === 'function' ? ApiService.getToken() : localStorage.getItem('token');
+      if (!token) return 'anon';
+      
+      // Decode JWT token to extract email as persistent user identifier
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return payload.sub || 'anon'; // 'sub' typically contains the email/username
     } catch {
-      return localStorage.getItem('token') || 'anon';
+      // Fallback to token if decoding fails, but this should be rare
+      const token = localStorage.getItem('token');
+      return token || 'anon';
     }
   }, []);
 
-  // Load holds from localStorage when resource changes
+  // Local storage key for holds - now resource-scoped so all users can see all reserved slots
+  const getHoldsKey = useCallback(() => {
+    if (!resource) return null;
+    return `resourceHolds_${resource.id}`;
+  }, [resource]);
+  
+  // Legacy: Still maintain individual owner keys for backward compatibility during transition
+  const getOwnerKey = useCallback(() => {
+    if (!resource) return null;
+    const userKey = getCurrentUserKey();
+    return `resourceHolds_${resource.id}_user_${userKey}_owner`;
+  }, [resource, getCurrentUserKey]);
+
+  // Load holds from localStorage when resource changes or authentication state changes
   useEffect(() => {
     if (!resource) return;
     try {
@@ -110,19 +127,40 @@ const ResourceBookingPage = () => {
       const raw = k ? localStorage.getItem(k) : null;
       let parsed = raw ? JSON.parse(raw) : {};
       const now = Date.now();
-      // prune expired
-      const cleaned = Object.fromEntries(Object.entries(parsed).filter(([, exp]) => typeof exp === 'number' && exp > now));
+      
+      // Handle both old format (number) and new format ({ expiresAt, owner })
+      const cleaned = {};
+      const currentUser = getCurrentUserKey();
+      let hasOwnHolds = false;
+      
+      Object.entries(parsed).forEach(([key, value]) => {
+        if (typeof value === 'number') {
+          // Old format: just expiry time, assume anonymous owner
+          if (value > now) {
+            cleaned[key] = { expiresAt: value, owner: 'legacy' };
+          }
+        } else if (value && typeof value === 'object' && typeof value.expiresAt === 'number') {
+          // New format: { expiresAt, owner }
+          if (value.expiresAt > now) {
+            cleaned[key] = value;
+            if (value.owner === currentUser) {
+              hasOwnHolds = true;
+            }
+          }
+        }
+      });
+      
       setHolds(cleaned);
       if (k) localStorage.setItem(k, JSON.stringify(cleaned));
-      const ok = getOwnerKey();
-      const owner = ok ? localStorage.getItem(ok) : null;
-      setHoldsOwner(owner || null);
+      
+      // Set holdsOwner based on whether current user has any active holds
+      setHoldsOwner(hasOwnHolds ? currentUser : null);
     } catch (e) {
       // ignore parse errors
       setHolds({});
       setHoldsOwner(null);
     }
-  }, [resource, getHoldsKey, getOwnerKey]);
+  }, [resource, getHoldsKey, getOwnerKey, isAuthenticated, getCurrentUserKey]);
 
   // Start interval to tick each second and prune expired holds
   useEffect(() => {
@@ -131,74 +169,135 @@ const ResourceBookingPage = () => {
     tickRef.current = setInterval(() => {
       setTick((t) => t + 1);
       const now = Date.now();
+      const currentUser = getCurrentUserKey();
       setHolds((prev) => {
-        const cleaned = Object.fromEntries(Object.entries(prev).filter(([, exp]) => exp > now));
+        const cleaned = {};
+        let hasOwnHolds = false;
+        
+        Object.entries(prev).forEach(([key, value]) => {
+          if (typeof value === 'number') {
+            // Old format: just expiry time
+            if (value > now) {
+              cleaned[key] = { expiresAt: value, owner: 'legacy' };
+            }
+          } else if (value && typeof value === 'object' && typeof value.expiresAt === 'number') {
+            // New format: { expiresAt, owner }
+            if (value.expiresAt > now) {
+              cleaned[key] = value;
+              if (value.owner === currentUser) {
+                hasOwnHolds = true;
+              }
+            }
+          }
+        });
+        
         const holdsKey = getHoldsKey();
-        const ownerKey = getOwnerKey();
         try {
           if (holdsKey) {
             if (Object.keys(cleaned).length === 0) {
-              // No active holds left: clear storage and owner marker
+              // No active holds left: clear storage
               localStorage.removeItem(holdsKey);
-              if (ownerKey) localStorage.removeItem(ownerKey);
-              // Also clear state owner to hide countdown banner for the former owner
-              setHoldsOwner(null);
             } else {
               localStorage.setItem(holdsKey, JSON.stringify(cleaned));
             }
           }
         } catch {}
+        
+        // Update holdsOwner state based on whether current user has active holds
+        setHoldsOwner(hasOwnHolds ? currentUser : null);
+        
         return cleaned;
       });
     }, 1000);
     return () => {
       if (tickRef.current) clearInterval(tickRef.current);
     };
-  }, [resource, getHoldsKey, getOwnerKey]);
+  }, [resource, getHoldsKey, getCurrentUserKey]);
 
   const isHeld = (key) => {
-    const exp = holds[key];
-    return typeof exp === 'number' && exp > Date.now();
+    const hold = holds[key];
+    if (!hold) return false;
+    
+    // Handle both old format (number) and new format ({ expiresAt, owner })
+    if (typeof hold === 'number') {
+      return hold > Date.now();
+    } else if (hold && typeof hold === 'object' && typeof hold.expiresAt === 'number') {
+      return hold.expiresAt > Date.now();
+    }
+    
+    return false;
+  };
+
+  // Helper to check if current user owns a specific hold
+  const ownsHold = (key) => {
+    const hold = holds[key];
+    if (!hold) return false;
+    
+    const currentUser = getCurrentUserKey();
+    if (typeof hold === 'number') {
+      // Old format: assume legacy ownership
+      return false;
+    } else if (hold && typeof hold === 'object' && hold.owner) {
+      return hold.owner === currentUser;
+    }
+    
+    return false;
   };
 
   const addHolds = (keys) => {
     if (!resource || !keys || keys.length === 0) return;
     const expiry = Date.now() + 30 * 60 * 1000; // 30 minutes
+    const owner = getCurrentUserKey();
     const next = { ...holds };
+    
     keys.forEach((k) => {
-      const current = next[k] || 0;
-      next[k] = Math.max(current, expiry);
+      const current = next[k];
+      const newHold = { expiresAt: expiry, owner };
+      
+      // If there's an existing hold, only update if the new expiry is later
+      if (current) {
+        if (typeof current === 'number') {
+          // Old format: replace with new format if expiry is later
+          next[k] = current < expiry ? newHold : { expiresAt: current, owner: 'legacy' };
+        } else if (current.expiresAt < expiry) {
+          // New format: update if expiry is later
+          next[k] = newHold;
+        }
+      } else {
+        next[k] = newHold;
+      }
     });
+    
     setHolds(next);
+    setHoldsOwner(owner);
+    
     const k = getHoldsKey();
     if (k) {
       try { localStorage.setItem(k, JSON.stringify(next)); } catch {}
     }
-    const ok = getOwnerKey();
-    const owner = getCurrentUserKey();
-    setHoldsOwner(owner);
-    if (ok) {
-      try { localStorage.setItem(ok, owner); } catch {}
-    }
   };
 
   const handleCancelHold = (key) => {
-    if (!ownsHolds) return; // Only allow cancelling own holds
+    if (!ownsHold(key)) return; // Only allow cancelling own holds
     
     const next = { ...holds };
     delete next[key];
     setHolds(next);
     
-    const holdsKey = getHoldsKey();
-    const ownerKey = getOwnerKey();
+    // Check if user still has any holds after this cancellation
+    const currentUser = getCurrentUserKey();
+    const hasOwnHolds = Object.values(next).some(hold => {
+      return typeof hold === 'object' && hold.owner === currentUser;
+
+    });
+    setHoldsOwner(hasOwnHolds ? currentUser : null);
     
+    const holdsKey = getHoldsKey();
     try {
       if (holdsKey) {
         if (Object.keys(next).length === 0) {
-          // No holds left: clear storage and owner marker
+          // No holds left for any user: clear storage
           localStorage.removeItem(holdsKey);
-          if (ownerKey) localStorage.removeItem(ownerKey);
-          setHoldsOwner(null);
         } else {
           localStorage.setItem(holdsKey, JSON.stringify(next));
         }
@@ -281,7 +380,7 @@ const ResourceBookingPage = () => {
 
   const handleSelectClick = (key, disabled) => {
     // Check if this is a held slot that belongs to the current user
-    if (isHeld(key) && ownsHolds) {
+    if (isHeld(key) && ownsHold(key)) {
       handleCancelHold(key);
       return;
     }
@@ -398,12 +497,36 @@ const ResourceBookingPage = () => {
 
   // Compute earliest hold expiry countdown (only visible to the user who owns the holds)
   const nowMs = Date.now();
-  const activeHolds = Object.entries(holds).filter(([, exp]) => typeof exp === 'number' && exp > nowMs);
-  const earliestExp = activeHolds.length > 0 ? Math.min(...activeHolds.map(([, exp]) => exp)) : null;
   const currentUserKey = getCurrentUserKey();
-  const ownsHolds = !!(holdsOwner && currentUserKey && holdsOwner === currentUserKey);
-  const hasOwnActiveHolds = ownsHolds && activeHolds.length > 0;
+  
+  // Filter active holds (both old and new format)
+  const activeHolds = Object.entries(holds).filter(([, hold]) => {
+    if (typeof hold === 'number') {
+      return hold > nowMs;
+    } else if (hold && typeof hold === 'object' && typeof hold.expiresAt === 'number') {
+      return hold.expiresAt > nowMs;
+    }
+    return false;
+  });
+  
+  // Filter holds owned by current user
+  const ownActiveHolds = activeHolds.filter(([, hold]) => {
+    if (typeof hold === 'number') {
+      return false; // Old format, assume not owned by current user
+    } else if (hold && typeof hold === 'object' && hold.owner) {
+      return hold.owner === currentUserKey;
+    }
+    return false;
+  });
+  
+  const hasOwnActiveHolds = ownActiveHolds.length > 0;
   const hasAnyActiveHolds = activeHolds.length > 0;
+  
+  // Calculate earliest expiry for current user's holds
+  const earliestExp = ownActiveHolds.length > 0 ? Math.min(...ownActiveHolds.map(([, hold]) => {
+    return typeof hold === 'number' ? hold : hold.expiresAt;
+  })) : null;
+  
   const secondsLeft = hasOwnActiveHolds && earliestExp != null ? Math.max(0, Math.floor((earliestExp - nowMs) / 1000)) : null;
  
   return (
@@ -436,7 +559,7 @@ const ResourceBookingPage = () => {
           </div>
           {hasOwnActiveHolds && (
             <div className="hold-warning" style={{ marginTop: 8, color: '#b36b00', fontWeight: 600 }}>
-              You have {activeHolds.length} reserved slot(s) awaiting payment. You cannot reserve additional slots until you complete payment or the hold expires. You can cancel your reserved slots by clicking on them.
+              You have {ownActiveHolds.length} reserved slot(s) awaiting payment. You cannot reserve additional slots until you complete payment or the hold expires. You can cancel your reserved slots by clicking on them.
             </div>
           )}
           {secondsLeft != null && (
@@ -489,8 +612,23 @@ const ResourceBookingPage = () => {
                     const key = `${date}_${time}_${n}`;
                     const isSelected = selected.has(key);
                     const held = isHeld(key);
-                    const canCancelHold = held && ownsHolds;
-                    const disabled = disabledRow || (held && !canCancelHold) || hasOwnActiveHolds;
+                    const ownHold = held && ownsHold(key);
+                    const otherUserHold = held && !ownHold;
+                    const canCancelHold = ownHold;
+                    const disabled = disabledRow || (held && !canCancelHold) || (hasOwnActiveHolds && !held);
+                    
+                    // Background colors: own hold (yellow), other user hold (orange), selected (lightgreen), unavailable (grey)
+                    let backgroundColor = 'transparent';
+                    if (disabledRow) {
+                      backgroundColor = '#f0f0f0';
+                    } else if (ownHold) {
+                      backgroundColor = 'yellow';
+                    } else if (otherUserHold) {
+                      backgroundColor = '#ffb366'; // Light orange for other users' holds
+                    } else if (isSelected) {
+                      backgroundColor = 'lightgreen';
+                    }
+                    
                     return (
                       <td
                         key={`${time}-${n}`}
@@ -500,12 +638,17 @@ const ResourceBookingPage = () => {
                           padding: 8,
                           textAlign: 'center',
                           border: '1px solid #eee',
-                          backgroundColor: disabledRow ? '#f0f0f0' : (held ? 'yellow' : (isSelected ? 'lightgreen' : 'transparent')),
+                          backgroundColor,
                           color: (disabledRow ? '#888' : 'inherit'),
                           cursor: (disabled ? 'not-allowed' : 'pointer'),
                           userSelect: 'none'
                         }}
-                        title={disabledRow ? 'Unavailable' : (canCancelHold ? 'Reserved by you - Click to cancel' : (held ? 'Reserved by another user' : 'Available'))}
+                        title={
+                          disabledRow ? 'Unavailable' : 
+                          canCancelHold ? 'Reserved by you - Click to cancel' : 
+                          otherUserHold ? 'Reserved by another user' : 
+                          'Available'
+                        }
                         aria-disabled={disabled}
                       >
                         {/* visual slot */}
