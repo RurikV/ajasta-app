@@ -15,6 +15,9 @@ jest.mock('../../../services/ApiService', () => ({
   default: {
     getResourceById: jest.fn(),
     isAuthenticated: jest.fn(() => true),
+    isCustomer: jest.fn(() => true),
+    isAdmin: jest.fn(() => false),
+    getRoles: jest.fn(() => ['CUSTOMER']),
     bookResourceBatch: jest.fn(),
     bookResourceMulti: jest.fn(),
   }
@@ -58,6 +61,9 @@ describe('ResourceBookingPage booking flows', () => {
     localStorage.clear();
     // Ensure authentication mocks are properly set up
     ApiService.isAuthenticated.mockReturnValue(true);
+    ApiService.isCustomer.mockReturnValue(true);
+    ApiService.isAdmin.mockReturnValue(false);
+    ApiService.getRoles.mockReturnValue(['CUSTOMER']);
   });
 
   it('single-day selection calls bookResourceBatch and holds slots with countdown', async () => {

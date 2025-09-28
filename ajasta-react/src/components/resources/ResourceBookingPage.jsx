@@ -182,6 +182,30 @@ const ResourceBookingPage = () => {
     }
   };
 
+  const handleCancelHold = (key) => {
+    if (!ownsHolds) return; // Only allow cancelling own holds
+    
+    const next = { ...holds };
+    delete next[key];
+    setHolds(next);
+    
+    const holdsKey = getHoldsKey();
+    const ownerKey = getOwnerKey();
+    
+    try {
+      if (holdsKey) {
+        if (Object.keys(next).length === 0) {
+          // No holds left: clear storage and owner marker
+          localStorage.removeItem(holdsKey);
+          if (ownerKey) localStorage.removeItem(ownerKey);
+          setHoldsOwner(null);
+        } else {
+          localStorage.setItem(holdsKey, JSON.stringify(next));
+        }
+      }
+    } catch {}
+  };
+
   const formatSeconds = (total) => {
     if (total == null) return '';
     const m = Math.floor(total / 60);
@@ -256,6 +280,12 @@ const ResourceBookingPage = () => {
   }, [resource, date, slots, isSlotUnavailable]);
 
   const handleSelectClick = (key, disabled) => {
+    // Check if this is a held slot that belongs to the current user
+    if (isHeld(key) && ownsHolds) {
+      handleCancelHold(key);
+      return;
+    }
+    
     if (disabled) return;
     setSelected(prev => {
       const next = new Set(prev);
@@ -271,11 +301,25 @@ const ResourceBookingPage = () => {
   const handleBookResource = async () => {
       // eslint-disable-next-line no-console
       console.log('[DEBUG_LOG] handleBookResource invoked', { isAuthenticated, selectedSize: selected.size });
+    
     if (!isAuthenticated) {
       showError("Please login to continue, If you don't have an account do well to register");
       setTimeout(() => {
         // Navigate to login if needed
       }, 5000);
+      return;
+    }
+
+    // Check if user has required role for booking
+    const isCustomer = ApiService.isCustomer();
+    const isAdmin = ApiService.isAdmin();
+    const roles = ApiService.getRoles();
+    
+    // eslint-disable-next-line no-console
+    console.log('[DEBUG_LOG] User roles check', { isCustomer, isAdmin, roles });
+    
+    if (!isCustomer && !isAdmin) {
+      showError("Access Denied: You need CUSTOMER or ADMIN role to book resources. Please contact support if you believe this is an error.");
       return;
     }
 
@@ -359,6 +403,7 @@ const ResourceBookingPage = () => {
   const currentUserKey = getCurrentUserKey();
   const ownsHolds = !!(holdsOwner && currentUserKey && holdsOwner === currentUserKey);
   const hasOwnActiveHolds = ownsHolds && activeHolds.length > 0;
+  const hasAnyActiveHolds = activeHolds.length > 0;
   const secondsLeft = hasOwnActiveHolds && earliestExp != null ? Math.max(0, Math.floor((earliestExp - nowMs) / 1000)) : null;
  
   return (
@@ -391,7 +436,7 @@ const ResourceBookingPage = () => {
           </div>
           {hasOwnActiveHolds && (
             <div className="hold-warning" style={{ marginTop: 8, color: '#b36b00', fontWeight: 600 }}>
-              You already have {activeHolds.length} reserved slot(s) awaiting payment. You cannot reserve additional slots until you complete payment or the hold expires.
+              You have {activeHolds.length} reserved slot(s) awaiting payment. You cannot reserve additional slots until you complete payment or the hold expires. You can cancel your reserved slots by clicking on them.
             </div>
           )}
           {secondsLeft != null && (
@@ -444,7 +489,8 @@ const ResourceBookingPage = () => {
                     const key = `${date}_${time}_${n}`;
                     const isSelected = selected.has(key);
                     const held = isHeld(key);
-                    const disabled = disabledRow || held || hasOwnActiveHolds;
+                    const canCancelHold = held && ownsHolds;
+                    const disabled = disabledRow || (held && !canCancelHold) || hasOwnActiveHolds;
                     return (
                       <td
                         key={`${time}-${n}`}
@@ -459,12 +505,14 @@ const ResourceBookingPage = () => {
                           cursor: (disabled ? 'not-allowed' : 'pointer'),
                           userSelect: 'none'
                         }}
-                        title={disabledRow ? 'Unavailable' : (held ? 'Reserved (awaiting payment)' : 'Available')}
+                        title={disabledRow ? 'Unavailable' : (canCancelHold ? 'Reserved by you - Click to cancel' : (held ? 'Reserved by another user' : 'Available'))}
                         aria-disabled={disabled}
                       >
                         {/* visual slot */}
                         {held ? (
-                          <span style={{ fontSize: 12, color: '#333', fontWeight: 600 }}>reserved</span>
+                          <span style={{ fontSize: 12, color: '#333', fontWeight: 600 }}>
+                            {canCancelHold ? 'reserved (click to cancel)' : 'reserved'}
+                          </span>
                         ) : (isSelected ? (
                           <span style={{ fontSize: 12, color: '#555' }}>
                             {time} - {minutesToHHMM(parseTimeToMinutes(time) + 30)}

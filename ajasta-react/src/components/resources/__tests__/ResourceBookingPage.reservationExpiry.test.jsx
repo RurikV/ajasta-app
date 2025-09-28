@@ -15,6 +15,9 @@ jest.mock('../../../services/ApiService', () => ({
   default: {
     getResourceById: jest.fn(),
     isAuthenticated: jest.fn(() => true),
+    isCustomer: jest.fn(() => true),
+    isAdmin: jest.fn(() => false),
+    getRoles: jest.fn(() => ['CUSTOMER']),
     bookResourceBatch: jest.fn(),
   }
 }));
@@ -74,6 +77,9 @@ describe('Reservation expiry and time-based unavailability', () => {
     localStorage.setItem('token', 'test-token');
     // Ensure authentication mocks are properly set up
     ApiService.isAuthenticated.mockReturnValue(true);
+    ApiService.isCustomer.mockReturnValue(true);
+    ApiService.isAdmin.mockReturnValue(false);
+    ApiService.getRoles.mockReturnValue(['CUSTOMER']);
   });
 
   it('after hold expires on today, slot becomes unavailable (grey) because current time passed its start', async () => {
@@ -123,6 +129,9 @@ describe('Reservation expiry and time-based unavailability', () => {
 
     ApiService.bookResourceBatch.mockResolvedValueOnce({ statusCode: 200, message: "Your booking has been received for 1 slot(s). We've sent a secure payment link to your email." });
     fireEvent.click(screen.getByRole('button', { name: /Book Slots/i }));
+
+    // Wait for success message to ensure holds have been applied
+    await screen.findByText(/booking has been received/i);
 
     const cell = await screen.findByTestId('slot-09:30-1');
     expect(cell).toHaveStyle('background-color: yellow');

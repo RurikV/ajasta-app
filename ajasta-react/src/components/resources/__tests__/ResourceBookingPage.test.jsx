@@ -18,6 +18,9 @@ jest.mock('../../../services/ApiService', () => ({
   default: {
     getResourceById: jest.fn(),
     isAuthenticated: jest.fn(() => true),
+    isCustomer: jest.fn(() => true),
+    isAdmin: jest.fn(() => false),
+    getRoles: jest.fn(() => ['CUSTOMER']),
     bookResourceBatch: jest.fn(),
     bookResourceMulti: jest.fn()
   }
@@ -73,6 +76,9 @@ describe('ResourceBookingPage selection', () => {
     jest.clearAllMocks();
     // Ensure authentication mocks are properly set up
     ApiService.isAuthenticated.mockReturnValue(true);
+    ApiService.isCustomer.mockReturnValue(true);
+    ApiService.isAdmin.mockReturnValue(false);
+    ApiService.getRoles.mockReturnValue(['CUSTOMER']);
   });
 
   it('renders 3 unit columns for City Turf Court A', async () => {
@@ -109,6 +115,10 @@ describe('ResourceBookingPage selection', () => {
 
   it('hover/drag does not select additional cells, and no "Selected" label is shown', async () => {
     await setup();
+    // Set a future date to avoid time-based disabling
+    const dateInput = screen.getByLabelText(/Select date:/i);
+    fireEvent.change(dateInput, { target: { value: '2099-01-15' } });
+    
     const first = screen.getByTestId('slot-09:00-1');
     const second = screen.getByTestId('slot-09:30-1');
 

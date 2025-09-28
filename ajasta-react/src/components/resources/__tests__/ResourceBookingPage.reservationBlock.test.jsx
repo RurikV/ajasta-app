@@ -15,6 +15,9 @@ jest.mock('../../../services/ApiService', () => ({
   default: {
     getResourceById: jest.fn(),
     isAuthenticated: jest.fn(() => true),
+    isCustomer: jest.fn(() => true),
+    isAdmin: jest.fn(() => false),
+    getRoles: jest.fn(() => ['CUSTOMER']),
     bookResourceBatch: jest.fn(),
   }
 }));
@@ -55,6 +58,9 @@ describe('Reservation blocking when user has active holds', () => {
     localStorage.clear();
     // Ensure authentication mocks are properly set up
     ApiService.isAuthenticated.mockReturnValue(true);
+    ApiService.isCustomer.mockReturnValue(true);
+    ApiService.isAdmin.mockReturnValue(false);
+    ApiService.getRoles.mockReturnValue(['CUSTOMER']);
   });
 
   it('prevents selecting new slots and disables booking when user has active holds', async () => {
