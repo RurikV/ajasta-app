@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
@@ -13,12 +13,7 @@ const AdminOrderDetailPage = () => {
     const navigate = useNavigate();
 
 
-    useEffect(() => {
-        fetchOrder();
-    }, [id]);
-
-
-    const fetchOrder = async () => {
+    const fetchOrder = useCallback(async () => {
         try {
             const response = await ApiService.getOrderById(id);
             if (response.statusCode === 200) {
@@ -27,7 +22,11 @@ const AdminOrderDetailPage = () => {
         } catch (error) {
             showError(error.response?.data?.message || error.message);
         }
-    };
+    }, [id, showError]);
+
+    useEffect(() => {
+        fetchOrder();
+    }, [fetchOrder]);
 
 
 

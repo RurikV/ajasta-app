@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
@@ -15,12 +15,7 @@ const AdminOrdersPage = () => {
     const navigate = useNavigate();
 
 
-    useEffect(() => {
-        fetchOrders();
-    }, [filter]);
-
-
-    const fetchOrders = async () => {
+    const fetchOrders = useCallback(async () => {
         try {
             const response = await ApiService.getAllOrders(filter === 'all' ? null : filter);
 
@@ -31,7 +26,11 @@ const AdminOrdersPage = () => {
         } catch (error) {
             showError(error.response?.data?.message || error.message);
         }
-    }
+    }, [filter, showError]);
+
+    useEffect(() => {
+        fetchOrders();
+    }, [fetchOrders]);
 
 
 

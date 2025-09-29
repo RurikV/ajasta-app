@@ -23,7 +23,7 @@ const ResourceDetailsPage = () => {
       }
     };
     fetchResource();
-  }, [id]);
+  }, [id, showError]);
 
   if (!resource) {
     return (

@@ -19,6 +19,7 @@ import top.ajasta.AjastaApp.order.entity.Order;
 import top.ajasta.AjastaApp.order.entity.OrderItem;
 import top.ajasta.AjastaApp.order.repository.OrderItemRepository;
 import top.ajasta.AjastaApp.order.repository.OrderRepository;
+import top.ajasta.AjastaApp.payment.repository.PaymentRepository;
 import top.ajasta.AjastaApp.response.Response;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -54,6 +55,7 @@ public class OrderServiceImpl  implements OrderService{
     private final TemplateEngine templateEngine;
     private final CartService cartService;
     private final CartRepository cartRepository;
+    private final PaymentRepository paymentRepository;
 
 
     @Value("${base.payment.link}")
@@ -190,7 +192,11 @@ public class OrderServiceImpl  implements OrderService{
 
         Page<OrderDTO> orderDTOPage  = orderPage.map(order -> {
             OrderDTO dto = modelMapper.map(order, OrderDTO.class);
-            dto.getOrderItems().forEach(orderItemDTO -> orderItemDTO.getMenu().setReviews(null));
+            dto.getOrderItems().forEach(orderItemDTO -> {
+                if (orderItemDTO.getMenu() != null) {
+                    orderItemDTO.getMenu().setReviews(null);
+                }
+            });
             return dto;
         });
 
@@ -270,6 +276,36 @@ public class OrderServiceImpl  implements OrderService{
     }
 
     @Override
+    @Transactional
+    public Response<?> deleteOwnOrder(Long id) {
+        log.info("Inside deleteOwnOrder()");
+        User customer = userService.getCurrentLoggedInUser();
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Order Not Found"));
+
+        if (order.getUser() == null || !order.getUser().getId().equals(customer.getId())) {
+            throw new BadRequestException("You are not allowed to delete this order");
+        }
+
+        // Delete payment first if exists to avoid FK constraint issues
+        if (order.getPayment() != null) {
+            try {
+                paymentRepository.delete(order.getPayment());
+            } catch (Exception e) {
+                log.warn("Failed to delete payment for order {}: {}", id, e.getMessage());
+            }
+            order.setPayment(null);
+        }
+
+        orderRepository.delete(order);
+
+        return Response.builder()
+                .statusCode(HttpStatus.OK.value())
+                .message("Order deleted successfully")
+                .build();
+    }
+
+    @Override
     public Response<Long> countUniqueCustomers() {
         log.info("Inside countUniqueCustomers()");
 
@@ -278,6 +314,34 @@ public class OrderServiceImpl  implements OrderService{
                 .statusCode(HttpStatus.OK.value())
                 .message("Unique customer count retrieved successfully")
                 .data(uniqueCustomerCount)
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public void createBookingOrder(BigDecimal totalAmount, String bookingTitle, String bookingDetails) {
+        log.info("Inside createBookingOrder() amount={}, title={}...", totalAmount, bookingTitle);
+        User customer = userService.getCurrentLoggedInUser();
+
+        Order order = Order.builder()
+                .user(customer)
+                .orderDate(LocalDateTime.now())
+                .totalAmount(totalAmount == null ? BigDecimal.ZERO : totalAmount)
+                .orderStatus(OrderStatus.INITIALIZED)
+                .paymentStatus(PaymentStatus.PENDING)
+                .orderItems(new ArrayList<>())
+                .booking(Boolean.TRUE)
+                .bookingTitle(bookingTitle)
+                .bookingDetails(bookingDetails)
+                .build();
+
+        Order saved = orderRepository.save(order);
+        OrderDTO dto = modelMapper.map(saved, OrderDTO.class);
+
+        Response.<OrderDTO>builder()
+                .statusCode(HttpStatus.OK.value())
+                .message("Booking recorded in order history")
+                .data(dto)
                 .build();
     }
 

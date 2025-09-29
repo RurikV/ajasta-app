@@ -6,6 +6,9 @@ export default class ApiService {
     static BASE_URL = "http://localhost:8090/api";
     // static BASE_URL = "http://18.221.120.102:8090/api"; //production base url
 
+    // In-memory cache for roles (never persisted to localStorage)
+    static cachedRoles = null;
+
     static saveToken(token) {
         localStorage.setItem("token", token);
     }
@@ -14,21 +17,55 @@ export default class ApiService {
         return localStorage.getItem("token");
     }
 
-    //save role
+    // Save roles in-memory only (do NOT store in localStorage)
     static saveRole(roles) {
-        localStorage.setItem("roles", JSON.stringify(roles));
+        try {
+            if (!roles) { this.cachedRoles = null; return; }
+            const arr = Array.isArray(roles) ? roles : [roles];
+            this.cachedRoles = Array.from(new Set(arr.map(r => String(r).replace(/^ROLE_/,'').toUpperCase())));
+        } catch {
+            this.cachedRoles = null;
+        }
     }
 
-    // Get the roles from local storage
+    // Extract roles from JWT token payload in a robust way
+    static parseRolesFromToken() {
+        const token = this.getToken();
+        if (!token) return [];
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1] || '')) || {};
+            let roles = [];
+            if (Array.isArray(payload.roles)) {
+                roles = payload.roles;
+            } else if (Array.isArray(payload.authorities)) {
+                const first = payload.authorities[0];
+                if (typeof first === 'string') roles = payload.authorities;
+                else roles = payload.authorities.map(a => a && (a.authority || a.role)).filter(Boolean);
+            } else if (typeof payload.scope === 'string') {
+                roles = payload.scope.split(/[ ,]+/).filter(Boolean);
+            } else if (typeof payload.scopes === 'string') {
+                roles = payload.scopes.split(/[ ,]+/).filter(Boolean);
+            }
+            roles = roles.map(r => String(r).replace(/^ROLE_/,'').toUpperCase());
+            return Array.from(new Set(roles));
+        } catch {
+            return [];
+        }
+    }
+
+    // Get roles from token (preferred) or from in-memory cache
     static getRoles() {
-        const roles = localStorage.getItem('roles');
-        return roles ? JSON.parse(roles) : null;
+        const fromToken = this.parseRolesFromToken();
+        if (fromToken && fromToken.length) return fromToken;
+        return this.cachedRoles || [];
     }
 
     // Check if the user has a specific role
     static hasRole(role) {
         const roles = this.getRoles();
-        return roles ? roles.includes(role) : false;
+        if (!roles || roles.length === 0) return false;
+        const target = String(role).replace(/^ROLE_/,'').toUpperCase();
+        return roles.includes(target);
     }
 
     // Check if the user is an admin
@@ -36,12 +73,12 @@ export default class ApiService {
         return this.hasRole('ADMIN');
     }
 
-    // Check if the user is an instructor
+    // Check if the user is a customer
     static isCustomer() {
         return this.hasRole('CUSTOMER');
     }
 
-    // Check if the user is a student
+    // Check if the user is a delivery person
     static isDeliveryPerson() {
         return this.hasRole('DELIVERY');
     }
@@ -49,7 +86,9 @@ export default class ApiService {
 
     static logout() {
         localStorage.removeItem("token");
-        localStorage.removeItem("roles");
+        // Clear any legacy roles key and reset in-memory cache
+        try { localStorage.removeItem("roles"); } catch {}
+        this.cachedRoles = null;
     }
 
     static isAuthenticated() {
@@ -111,6 +150,21 @@ export default class ApiService {
                 ...this.getHeader(),
                 'Content-Type': 'multipart/form-data'
             }
+        });
+        return resp.data;
+    }
+
+    // Saved emails (user profile)
+    static async getSavedEmails() {
+        const resp = await axios.get(`${this.BASE_URL}/users/saved-emails`, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+    static async addSavedEmail(email) {
+        const resp = await axios.post(`${this.BASE_URL}/users/saved-emails?email=${encodeURIComponent(email)}`, null, {
+            headers: this.getHeader()
         });
         return resp.data;
     }
@@ -257,6 +311,13 @@ export default class ApiService {
         return resp.data;
     }
 
+
+    static async deleteOrder(id) {
+        const resp = await axios.delete(`${this.BASE_URL}/orders/${id}`, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
 
     static async countTotalActiveCustomers() {
         const resp = await axios.get(`${this.BASE_URL}/orders/unique-customers`, {
@@ -431,6 +492,28 @@ export default class ApiService {
 
 
 
+
+
+    static async bookResource(id, body) {
+        const resp = await axios.post(`${this.BASE_URL}/resources/${id}/book`, body, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+    static async bookResourceBatch(id, body) {
+        const resp = await axios.post(`${this.BASE_URL}/resources/${id}/book-batch`, body, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+    static async bookResourceMulti(id, body) {
+        const resp = await axios.post(`${this.BASE_URL}/resources/${id}/book-multi`, body, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
 
 
     /* CART SECTION */

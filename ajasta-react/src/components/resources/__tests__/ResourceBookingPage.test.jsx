@@ -1,6 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import ResourceBookingPage from '../ResourceBookingPage';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 // Mock react-router-dom (CJS-friendly virtual mock)
 jest.mock('react-router-dom', () => {
@@ -17,10 +16,19 @@ jest.mock('react-router-dom', () => {
 jest.mock('../../../services/ApiService', () => ({
   __esModule: true,
   default: {
-    getResourceById: jest.fn()
+    getResourceById: jest.fn(),
+    isAuthenticated: jest.fn(() => true),
+    isCustomer: jest.fn(() => true),
+    isAdmin: jest.fn(() => false),
+    getRoles: jest.fn(() => ['CUSTOMER']),
+    bookResourceBatch: jest.fn(),
+    bookResourceMulti: jest.fn()
   }
 }));
 
+// Import component and ApiService after mocks
+import { MemoryRouter } from 'react-router-dom';
+import ResourceBookingPage from '../ResourceBookingPage';
 import ApiService from '../../../services/ApiService';
 
 const mockResource = {
@@ -35,19 +43,42 @@ const mockResource = {
 };
 
 const setup = async () => {
-  ApiService.getResourceById.mockResolvedValue({ statusCode: 200, data: mockResource });
+  let resolveGet;
+  const promise = new Promise(res => { resolveGet = res; });
+  ApiService.getResourceById.mockReturnValue(promise);
   render(
     <MemoryRouter>
       <ResourceBookingPage />
     </MemoryRouter>
   );
+  // Resolve the API call to trigger state update; Testing Library will handle act internally via findBy*
+  resolveGet({ statusCode: 200, data: mockResource });
   // Wait for header/unit columns to appear
-  await waitFor(() => expect(screen.getByText(/Unit 1/i)).toBeInTheDocument());
+  await screen.findByText(/Unit 1/i);
 };
 
 describe('ResourceBookingPage selection', () => {
+  let originalError;
+  beforeAll(() => {
+    originalError = console.error;
+    jest.spyOn(console, 'error').mockImplementation((...args) => {
+      const first = args[0];
+      if (typeof first === 'string' && first.includes('not wrapped in act')) {
+        return; // suppress only act() warning noise
+      }
+      originalError(...args);
+    });
+  });
+  afterAll(() => {
+    console.error.mockRestore();
+  });
   beforeEach(() => {
     jest.clearAllMocks();
+    // Ensure authentication mocks are properly set up
+    ApiService.isAuthenticated.mockReturnValue(true);
+    ApiService.isCustomer.mockReturnValue(true);
+    ApiService.isAdmin.mockReturnValue(false);
+    ApiService.getRoles.mockReturnValue(['CUSTOMER']);
   });
 
   it('renders 3 unit columns for City Turf Court A', async () => {
@@ -57,31 +88,50 @@ describe('ResourceBookingPage selection', () => {
     expect(screen.getByText('Unit 3')).toBeInTheDocument();
   });
 
-  it('clicking a cell toggles light green highlight', async () => {
+  it('allows multi-select and toggling a slot off', async () => {
     await setup();
-    const cell = screen.getByTestId('slot-09:00-1');
-
-    // First click: select (mousedown handler toggles selection)
-    fireEvent.mouseDown(cell);
-    expect(cell).toHaveStyle('background-color: lightgreen');
-
-    // Second click: deselect
-    fireEvent.mouseDown(cell);
-    expect(cell).not.toHaveStyle('background-color: lightgreen');
-  });
-
-  it('dragging selects multiple cells', async () => {
-    await setup();
+    // Set a future date to avoid time-based disabling
+    const dateInput = screen.getByLabelText(/Select date:/i);
+    fireEvent.change(dateInput, { target: { value: '2099-01-15' } });
+    
     const first = screen.getByTestId('slot-09:00-1');
     const second = screen.getByTestId('slot-09:30-1');
 
-    fireEvent.mouseDown(first);
-    // simulate drag across to second slot
-    fireEvent.mouseEnter(second);
-    // release drag
-    fireEvent.mouseUp(window);
+    // Click first: selected
+    fireEvent.click(first);
+    expect(first).toHaveStyle('background-color: lightgreen');
+    expect(second).not.toHaveStyle('background-color: lightgreen');
 
+    // Click second: both selected (multi-select)
+    fireEvent.click(second);
     expect(first).toHaveStyle('background-color: lightgreen');
     expect(second).toHaveStyle('background-color: lightgreen');
+
+    // Click first again: toggles off first, second remains
+    fireEvent.click(first);
+    expect(first).not.toHaveStyle('background-color: lightgreen');
+    expect(second).toHaveStyle('background-color: lightgreen');
+  });
+
+  it('hover/drag does not select additional cells, and no "Selected" label is shown', async () => {
+    await setup();
+    // Set a future date to avoid time-based disabling
+    const dateInput = screen.getByLabelText(/Select date:/i);
+    fireEvent.change(dateInput, { target: { value: '2099-01-15' } });
+    
+    const first = screen.getByTestId('slot-09:00-1');
+    const second = screen.getByTestId('slot-09:30-1');
+
+    fireEvent.click(first);
+    // simulate hover/drag behavior (should have no effect)
+    fireEvent.mouseEnter(second);
+    fireEvent.mouseOver(second);
+
+    // Still only first selected
+    expect(first).toHaveStyle('background-color: lightgreen');
+    expect(second).not.toHaveStyle('background-color: lightgreen');
+
+    // ensure the literal label 'Selected' is not rendered anywhere
+    expect(screen.queryByText(/Selected/i)).toBeNull();
   });
 });

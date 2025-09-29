@@ -52,8 +52,8 @@ const ResourcesPage = () => {
     (r.name || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const navigateToResourceDetails = (id) => {
-    navigate(`/resources/${id}`);
+  const navigateToBookResource = (id) => {
+    navigate(`/resources/${id}/book`);
   };
 
   return (
@@ -93,7 +93,7 @@ const ResourcesPage = () => {
         {filtered.map((item) => (
           <div
             className="menu-item-card"
-            onClick={() => navigateToResourceDetails(item.id)}
+            onClick={() => navigateToBookResource(item.id)}
             key={item.id}
           >
             {item.imageUrl && (

@@ -34,6 +34,7 @@ const LoginPage = () => {
             const response = await ApiService.loginUser(formData);
             if (response.statusCode === 200) {
                 ApiService.saveToken(response.data.token)
+                // Cache roles in-memory (no localStorage) for immediate UI role checks
                 ApiService.saveRole(response.data.roles)
                 navigate(redirectPath, {replace: true})
             } else {

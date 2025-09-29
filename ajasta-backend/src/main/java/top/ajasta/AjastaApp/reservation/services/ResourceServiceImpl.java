@@ -80,6 +80,7 @@ public class ResourceServiceImpl implements ResourceService {
         if (dto.getType() != null) existing.setType(dto.getType());
         if (dto.getLocation() != null) existing.setLocation(dto.getLocation());
         if (dto.getDescription() != null) existing.setDescription(dto.getDescription());
+        if (dto.getPricePerSlot() != null) existing.setPricePerSlot(dto.getPricePerSlot());
         if (dto.getActive() != null) existing.setActive(dto.getActive());
         if (dto.getUnitsCount() != null) existing.setUnitsCount(dto.getUnitsCount());
         if (dto.getOpenTime() != null && !dto.getOpenTime().isBlank()) {
@@ -154,6 +155,7 @@ public class ResourceServiceImpl implements ResourceService {
                 .location(r.getLocation())
                 .description(r.getDescription())
                 .imageUrl(r.getImageUrl())
+                .pricePerSlot(r.getPricePerSlot())
                 .active(r.isActive())
                 .unitsCount(r.getUnitsCount())
                 .openTime(r.getOpenTime() != null ? r.getOpenTime().toString() : null)
@@ -170,7 +172,8 @@ public class ResourceServiceImpl implements ResourceService {
                 .name(dto.getName())
                 .type(dto.getType())
                 .location(dto.getLocation())
-                .description(dto.getDescription());
+                .description(dto.getDescription())
+                .pricePerSlot(dto.getPricePerSlot());
         if (dto.getActive() != null) b.active(dto.getActive());
         if (dto.getUnitsCount() != null) b.unitsCount(dto.getUnitsCount());
         if (dto.getOpenTime() != null && !dto.getOpenTime().isBlank()) {

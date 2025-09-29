@@ -19,4 +19,8 @@ public interface UserService {
 
     Response<?> deactivateOwnAccount();
 
+    Response<List<String>> getSavedEmails();
+
+    Response<?> addSavedEmail(String email);
+
 }

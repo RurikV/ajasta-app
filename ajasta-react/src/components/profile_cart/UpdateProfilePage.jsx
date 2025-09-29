@@ -44,7 +44,7 @@ const UpdateProfilePage = () => {
         }
 
         fetchUserProfile();
-    }, [])
+    }, [showError])
 
 
     const handleImageChange = (e) => {

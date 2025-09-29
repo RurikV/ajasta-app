@@ -4,6 +4,7 @@ import top.ajasta.AjastaApp.reservation.enums.ResourceType;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 
@@ -32,6 +33,10 @@ public class Resource {
     private String description;
 
     private String imageUrl;
+
+    // Price per 30-minute booking slot
+    @Column(precision = 10, scale = 2)
+    private BigDecimal pricePerSlot;
 
     // Number of simultaneous units (e.g., number of courts/chairs)
     @Builder.Default

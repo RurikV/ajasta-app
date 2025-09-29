@@ -14,6 +14,7 @@ const AdminResourceFormPage = () => {
     location: '',
     description: '',
     imageFile: null,
+    pricePerSlot: '', // Price per 30-minute slot
     active: true,
     unitsCount: 1,
     openTime: '08:00',
@@ -40,6 +41,7 @@ const AdminResourceFormPage = () => {
           ...response.data,
           type: response.data.type || '',
           active: !!response.data.active,
+          pricePerSlot: response.data.pricePerSlot || '',
           imageFile: null
         });
       }
@@ -50,7 +52,16 @@ const AdminResourceFormPage = () => {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setResource(prev => ({ ...prev, [name]: value }));
+    
+    // For pricePerSlot, validate and preserve decimal precision
+    if (name === 'pricePerSlot') {
+      // Allow digits, dots, and commas with up to 2 decimal places
+      if (value === '' || /^\d*[.,]?\d{0,2}$/.test(value)) {
+        setResource(prev => ({ ...prev, [name]: value }));
+      }
+    } else {
+      setResource(prev => ({ ...prev, [name]: value }));
+    }
   };
 
   const handleCheckboxChange = (e) => {
@@ -91,6 +102,11 @@ const AdminResourceFormPage = () => {
       if (resource.type) formData.append('type', resource.type);
       if (resource.location) formData.append('location', resource.location);
       if (resource.description) formData.append('description', resource.description);
+      if (resource.pricePerSlot && resource.pricePerSlot.toString().trim()) {
+        // Convert comma to dot for backend compatibility
+        const normalizedPrice = resource.pricePerSlot.toString().replace(',', '.');
+        formData.append('pricePerSlot', normalizedPrice);
+      }
       if (resource.active !== undefined && resource.active !== null) formData.append('active', resource.active);
       if (resource.imageFile) formData.append('imageFile', resource.imageFile);
       if (resource.unitsCount !== undefined && resource.unitsCount !== null) formData.append('unitsCount', String(resource.unitsCount));
@@ -176,6 +192,20 @@ const AdminResourceFormPage = () => {
             value={resource.description}
             onChange={handleInputChange}
             rows="4"
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="pricePerSlot">Price per 30-minute slot (€)</label>
+          <input
+            type="text"
+            id="pricePerSlot"
+            name="pricePerSlot"
+            value={resource.pricePerSlot}
+            onChange={handleInputChange}
+            placeholder="Enter price (e.g., 25.00)"
+            pattern="^\d*[.,]?\d{0,2}$"
+            title="Please enter a valid price with up to 2 decimal places (use . or , as decimal separator)"
           />
         </div>
 

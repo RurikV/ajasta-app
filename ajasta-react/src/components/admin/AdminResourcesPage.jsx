@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
@@ -10,11 +10,7 @@ const AdminResourcesPage = () => {
   const { ErrorDisplay, showError } = useError();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    fetchResources();
-  }, []);
-
-  const fetchResources = async () => {
+  const fetchResources = useCallback(async () => {
     try {
       const response = await ApiService.getAllResources();
       if (response.statusCode === 200) {
@@ -23,7 +19,11 @@ const AdminResourcesPage = () => {
     } catch (error) {
       showError(error.response?.data?.message || error.message);
     }
-  };
+  }, [showError]);
+
+  useEffect(() => {
+    fetchResources();
+  }, [fetchResources]);
 
   const handleAdd = () => {
     navigate('/admin/resources/new');

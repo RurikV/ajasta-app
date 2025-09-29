@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
 
@@ -8,11 +8,7 @@ const DeliveriesPage = () => {
     const [loading, setLoading] = useState(true);
     const [statusFilter, setStatusFilter] = useState('');
 
-    useEffect(() => {
-        fetchDeliveries();
-    }, [statusFilter]);
-
-    const fetchDeliveries = async () => {
+    const fetchDeliveries = useCallback(async () => {
         try {
             setLoading(true);
             // Fetch orders visible to delivery personnel
@@ -30,7 +26,11 @@ const DeliveriesPage = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [statusFilter, showError]);
+
+    useEffect(() => {
+        fetchDeliveries();
+    }, [fetchDeliveries]);
 
     const updateOrderStatus = async (orderId, newStatus) => {
         try {

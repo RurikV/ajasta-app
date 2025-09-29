@@ -47,5 +47,14 @@ public class UserController {
         return ResponseEntity.ok(userService.getOwnAccountDetails());
     }
 
+    @GetMapping("/saved-emails")
+    public ResponseEntity<Response<List<String>>> getSavedEmails() {
+        return ResponseEntity.ok(userService.getSavedEmails());
+    }
+
+    @PostMapping("/saved-emails")
+    public ResponseEntity<Response<?>> addSavedEmail(@RequestParam("email") String email) {
+        return ResponseEntity.ok(userService.addSavedEmail(email));
+    }
 
 }

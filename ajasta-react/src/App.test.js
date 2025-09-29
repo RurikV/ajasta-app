@@ -35,7 +35,6 @@ jest.mock('react-router-dom', () => {
 }, { virtual: true });
 
 // Import App after mocking RRD and axios
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const App = require('./App').default;
 
 // Basic smoke test ensuring the app renders Navbar links

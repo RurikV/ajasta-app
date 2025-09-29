@@ -7,6 +7,7 @@ import { useError } from '../common/ErrorDisplay';
 const OrderHistoryPage = () => {
 
     const [orders, setOrders] = useState(null);
+    const [message, setMessage] = useState(null);
     const navigate = useNavigate();
     const { ErrorDisplay, showError } = useError();
 
@@ -56,7 +57,7 @@ const OrderHistoryPage = () => {
         };
 
         fetchOrders();
-    }, []);
+    }, [showError]);
 
 
     const formatDate = (dateString) => {
@@ -76,6 +77,23 @@ const OrderHistoryPage = () => {
         navigate(`/leave-review?orderId=${orderId}&menuId=${menuId}`);
     };
 
+    const handleDeleteOrder = async (orderId) => {
+        const confirm = window.confirm('Are you sure you want to delete this order? This action cannot be undone.');
+        if (!confirm) return;
+        try {
+            const resp = await ApiService.deleteOrder(orderId);
+            if (resp.statusCode === 200) {
+                setOrders((prev) => (prev || []).filter((o) => o.id !== orderId));
+                setMessage('Order deleted successfully');
+                setTimeout(() => setMessage(null), 3000);
+            } else {
+                showError(resp.message || 'Failed to delete order');
+            }
+        } catch (e) {
+            showError(e.response?.data?.message || e.message);
+        }
+    };
+
 
     if (!orders || orders.length === 0) {
         return (
@@ -92,6 +110,9 @@ const OrderHistoryPage = () => {
         <div className="order-history-container">
             {/* Render the ErrorDisplay component */}
             <ErrorDisplay />
+            {message && (
+                <p className="success">{message}</p>
+            )}
             <h1 className="order-history-title">Your Order History</h1>
             <div className="order-list">
                 {orders.map((order) => (
@@ -107,34 +128,57 @@ const OrderHistoryPage = () => {
                             <span className="order-total">
                                 Total: ${order.totalAmount.toFixed(2)}
                             </span>
+                            <button
+                                className="remove-btn"
+                                onClick={() => handleDeleteOrder(order.id)}
+                                style={{ marginLeft: 'auto' }}
+                            >
+                                Delete
+                            </button>
                         </div>
                         <div className="order-items">
                             <h2 className="order-items-title">Order Items:</h2>
-                            {order.orderItems.map((item) => (
-                                <div key={item.id} className="order-item">
-                                    <div className="item-details">
-                                        <span className="item-name">{item.menu.name}</span>
-                                        <span className="item-quantity">Quantity: {item.quantity}</span>
-                                        <span className="item-price">
-                                            Price: ${item.pricePerUnit.toFixed(2)}
-                                        </span>
-                                        <span className="subtotal">
-                                            Subtotal: ${item.subtotal.toFixed(2)}
-                                        </span>
-                                        {order.orderStatus.toLowerCase() === 'delivered' && !item.hasReview && (
-                                            <button
-                                                className="review-button"
-                                                onClick={() => handleLeaveReview(order.id, item.menu.id)}
-                                            >
-                                                Leave Review
-                                            </button>
-                                        )}
+                            {order.orderItems && order.orderItems.length > 0 ? (
+                                order.orderItems.map((item) => (
+                                    <div key={item.id} className="order-item">
+                                        <div className="item-details">
+                                            <span className="item-name">{item.menu?.name || 'Item'}</span>
+                                            <span className="item-quantity">Quantity: {item.quantity}</span>
+                                            <span className="item-price">
+                                                Price: ${item.pricePerUnit.toFixed(2)}
+                                            </span>
+                                            <span className="subtotal">
+                                                Subtotal: ${item.subtotal.toFixed(2)}
+                                            </span>
+                                            {order.orderStatus.toLowerCase() === 'delivered' && item.menu && !item.hasReview && (
+                                                <button
+                                                    className="review-button"
+                                                    onClick={() => handleLeaveReview(order.id, item.menu.id)}
+                                                >
+                                                    Leave Review
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div className="item-image-container">
+                                            {item.menu?.imageUrl && (
+                                                <img src={item.menu.imageUrl} alt={item.menu.name} className="item-image" />
+                                            )}
+                                        </div>
                                     </div>
-                                    <div className="item-image-container">
-                                        <img src={item.menu.imageUrl} alt={item.menu.name} className="item-image" />
+                                ))
+                            ) : (
+                                (order.booking || order.bookingDetails) && (
+                                    <div className="order-item">
+                                        <div className="item-details">
+                                            <span className="item-name">{order.bookingTitle || 'Booking'}</span>
+                                            <pre className="item-description" style={{ whiteSpace: 'pre-wrap', margin: '8px 0' }}>
+{order.bookingDetails || 'Booking details not available'}
+                                            </pre>
+                                            <span className="item-price">Total: ${order.totalAmount.toFixed(2)}</span>
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                )
+                            )}
                         </div>
                     </div>
                 ))}

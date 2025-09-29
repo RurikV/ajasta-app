@@ -31,7 +31,6 @@ const MenuPage = () => {
                     setMenus(response.data)
 
                     console.log(response.data)
-                    console.log(menus)
                 } else {
                     showError(response.message);
                 }
@@ -42,7 +41,7 @@ const MenuPage = () => {
             }
         };
         fetchMenus();
-    }, [location.search]);
+    }, [location.search, showError]);
 
 
 

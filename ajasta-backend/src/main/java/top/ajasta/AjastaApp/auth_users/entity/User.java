@@ -41,6 +41,11 @@ public class User {
 
     private String address;
 
+    @ElementCollection
+    @CollectionTable(name = "user_saved_emails", joinColumns = @JoinColumn(name = "user_id"))
+    @Column(name = "email")
+    private List<String> savedEmails;
+
     private boolean isActive;
 
     @ManyToMany(fetch = FetchType.EAGER)

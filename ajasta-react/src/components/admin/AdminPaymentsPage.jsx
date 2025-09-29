@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
 import { useError } from '../common/ErrorDisplay';
@@ -15,12 +15,7 @@ const AdminPaymentsPage = () => {
 
 
 
-    useEffect(() => {
-        fetchPayments();
-    }, [filter]);
-
-
-    const fetchPayments = async () => {
+    const fetchPayments = useCallback(async () => {
         try {
             const response = await ApiService.getAllPayments();
 
@@ -42,7 +37,11 @@ const AdminPaymentsPage = () => {
             showError(error.response?.data?.message || error.message);
 
         }
-    }
+    }, [filter, showError]);
+
+    useEffect(() => {
+        fetchPayments();
+    }, [fetchPayments]);
 
 
     const handleViewPayment = (id) => {

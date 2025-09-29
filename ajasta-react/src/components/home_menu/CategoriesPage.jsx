@@ -28,7 +28,7 @@ const CategoriesPage = () => {
         };
 
         fetchCategories();
-    }, []);
+    }, [showError]);
 
 
     const handleCategoryClick = (categoryId) => {
