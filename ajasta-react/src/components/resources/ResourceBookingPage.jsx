@@ -55,7 +55,7 @@ const ResourceBookingPage = () => {
 
   // Holds: reservation holds for 30 minutes after booking (per slot key)
   const [holds, setHolds] = useState({}); // { [key]: { expiresAt: number, owner: string } }
-  const [holdsOwner, setHoldsOwner] = useState(null);
+  const [, setHoldsOwner] = useState(null);
   const tickRef = useRef(null);
   const [, setTick] = useState(0); // trigger re-render each second
 
@@ -537,7 +537,6 @@ const ResourceBookingPage = () => {
   });
   
   const hasOwnActiveHolds = ownActiveHolds.length > 0;
-  const hasAnyActiveHolds = activeHolds.length > 0;
   
   // Calculate earliest expiry for current user's holds
   const earliestExp = ownActiveHolds.length > 0 ? Math.min(...ownActiveHolds.map(([, hold]) => {

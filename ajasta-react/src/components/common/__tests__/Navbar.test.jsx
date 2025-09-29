@@ -42,9 +42,9 @@ jest.mock('../../../services/ApiService', () => ({
   }
 }));
 
-// Import Navbar after mocks so it uses the mocked modules
-import Navbar from '../Navbar';
-import ApiService from '../../../services/ApiService';
+// Import Navbar and ApiService using require after mocks to satisfy import/first
+const Navbar = require('../Navbar').default;
+const ApiService = require('../../../services/ApiService').default;
 
 describe('Navbar links', () => {
   beforeEach(() => {

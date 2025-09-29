@@ -23,8 +23,8 @@ jest.mock('../../../services/ApiService', () => ({
 }));
 
 // Import component and mocked ApiService after mocks are set up
-import ResourceBookingPage from '../ResourceBookingPage';
-import ApiService from '../../../services/ApiService';
+const ResourceBookingPage = require('../ResourceBookingPage').default;
+const ApiService = require('../../../services/ApiService').default;
 
 const makeResource = (overrides = {}) => ({
   id: 1,

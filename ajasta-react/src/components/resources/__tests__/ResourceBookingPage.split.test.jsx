@@ -26,8 +26,8 @@ jest.mock('../../../services/ApiService', () => ({
 }));
 
 // Import component and mocked ApiService after mocks are set up
-import ResourceBookingPage from '../ResourceBookingPage';
-import ApiService from '../../../services/ApiService';
+const ResourceBookingPage = require('../ResourceBookingPage').default;
+const ApiService = require('../../../services/ApiService').default;
 
 const resource = {
   id: 1,
@@ -117,7 +117,7 @@ describe('ResourceBookingPage split among participants', () => {
     fireEvent.change(emailInputs[0], { target: { value: 'not-an-email' } });
 
     // Error message should appear
-    await waitFor(() => expect(screen.getByText(/looks invalid/i)).toBeInTheDocument());
+    expect(await screen.findByText(/looks invalid/i)).toBeInTheDocument();
 
     // Booking button disabled
     const bookBtn = screen.getByRole('button', { name: /Book Slots/i });
@@ -137,7 +137,7 @@ describe('ResourceBookingPage split among participants', () => {
     fireEvent.change(amountInputs[0], { target: { value: '4' } });
 
     // Error should mention at least equal share
-    await waitFor(() => expect(screen.getByText(/at least/i)).toBeInTheDocument());
+    expect(await screen.findByText(/at least/i)).toBeInTheDocument();
 
     // Booking button disabled
     const bookBtn = screen.getByRole('button', { name: /Book Slots/i });
