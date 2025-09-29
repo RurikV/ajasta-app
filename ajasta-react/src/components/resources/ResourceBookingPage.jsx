@@ -58,6 +58,10 @@ const ResourceBookingPage = () => {
   const [, setHoldsOwner] = useState(null);
   const tickRef = useRef(null);
   const [, setTick] = useState(0); // trigger re-render each second
+  // Track whether the user manually navigated the date to avoid auto-jumping after interactions
+  const userNavigatedRef = useRef(false);
+  // Ensure we only auto-advance from today once on initial load
+  const autoAdvancedTodayRef = useRef(false);
 
   const isAuthenticated = ApiService.isAuthenticated();
     // eslint-disable-next-line no-console
@@ -365,15 +369,19 @@ const ResourceBookingPage = () => {
     return !!(resource.dailyUnavailableRanges && isTimeInRanges(timeHHMM, resource.dailyUnavailableRanges));
   }, [resource, date, weekdayIndex]);
 
-  // If today has no available slots, automatically move to the next day
+  // On initial load: if today has no available slots, move to next day once.
+  // Do NOT auto-change the date after the user has manually navigated.
   useEffect(() => {
     if (!resource) return;
     const todayStr = getLocalDateStr();
     if (date !== todayStr) return;
+    if (autoAdvancedTodayRef.current) return;
+    if (userNavigatedRef.current) return;
     const anyAvailable = slots.some((time) => !isSlotUnavailable(time));
     if (!anyAvailable) {
       const next = new Date(todayStr + 'T00:00:00');
       next.setDate(next.getDate() + 1);
+      autoAdvancedTodayRef.current = true;
       setDate(getLocalDateStr(next));
     }
   }, [resource, date, slots, isSlotUnavailable]);
@@ -713,11 +721,29 @@ const ResourceBookingPage = () => {
       <ErrorDisplay />
       <h1 className="menu-title">Book: {resource.name}</h1>
 
-      <div className="menu-search" style={{ gap: '10px', display: 'flex', flexWrap: 'wrap' }}>
+      <div className="menu-search" style={{ gap: '10px', display: 'flex', flexWrap: 'wrap', alignItems: 'center' }}>
         <label>
           Select date:
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ marginLeft: 8 }} />
+          <input type="date" value={date} onChange={(e) => { userNavigatedRef.current = true; setDate(e.target.value); }} style={{ marginLeft: 8 }} />
         </label>
+        <div style={{ display: 'inline-flex', gap: 8, marginLeft: 12 }}>
+          <button type="button" onClick={() => {
+            try {
+              userNavigatedRef.current = true;
+              const d = new Date(date + 'T00:00:00');
+              d.setDate(d.getDate() - 1);
+              setDate(getLocalDateStr(d));
+            } catch {}
+          }}>Prev day</button>
+          <button type="button" onClick={() => {
+            try {
+              userNavigatedRef.current = true;
+              const d = new Date(date + 'T00:00:00');
+              d.setDate(d.getDate() + 1);
+              setDate(getLocalDateStr(d));
+            } catch {}
+          }}>Next day</button>
+        </div>
       </div>
 
       {/* Summary Price and Booking Section - Always visible but inactive when no slots selected */}
