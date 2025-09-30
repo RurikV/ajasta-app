@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import ApiService from '../../services/ApiService';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useError } from '../common/ErrorDisplay';
 
 const ResourcesPage = () => {
@@ -9,7 +9,45 @@ const ResourcesPage = () => {
   const [typeFilter, setTypeFilter] = useState('');
   const [activeOnly, setActiveOnly] = useState(true);
   const navigate = useNavigate();
+  const location = useLocation();
   const { ErrorDisplay, showError } = useError();
+  const [initialized, setInitialized] = useState(false);
+
+  // Initialize from query params (e.g. coming from Home page quick links)
+  useEffect(() => {
+    if (initialized) return; // run once
+    const params = new URLSearchParams(location.search || '');
+    const q = params.get('search') || '';
+    const t = params.get('type') || '';
+    const a = params.get('active');
+
+    if (q || t || a !== null) {
+      setSearchTerm(q);
+      setTypeFilter(t);
+      setActiveOnly(a === null ? true : a === 'true');
+      (async () => {
+        try {
+          const p = {};
+          if (q) p.search = q;
+          if (t) p.type = t;
+          if (a !== null) p.active = (a === 'true');
+          const response = await ApiService.getAllResources(p);
+          if (response.statusCode === 200) {
+            setResources(response.data || []);
+          } else {
+            showError(response.message || 'Failed to load resources');
+          }
+        } catch (error) {
+          showError(error.response?.data?.message || error.message);
+        } finally {
+          setInitialized(true);
+        }
+      })();
+    } else {
+      setInitialized(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search, initialized]);
 
   const fetchResources = async () => {
     try {
@@ -52,8 +90,8 @@ const ResourcesPage = () => {
     (r.name || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const navigateToBookResource = (id) => {
-    navigate(`/resources/${id}/book`);
+  const navigateToResourceDetails = (id) => {
+    navigate(`/resources/${id}`);
   };
 
   return (
@@ -93,7 +131,7 @@ const ResourcesPage = () => {
         {filtered.map((item) => (
           <div
             className="menu-item-card"
-            onClick={() => navigateToBookResource(item.id)}
+            onClick={() => navigateToResourceDetails(item.id)}
             key={item.id}
           >
             {item.imageUrl && (

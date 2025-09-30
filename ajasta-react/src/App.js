@@ -22,6 +22,7 @@ import ResourceDetailsPage from "./components/resources/ResourceDetailsPage";
 import AdminResourcesPage from "./components/admin/AdminResourcesPage";
 import AdminResourceFormPage from "./components/admin/AdminResourceFormPage";
 import ResourceBookingPage from "./components/resources/ResourceBookingPage";
+import HomePage from "./components/home/HomePage";
 
 function App() {
   return (
@@ -35,6 +36,7 @@ function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/login" element={<LoginPage />} />
 
+          <Route path="/" element={<HomePage />} />
           <Route path="/resources" element={<ResourcesPage />} />
           <Route path="/resources/:id" element={<ResourceDetailsPage />} />
           <Route path="/resources/:id/book" element={<ResourceBookingPage />} />
@@ -69,7 +71,7 @@ function App() {
             <Route path="register" element={<AdminUserRegistration />} />
           </Route>
 
-          <Route path="*" element={<Navigate to={"/resources"} />} />
+          <Route path="*" element={<Navigate to={"/"} />} />
 
         </Routes>
 
