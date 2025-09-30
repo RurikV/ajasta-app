@@ -7,7 +7,7 @@ import LoginPage from "./components/auth/LoginPage";
 import ProfilePage from "./components/profile_cart/ProfilePage";
 import UpdateProfilePage from "./components/profile_cart/UpdateProfilePage";
 import OrderHistoryPage from "./components/profile_cart/OrderHistoryPage";
-import { AdminRoute, CustomerRoute, DeliveryRoute, ProtectedRoute } from "./services/Guard";
+import { AdminRoute, CustomerRoute, ProtectedRoute } from "./services/Guard";
 import ProcessPaymenttPage from "./components/payment/ProcessPaymenttPage";
 import AdminLayout from "./components/admin/navbar/AdminLayout";
 import AdminOrdersPage from "./components/admin/AdminOrdersPage";
@@ -16,7 +16,6 @@ import AdminPaymentsPage from "./components/admin/AdminPaymentsPage";
 import AdminPaymentDetailPage from "./components/admin/AdminPaymentDetailPage";
 import AdminDashboardPage from "./components/admin/AdminDashboardPage";
 import AdminUserRegistration from "./components/auth/AdminUserRegistration";
-import DeliveriesPage from "./components/delivery/DeliveriesPage";
 import ResourcesPage from "./components/resources/ResourcesPage";
 import ResourceDetailsPage from "./components/resources/ResourceDetailsPage";
 import AdminResourcesPage from "./components/admin/AdminResourcesPage";
@@ -50,8 +49,6 @@ function App() {
 
           <Route path="/pay" element={<CustomerRoute element={<ProcessPaymenttPage />} />} />
 
-          {/* DELIVERY ROUTES */}
-          <Route path="/deliveries" element={<DeliveryRoute element={<DeliveriesPage />} />} />
 
           {/* ADMIN ROUTES */}
 

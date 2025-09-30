@@ -25,16 +25,6 @@ export const AdminRoute = ({element: Component}) => {
     )
 }
 
-export const DeliveryRoute = ({element: Component}) => {
-    
-    const location = useLocation()
-    return ApiService.isAuthenticated() && ApiService.isDeliveryPerson() ? (
-        Component
-    ):(
-        <Navigate to="/login" replace state={{from: location}}/>
-    )
-}
-
 export const ProtectedRoute = ({element: Component}) => {
     const location = useLocation()
     return ApiService.isAuthenticated() ? (

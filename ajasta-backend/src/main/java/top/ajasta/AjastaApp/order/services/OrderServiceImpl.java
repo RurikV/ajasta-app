@@ -72,12 +72,12 @@ public class OrderServiceImpl  implements OrderService{
 
         log.info("user passed");
 
-        String deliveryAddress = customer.getAddress();
+        String address = customer.getAddress();
 
-        log.info("deliveryAddress passed");
+        log.info("address passed");
 
-        if (deliveryAddress == null) {
-            throw new NotFoundException("Delivery Address Not present for the user");
+        if (address == null) {
+            throw new NotFoundException("Address not present for the user");
         }
         Cart cart = cartRepository.findByUser_Id(customer.getId())
                 .orElseThrow(()-> new NotFoundException("Cart not found for the user" ));
@@ -359,9 +359,9 @@ public class OrderServiceImpl  implements OrderService{
         context.setVariable("orderDate", orderDTO.getOrderDate().toString());
         context.setVariable("totalAmount", orderDTO.getTotalAmount().toString());
 
-        // Format delivery address
-        String deliveryAddress = orderDTO.getUser().getAddress();
-        context.setVariable("deliveryAddress", deliveryAddress);
+        // Format address
+        String address = orderDTO.getUser().getAddress();
+        context.setVariable("address", address);
 
         context.setVariable("currentYear", java.time.Year.now());
 

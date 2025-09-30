@@ -19,14 +19,12 @@ describe('ApiService roles and authentication', () => {
     expect(ApiService.parseRolesFromToken().sort()).toEqual(['ADMIN', 'CUSTOMER']);
     expect(ApiService.isAdmin()).toBe(true);
     expect(ApiService.isCustomer()).toBe(true);
-    expect(ApiService.isDeliveryPerson()).toBe(false);
   });
 
   test('parseRolesFromToken extracts from authorities (strings)', () => {
-    const token = makeToken({ authorities: ['ROLE_DELIVERY', 'USER'] });
+    const token = makeToken({ authorities: ['ROLE_ADMIN', 'USER'] });
     localStorage.setItem('token', token);
-    expect(ApiService.getRoles().sort()).toEqual(['DELIVERY', 'USER']);
-    expect(ApiService.isDeliveryPerson()).toBe(true);
+    expect(ApiService.getRoles().sort()).toEqual(['ADMIN', 'USER']);
   });
 
   test('parseRolesFromToken extracts from authorities (objects)', () => {
@@ -36,9 +34,9 @@ describe('ApiService roles and authentication', () => {
   });
 
   test('parseRolesFromToken extracts from scope string', () => {
-    const token = makeToken({ scope: 'ROLE_ADMIN customer delivery' });
+    const token = makeToken({ scope: 'ROLE_ADMIN customer' });
     localStorage.setItem('token', token);
-    expect(ApiService.getRoles().sort()).toEqual(['ADMIN', 'CUSTOMER', 'DELIVERY']);
+    expect(ApiService.getRoles().sort()).toEqual(['ADMIN', 'CUSTOMER']);
   });
 
   test('getRoles falls back to cached in-memory roles when token lacks roles', () => {

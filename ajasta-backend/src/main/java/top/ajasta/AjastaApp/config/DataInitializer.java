@@ -71,7 +71,7 @@ public class DataInitializer implements CommandLineRunner {
         List<Role> roles = Arrays.asList(
             Role.builder().name("ADMIN").build(),
             Role.builder().name("USER").build(),
-            Role.builder().name("RESTAURANT_MANAGER").build()
+            Role.builder().name("RESOURCE_MANAGER").build()
         );
         roleRepository.saveAll(roles);
         log.info("Initialized {} roles", roles.size());
@@ -331,7 +331,7 @@ public class DataInitializer implements CommandLineRunner {
         List<Role> roles = roleRepository.findAll();
         Role userRole = roles.stream().filter(r -> r.getName().equals("USER")).findFirst().orElse(null);
         Role adminRole = roles.stream().filter(r -> r.getName().equals("ADMIN")).findFirst().orElse(null);
-        Role managerRole = roles.stream().filter(r -> r.getName().equals("RESTAURANT_MANAGER")).findFirst().orElse(null);
+        Role managerRole = roles.stream().filter(r -> r.getName().equals("RESOURCE_MANAGER")).findFirst().orElse(null);
 
         List<User> users = Arrays.asList(
             User.builder()
@@ -419,7 +419,7 @@ public class DataInitializer implements CommandLineRunner {
             
             // Add some sample cart items for regular users (not admin/manager)
             if (user.getRoles().stream().noneMatch(role -> 
-                role.getName().equals("ADMIN") || role.getName().equals("RESTAURANT_MANAGER"))) {
+                role.getName().equals("ADMIN") || role.getName().equals("RESOURCE_MANAGER"))) {
                 
                 List<CartItem> cartItems = new ArrayList<>();
                 
@@ -452,7 +452,7 @@ public class DataInitializer implements CommandLineRunner {
         // Create sample orders for users (excluding admin and manager)
         for (User user : users) {
             if (user.getRoles().stream().noneMatch(role -> 
-                role.getName().equals("ADMIN") || role.getName().equals("RESTAURANT_MANAGER"))) {
+                role.getName().equals("ADMIN") || role.getName().equals("RESOURCE_MANAGER"))) {
                 
                 // Create 2-3 orders per user
                 for (int orderCount = 0; orderCount < 3; orderCount++) {
@@ -502,8 +502,8 @@ public class DataInitializer implements CommandLineRunner {
         List<Payment> payments = new ArrayList<>();
 
         for (Order order : orders) {
-            // Only create payments for DELIVERED orders
-            if (order.getOrderStatus() == OrderStatus.DELIVERED) {
+            // Only create payments for CONFIRMED orders
+            if (order.getOrderStatus() == OrderStatus.CONFIRMED) {
                 Payment payment = Payment.builder()
                     .user(order.getUser())
                     .order(order)

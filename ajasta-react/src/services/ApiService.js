@@ -78,10 +78,6 @@ export default class ApiService {
         return this.hasRole('CUSTOMER');
     }
 
-    // Check if the user is a delivery person
-    static isDeliveryPerson() {
-        return this.hasRole('DELIVERY');
-    }
 
 
     static logout() {
@@ -199,12 +195,6 @@ export default class ApiService {
         return resp.data;
     }
 
-    static async initiateDelivery(body) {
-        const resp = await axios.post(`${this.BASE_URL}/orders/initiate-delivery`, body, {
-            headers: this.getHeader()
-        })
-        return resp.data;
-    }
 
     static async updateOrderStatus(body) {
         const resp = await axios.put(`${this.BASE_URL}/orders/update`, body, {
@@ -229,72 +219,6 @@ export default class ApiService {
 
     }
 
-    static async getDeliveryOrders(orderStatus, page = 0, size = 200) {
-        // Try a set of likely delivery endpoints and query variants; return the first successful response
-        const candidates = [
-            `${this.BASE_URL}/orders/for-delivery`,
-            `${this.BASE_URL}/orders/ready-for-delivery`,
-            `${this.BASE_URL}/orders/available-for-delivery`,
-            `${this.BASE_URL}/orders/available`,
-            `${this.BASE_URL}/orders/deliveries`,
-            `${this.BASE_URL}/orders/delivery`,
-            `${this.BASE_URL}/orders/my-deliveries`,
-            `${this.BASE_URL}/orders/assigned`,
-            `${this.BASE_URL}/orders/assigned-to-me`,
-            `${this.BASE_URL}/delivery/orders`,
-            `${this.BASE_URL}/orders/driver`,
-            `${this.BASE_URL}/orders/courier`,
-            `${this.BASE_URL}/orders/rider`,
-            `${this.BASE_URL}/orders/ready`
-        ];
-
-        // Build query string variants to support different backends
-        const qsVariants = [];
-        const encoded = encodeURIComponent(orderStatus || '');
-        // with orderStatus
-        qsVariants.push(`?orderStatus=${encoded}&page=${page}&size=${size}`);
-        // with status
-        qsVariants.push(`?status=${encoded}&page=${page}&size=${size}`);
-        // no status filter
-        qsVariants.push(`?page=${page}&size=${size}`);
-        // bare (no params) as last resort
-        qsVariants.push('');
-
-        for (const base of candidates) {
-            for (const qs of qsVariants) {
-                try {
-                    const url = `${base}${qs}`;
-                    const resp = await axios.get(url, {
-                        headers: this.getHeader()
-                    });
-                    return resp.data;
-                } catch (e) {
-                    const status = e.response?.status;
-                    const msg = e.response?.data?.message || '';
-                    // Continue probing on typical discovery errors or framework messages
-                    if (
-                        status === 404 ||
-                        status === 403 ||
-                        status === 400 ||
-                        status === 405 ||
-                        msg.includes('Failed to convert value of type') ||
-                        msg.includes('No static resource')
-                    ) {
-                        continue;
-                    }
-                    // Bubble up 401 (unauthorized) and other unexpected errors
-                    if (status === 401) throw e;
-                    throw e;
-                }
-            }
-        }
-        // As a last resort, if admin, reuse admin listing
-        if (this.isAdmin()) {
-            return await this.getAllOrders(orderStatus, page, size);
-        }
-        // Graceful fallback for delivery users when endpoint is unavailable
-        return { statusCode: 403, message: 'Access Denied: Delivery orders endpoint is not accessible for your role.' };
-    }
 
     static async getMyOrders() {
         const resp = await axios.get(`${this.BASE_URL}/orders/me`, {

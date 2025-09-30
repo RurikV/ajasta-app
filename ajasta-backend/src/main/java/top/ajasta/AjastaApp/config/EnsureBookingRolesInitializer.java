@@ -24,7 +24,7 @@ public class EnsureBookingRolesInitializer implements CommandLineRunner {
         log.info("Starting role initialization for booking system...");
         
         // Ensure roles needed for booking app exist regardless of previous seeding
-        List<String> requiredRoles = Arrays.asList("ADMIN", "CUSTOMER", "DELIVERY");
+        List<String> requiredRoles = Arrays.asList("ADMIN", "CUSTOMER");
         Set<String> existing = new HashSet<>();
         
         try {

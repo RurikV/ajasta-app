@@ -37,7 +37,6 @@ jest.mock('../../../services/ApiService', () => ({
     isAuthenticated: jest.fn(() => true),
     isAdmin: jest.fn(() => false),
     isCustomer: jest.fn(() => true),
-    isDeliveryPerson: jest.fn(() => false),
     logout: jest.fn(),
   }
 }));
@@ -53,7 +52,6 @@ describe('Navbar links', () => {
     ApiService.isAuthenticated.mockReturnValue(true);
     ApiService.isCustomer.mockReturnValue(true);
     ApiService.isAdmin.mockReturnValue(false);
-    ApiService.isDeliveryPerson.mockReturnValue(false);
   });
 
   it('Orders link points to /my-order-history', () => {

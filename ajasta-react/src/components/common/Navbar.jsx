@@ -10,7 +10,6 @@ const Navbar = () => {
     const isAuthenticated = ApiService.isAuthenticated();
     const isAdmin = ApiService.isAdmin();
     const isCustomer = ApiService.isCustomer();
-    const isDeliveryPerson = ApiService.isDeliveryPerson();
     const navigate = useNavigate();
 
     const languages = [
@@ -119,9 +118,6 @@ const Navbar = () => {
                             <>
                                 <Link to="/my-order-history" className="nav-link">{t('orders')}</Link>
                             </>
-                        )}
-                        {isDeliveryPerson && (
-                            <Link to="/deliveries" className="nav-link">{t('deliveries')}</Link>
                         )}
                         {isAdmin && (
                             <Link to="/admin" className="nav-link">{t('admin')}</Link>

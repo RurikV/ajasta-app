@@ -51,8 +51,6 @@ const AdminOrdersPage = () => {
                         <option value="all">All Orders</option>
                         <option value="INITIALIZED">Initialized</option>
                         <option value="CONFIRMED">Confirmed</option>
-                        <option value="ON_THE_WAY">On the way</option>
-                        <option value="DELIVERED">Delivered</option>
                         <option value="CANCELLED">Cancelled</option>
                         <option value="FAILED">Failed</option>
                     </select>
