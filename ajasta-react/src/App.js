@@ -7,7 +7,7 @@ import LoginPage from "./components/auth/LoginPage";
 import ProfilePage from "./components/profile_cart/ProfilePage";
 import UpdateProfilePage from "./components/profile_cart/UpdateProfilePage";
 import OrderHistoryPage from "./components/profile_cart/OrderHistoryPage";
-import { AdminRoute, CustomerRoute, DeliveryRoute } from "./services/Guard";
+import { AdminRoute, CustomerRoute, DeliveryRoute, ProtectedRoute } from "./services/Guard";
 import ProcessPaymenttPage from "./components/payment/ProcessPaymenttPage";
 import AdminLayout from "./components/admin/navbar/AdminLayout";
 import AdminOrdersPage from "./components/admin/AdminOrdersPage";
@@ -41,9 +41,9 @@ function App() {
           <Route path="/resources/:id" element={<ResourceDetailsPage />} />
           <Route path="/resources/:id/book" element={<ResourceBookingPage />} />
 
-          <Route path="/profile" element={<CustomerRoute element={<ProfilePage />} />} />
+          <Route path="/profile" element={<ProtectedRoute element={<ProfilePage />} />} />
 
-          <Route path="/update" element={<CustomerRoute element={<UpdateProfilePage />} />} />
+          <Route path="/update" element={<ProtectedRoute element={<UpdateProfilePage />} />} />
 
           <Route path="/my-order-history" element={<CustomerRoute element={<OrderHistoryPage />} />} />
 

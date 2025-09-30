@@ -34,3 +34,12 @@ export const DeliveryRoute = ({element: Component}) => {
         <Navigate to="/login" replace state={{from: location}}/>
     )
 }
+
+export const ProtectedRoute = ({element: Component}) => {
+    const location = useLocation()
+    return ApiService.isAuthenticated() ? (
+        Component
+    ):(
+        <Navigate to="/login" replace state={{from: location}}/>
+    )
+}
