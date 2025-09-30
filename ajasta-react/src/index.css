@@ -168,7 +168,6 @@ nav {
     font-size: 15px;
     font-weight: 500;
     line-height: 1.5;
-    color: #ff6600;
     color: green;
 }
 
@@ -4843,3 +4842,88 @@ nav {
       margin-bottom: 15px;
     }
   }
+
+/* === Home Page Design Enhancements (buttons, tiles) === */
+/* Improve default CTA/button look used across pages */
+.menu-search-button {
+  padding: 0 1.75rem;
+  height: 48px;
+  line-height: 48px;
+  border-radius: 0 999px 999px 0; /* keeps input+button groups looking good */
+  letter-spacing: 0.2px;
+  box-shadow: 0 6px 20px rgba(230, 57, 70, 0.25), 0 1px 3px rgba(0,0,0,0.08);
+}
+.menu-search-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px rgba(230, 57, 70, 0.35), 0 4px 10px rgba(0,0,0,0.08);
+}
+.menu-search-button:active {
+  transform: translateY(0);
+  filter: brightness(0.98);
+  box-shadow: 0 4px 12px rgba(230, 57, 70, 0.25), 0 2px 6px rgba(0,0,0,0.08);
+}
+.menu-search-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.8), 0 0 0 6px rgba(230,57,70,0.45);
+}
+.menu-search-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Larger, pill-shaped CTA variant specifically for the Home hero section */
+.btn-cta {
+  border-radius: 999px !important;
+  height: 52px;
+  line-height: 52px;
+  padding: 0 1.85rem !important;
+  font-size: 1.05rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #ff5757, #e63946) !important;
+  box-shadow: 0 12px 30px rgba(230, 57, 70, 0.38), 0 4px 12px rgba(0,0,0,0.12) !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+.btn-cta:hover {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 16px 38px rgba(230, 57, 70, 0.45), 0 6px 14px rgba(0,0,0,0.14) !important;
+}
+.btn-cta:active {
+  transform: translateY(0) scale(0.995);
+}
+
+/* Home search group refinements (pills with subtle elevation over hero background) */
+.home-search .menu-search-input {
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.65);
+  background: rgba(255,255,255,0.95);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+}
+.home-search .menu-search-input:focus {
+  border-color: #ffd0d4;
+  box-shadow: 0 0 0 3px rgba(255, 208, 212, 0.65), 0 6px 24px rgba(0,0,0,0.12);
+}
+.home-search .menu-search-button {
+  border-radius: 999px;
+}
+
+/* Quick type tiles: add delightful hover and depth */
+.quick-type-card {
+  background: linear-gradient(0deg, #f2f4f7, #f8fafc);
+  border: 1px solid #e6e9ef;
+  border-radius: 12px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+}
+.quick-type-card:hover {
+  transform: translateY(-3px);
+  background: linear-gradient(0deg, #ffffff, #f7f9fc);
+  border-color: #dfe3ea;
+  box-shadow: 0 12px 26px rgba(0,0,0,0.10);
+}
+
+/* Responsive tweaks for buttons in stacked layout */
+@media (max-width: 768px) {
+  .btn-cta {
+    width: 100%;
+  }
+}

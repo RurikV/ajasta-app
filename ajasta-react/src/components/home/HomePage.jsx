@@ -61,7 +61,7 @@ const HomePage = () => {
           </p>
 
           {/* Search bar */}
-          <div className="menu-search" style={{ marginTop: 24, display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <div className="menu-search home-search" style={{ marginTop: 24, display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
             <input
               type="text"
               placeholder={t('search_resources') || 'Search resources ...'}
@@ -81,7 +81,7 @@ const HomePage = () => {
                 <option key={ti.key} value={ti.key}>{ti.label}</option>
               ))}
             </select>
-            <button className="menu-search-button" onClick={goSearch}>
+            <button className="menu-search-button btn-cta" onClick={goSearch}>
               Browse Resources
             </button>
           </div>
