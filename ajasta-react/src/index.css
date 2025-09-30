@@ -1089,13 +1089,14 @@ nav {
     max-width: 600px;
     margin-left: auto;
     margin-right: auto;
+    gap: 10px; /* add breathing room between input and button */
 }
 
 .menu-search-input {
     flex: 1;
     padding: 0.8rem 1.2rem;
     border: 2px solid #e9ecef;
-    border-radius: 50px 0 0 50px;
+    border-radius: 50px; /* full pill for visual balance on both sides */
     font-size: 1rem;
     outline: none;
     transition: all 0.3s ease;
@@ -1111,7 +1112,7 @@ nav {
     color: white;
     border: none;
     padding: 0 1.5rem;
-    border-radius: 0 50px 50px 0;
+    border-radius: 50px; /* full pill to match the input when spaced apart */
     font-size: 1rem;
     font-weight: 600;
     cursor: pointer;
@@ -4849,7 +4850,7 @@ nav {
   padding: 0 1.75rem;
   height: 48px;
   line-height: 48px;
-  border-radius: 0 999px 999px 0; /* keeps input+button groups looking good */
+  border-radius: 999px; /* full pill to keep symmetry with gaps */
   letter-spacing: 0.2px;
   box-shadow: 0 6px 20px rgba(230, 57, 70, 0.25), 0 1px 3px rgba(0,0,0,0.08);
 }
@@ -4925,5 +4926,43 @@ nav {
 @media (max-width: 768px) {
   .btn-cta {
     width: 100%;
+  }
+}
+
+/* === Global form input symmetry fix (ensure right-side padding/margin balance) === */
+:root {
+  --aj-input-hpad: 1rem;
+}
+
+/* Apply to all common form controls unless they are checkboxes or radios */
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  box-sizing: border-box;            /* include padding in width calculations */
+  padding-left: var(--aj-input-hpad);
+  padding-right: var(--aj-input-hpad); /* fix: ensure right padding equals left */
+}
+
+/* Number inputs often show spinner controls on the right; add a tad more padding */
+input[type="number"] {
+  padding-right: calc(var(--aj-input-hpad) + 0.5rem);
+}
+
+/* Keep pill inputs balanced (already set elsewhere, but reinforce symmetry) */
+.menu-search-input {
+  padding-left: 1.2rem;
+  padding-right: 1.2rem; /* ensure symmetry visually */
+}
+
+/* Review textarea and other full-width textareas: ensure inner spacing is balanced */
+textarea {
+  padding-left: 0.9rem;
+  padding-right: 0.9rem;
+}
+
+/* On small screens, prevent inputs placed near the screen edge from looking flush on the right */
+@media (max-width: 768px) {
+  form, .menu-search, .home-search {
+    padding-right: 8px; /* subtle right-side breathing room */
   }
 }
