@@ -3,7 +3,6 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
   faChartLine, 
   faList, 
-  faUtensils, 
   faShoppingBag, 
   faCreditCard 
 } from '@fortawesome/free-solid-svg-icons';
@@ -32,24 +31,6 @@ const AdminSidebar = () => {
             >
               <FontAwesomeIcon icon={faChartLine} />
               <span>Dashboard</span>
-            </NavLink>
-          </li>
-          <li>
-            <NavLink 
-              to="/admin/categories" 
-              className={location.pathname.includes('/admin/categories') ? 'active' : ''}
-            >
-              <FontAwesomeIcon icon={faList} />
-              <span>Categories</span>
-            </NavLink>
-          </li>
-          <li>
-            <NavLink 
-              to="/admin/menu-items" 
-              className={location.pathname.includes('/admin/menu-items') ? 'active' : ''}
-            >
-              <FontAwesomeIcon icon={faUtensils} />
-              <span>Menu Items</span>
             </NavLink>
           </li>
           <li>

@@ -3,14 +3,10 @@ package top.ajasta.AjastaApp.review.services;
 
 import top.ajasta.AjastaApp.auth_users.entity.User;
 import top.ajasta.AjastaApp.auth_users.services.UserService;
-import top.ajasta.AjastaApp.enums.OrderStatus;
 import top.ajasta.AjastaApp.exceptions.BadRequestException;
 import top.ajasta.AjastaApp.exceptions.NotFoundException;
-import top.ajasta.AjastaApp.menu.entity.Menu;
-import top.ajasta.AjastaApp.menu.repository.MenuRepository;
-import top.ajasta.AjastaApp.order.entity.Order;
-import top.ajasta.AjastaApp.order.repository.OrderItemRepository;
-import top.ajasta.AjastaApp.order.repository.OrderRepository;
+import top.ajasta.AjastaApp.reservation.entity.Resource;
+import top.ajasta.AjastaApp.reservation.repository.ResourceRepository;
 import top.ajasta.AjastaApp.response.Response;
 import top.ajasta.AjastaApp.review.dtos.ReviewDTO;
 import top.ajasta.AjastaApp.review.entity.Review;
@@ -31,9 +27,7 @@ import java.util.List;
 public class ReviewServiceImpl implements ReviewService {
 
     private final ReviewRepository reviewRepository;
-    private final MenuRepository menuRepository;
-    private final OrderRepository orderRepository;
-    private final OrderItemRepository orderItemRepository;
+    private final ResourceRepository resourceRepository;
     private final ModelMapper modelMapper;
     private final UserService userService;
 
@@ -48,50 +42,27 @@ public class ReviewServiceImpl implements ReviewService {
         User user = userService.getCurrentLoggedInUser();
 
         // Validate required fields
-        if (reviewDTO.getOrderId() == null || reviewDTO.getMenuId() == null) {
-            throw new BadRequestException("Order ID and Menu Item ID are required");
+        if (reviewDTO.getResourceId() == null) {
+            throw new BadRequestException("Resource ID is required");
         }
 
-        // Validate menu item exists
-        Menu menu = menuRepository.findById(reviewDTO.getMenuId())
-                .orElseThrow(() -> new NotFoundException("Menu item not found"));
+        // Validate resource exists
+        Resource resource = resourceRepository.findById(reviewDTO.getResourceId())
+                .orElseThrow(() -> new NotFoundException("Resource not found"));
 
-
-        // Validate order exists
-        Order order = orderRepository.findById(reviewDTO.getOrderId())
-                .orElseThrow(() -> new NotFoundException("Order not found"));
-
-        //make sure the order belongs to you
-        if (!order.getUser().getId().equals(user.getId())) {
-            throw new BadRequestException("This order doesn't belong to you");
-        }
-
-        // Validate order status is DELIVERED
-        if (order.getOrderStatus() != OrderStatus.DELIVERED) {
-            throw new BadRequestException("You can only review items that has been delivered to you");
-        }
-
-        // Validate that menu item was part of this order
-        boolean itemInOrder = orderItemRepository.existsByOrderIdAndMenuId(
-                reviewDTO.getOrderId(),
-                reviewDTO.getMenuId());
-
-        if (!itemInOrder) {
-            throw new BadRequestException("This menu item was not part of the specified order");
-        }
-
-        // Check if user already wrote a review for the item
-        if (reviewRepository.existsByUserIdAndMenuIdAndOrderId(
-                user.getId(),
-                reviewDTO.getMenuId(),
-                reviewDTO.getOrderId())) {
-            throw new BadRequestException("You've already reviewed this item from this order");
+        // Optional: prevent duplicate reviews per order if provided
+        if (reviewDTO.getOrderId() != null) {
+            boolean exists = reviewRepository.existsByUserIdAndResourceIdAndOrderId(
+                    user.getId(), reviewDTO.getResourceId(), reviewDTO.getOrderId());
+            if (exists) {
+                throw new BadRequestException("You've already reviewed this resource for this order");
+            }
         }
 
         // Create and save review
         Review review = Review.builder()
                 .user(user)
-                .menu(menu)
+                .resource(resource)
                 .orderId(reviewDTO.getOrderId())
                 .rating(reviewDTO.getRating())
                 .comment(reviewDTO.getComment())
@@ -103,7 +74,7 @@ public class ReviewServiceImpl implements ReviewService {
         // Return response with review data
         ReviewDTO responseDto = modelMapper.map(savedReview, ReviewDTO.class);
         responseDto.setUserName(user.getName());
-        responseDto.setMenuName(menu.getName());
+        responseDto.setResourceName(resource.getName());
 
         return Response.<ReviewDTO>builder()
                 .statusCode(HttpStatus.OK.value())
@@ -114,13 +85,18 @@ public class ReviewServiceImpl implements ReviewService {
     }
 
     @Override
-    public Response<List<ReviewDTO>> getReviewsForMenu(Long menuId) {
-        log.info("Inside getReviewsForMenu()");
+    public Response<List<ReviewDTO>> getReviewsForResource(Long resourceId) {
+        log.info("Inside getReviewsForResource()");
 
-        List<Review> reviews = reviewRepository.findByMenuIdOrderByIdDesc(menuId);
+        List<Review> reviews = reviewRepository.findByResourceIdOrderByIdDesc(resourceId);
 
         List<ReviewDTO> reviewDTOs = reviews.stream()
-                .map(review -> modelMapper.map(review, ReviewDTO.class))
+                .map(review -> {
+                    ReviewDTO dto = modelMapper.map(review, ReviewDTO.class);
+                    dto.setUserName(review.getUser() != null ? review.getUser().getName() : null);
+                    dto.setResourceName(review.getResource() != null ? review.getResource().getName() : null);
+                    return dto;
+                })
                 .toList();
 
         return Response.<List<ReviewDTO>>builder()
@@ -132,10 +108,10 @@ public class ReviewServiceImpl implements ReviewService {
     }
 
     @Override
-    public Response<Double> getAverageRating(Long menuId) {
+    public Response<Double> getAverageRating(Long resourceId) {
         log.info("Inside getAverageRating()");
 
-        Double averageRating = reviewRepository.calculateAverageRatingByMenuId(menuId);
+        Double averageRating = reviewRepository.calculateAverageRatingByResourceId(resourceId);
 
         return Response.<Double>builder()
                 .statusCode(HttpStatus.OK.value())

@@ -3,7 +3,6 @@ package top.ajasta.AjastaApp.menu.entity;
 
 import top.ajasta.AjastaApp.category.entity.Category;
 import top.ajasta.AjastaApp.order.entity.OrderItem;
-import top.ajasta.AjastaApp.review.entity.Review;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -37,8 +36,6 @@ public class Menu {
     @OneToMany(mappedBy = "menu", cascade = CascadeType.ALL)
     private List<OrderItem> orderItems;
 
-    @OneToMany(mappedBy = "menu")
-    private List<Review> reviews;
 
 
 }

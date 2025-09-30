@@ -56,26 +56,10 @@ public class DataInitializer implements CommandLineRunner {
             // Initialize Roles
             initializeRoles();
             
-            // Initialize Categories
-            initializeCategories();
-            
-            // Initialize Menu Items
-            initializeMenuItems();
-            
             // Initialize Users
             initializeUsers();
             
-            // Initialize Carts
-            initializeCarts();
-            
-            // Initialize Orders
-            initializeOrders();
-            
-            // Initialize Payments
-            initializePayments();
-            
-            // Initialize Reviews
-            initializeReviews();
+            // Skipping initialization for Categories, Menu Items, Carts, Orders, Payments, and Reviews as these features are removed
             
             log.info("Database initialization completed successfully!");
         } else {
@@ -539,44 +523,7 @@ public class DataInitializer implements CommandLineRunner {
     }
 
     private void initializeReviews() {
-        List<Order> completedOrders = orderRepository.findAll().stream()
-            .filter(order -> order.getOrderStatus() == OrderStatus.DELIVERED)
-            .toList();
-        
-        List<Review> reviews = new ArrayList<>();
-        String[] reviewComments = {
-            "Excellent ajasta and great service! Will definitely order again.",
-            "The ajasta was delicious and arrived hot. Highly recommended!",
-            "Good quality ingredients and generous portions. Very satisfied!",
-            "Amazing flavors and perfectly cooked. Outstanding experience!",
-            "Fresh ingredients and great taste. Quick delivery too!",
-            "Superb quality and excellent presentation. Five stars!",
-            "Really enjoyed the meal. Great value for money!",
-            "Outstanding ajasta quality and friendly service.",
-            "Perfectly seasoned and cooked to perfection!",
-            "Great taste and portion size. Will order again soon!"
-        };
-
-        int reviewIndex = 0;
-        for (Order order : completedOrders) {
-            // Create reviews for some of the items in completed orders
-            for (OrderItem orderItem : order.getOrderItems()) {
-                if (reviewIndex % 2 == 0) { // Create review for every other item
-                    Review review = Review.builder()
-                        .user(order.getUser())
-                        .menu(orderItem.getMenu())
-                        .rating(4 + (reviewIndex % 2)) // Rating between 4-5
-                        .comment(reviewComments[reviewIndex % reviewComments.length])
-                        .createdAt(order.getOrderDate().plusDays(1))
-                        .build();
-                    
-                    reviews.add(review);
-                }
-                reviewIndex++;
-            }
-        }
-
-        reviewRepository.saveAll(reviews);
-        log.info("Initialized {} reviews", reviews.size());
+        // Reviews seeding removed as part of menu/categories/cart deprecation and refactor to resource-based reviews.
+        // Intentionally left blank.
     }
 }

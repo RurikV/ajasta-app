@@ -7,7 +7,9 @@ import top.ajasta.AjastaApp.response.Response;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
+@ConditionalOnProperty(name = "app.features.cart", havingValue = "true", matchIfMissing = false)
 @RestController
 @RequestMapping("/api/cart")
 @RequiredArgsConstructor

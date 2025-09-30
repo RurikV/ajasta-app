@@ -47,10 +47,7 @@ const Navbar = () => {
             </div>
 
             <div className="desktop-nav">
-                <Link to="/home" className="nav-link">{t('home')}</Link>
-                <Link to="/menu" className="nav-link">{t('menu')}</Link>
                 <Link to="/resources" className="nav-link">{t('resources')}</Link>
-                <Link to="/categories" className="nav-link">{t('categories')}</Link>
 
                 {/* Language Dropdown */}
                 <div className="language-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
@@ -120,7 +117,6 @@ const Navbar = () => {
                         {isCustomer && (
                             <>
                                 <Link to="/my-order-history" className="nav-link">{t('orders')}</Link>
-                                <Link to="/cart" className="nav-link">{t('cart')}</Link>
                             </>
                         )}
                         {isDeliveryPerson && (

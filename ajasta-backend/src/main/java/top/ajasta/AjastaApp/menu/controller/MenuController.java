@@ -12,7 +12,9 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
+@ConditionalOnProperty(name = "app.features.menu", havingValue = "true", matchIfMissing = false)
 @RestController
 @RequestMapping("/api/menu")
 @RequiredArgsConstructor

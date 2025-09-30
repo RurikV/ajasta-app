@@ -11,7 +11,9 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
+@ConditionalOnProperty(name = "app.features.menu", havingValue = "true", matchIfMissing = false)
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/categories")

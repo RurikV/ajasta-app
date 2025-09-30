@@ -2,7 +2,7 @@ package top.ajasta.AjastaApp.review.entity;
 
 
 import top.ajasta.AjastaApp.auth_users.entity.User;
-import top.ajasta.AjastaApp.menu.entity.Menu;
+import top.ajasta.AjastaApp.reservation.entity.Resource;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -37,9 +37,8 @@ public class Review {
     @Column(name = "order_id")
     private Long orderId;
 
-
     @ManyToOne
-    @JoinColumn(name = "menu_id")
-    private Menu menu;
+    @JoinColumn(name = "resource_id", nullable = false)
+    private Resource resource;
 
 }

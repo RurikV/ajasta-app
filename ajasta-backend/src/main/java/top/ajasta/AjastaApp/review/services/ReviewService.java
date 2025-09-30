@@ -7,6 +7,6 @@ import java.util.List;
 
 public interface ReviewService {
     Response<ReviewDTO> createReview(ReviewDTO reviewDTO);
-    Response<List<ReviewDTO>> getReviewsForMenu(Long menuId);
-    Response<Double> getAverageRating(Long menuId);
+    Response<List<ReviewDTO>> getReviewsForResource(Long resourceId);
+    Response<Double> getAverageRating(Long resourceId);
 }

@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
 public class ReviewDTO {
 
     private Long id;
-    private Long menuId;
+    private Long resourceId;
     private Long orderId;
 
     private String userName;
@@ -30,7 +30,7 @@ public class ReviewDTO {
     @Size(max = 500, message = "Comment cannot exceed 500 characters")
     private String comment;
 
-    private String menuName;
+    private String resourceName;
 
     private LocalDateTime createdAt;
 }

@@ -11,7 +11,9 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
+@ConditionalOnProperty(name = "app.features.reviews", havingValue = "true", matchIfMissing = false)
 @RestController
 @RequestMapping("/api/reviews")
 @RequiredArgsConstructor
@@ -27,16 +29,16 @@ public class ReviewController {
         return ResponseEntity.ok(reviewService.createReview(reviewDTO));
     }
 
-    @GetMapping("/menu-item/{menuId}")
-    public ResponseEntity<Response<List<ReviewDTO>>> getReviewsForMenu(
-            @PathVariable Long menuId) {
-        return ResponseEntity.ok(reviewService.getReviewsForMenu(menuId));
+    @GetMapping("/resource/{resourceId}")
+    public ResponseEntity<Response<List<ReviewDTO>>> getReviewsForResource(
+            @PathVariable Long resourceId) {
+        return ResponseEntity.ok(reviewService.getReviewsForResource(resourceId));
     }
 
-    @GetMapping("/menu-item/average/{menuId}")
+    @GetMapping("/resource/average/{resourceId}")
     public ResponseEntity<Response<Double>> getAverageRating(
-            @PathVariable Long menuId) {
-        return ResponseEntity.ok(reviewService.getAverageRating(menuId));
+            @PathVariable Long resourceId) {
+        return ResponseEntity.ok(reviewService.getAverageRating(resourceId));
     }
 
 }

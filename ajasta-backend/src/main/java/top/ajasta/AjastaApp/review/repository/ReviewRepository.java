@@ -9,17 +9,17 @@ import java.util.List;
 
 public interface ReviewRepository extends JpaRepository<Review, Long> {
 
-    List<Review> findByMenuIdOrderByIdDesc(Long menuId);
+    List<Review> findByResourceIdOrderByIdDesc(Long resourceId);
 
-    @Query("SELECT AVG(r.rating) FROM Review r WHERE r.menu.id = :menuId")
-    Double calculateAverageRatingByMenuId(@Param("menuId") Long menuId);
+    @Query("SELECT AVG(r.rating) FROM Review r WHERE r.resource.id = :resourceId")
+    Double calculateAverageRatingByResourceId(@Param("resourceId") Long resourceId);
 
     @Query("SELECT CASE WHEN COUNT(r) > 0 THEN true ELSE false END " +
             "FROM Review r " +
-            "WHERE r.user.id = :userId AND r.menu.id = :menuId AND r.orderId = :orderId")
-    boolean existsByUserIdAndMenuIdAndOrderId(
+            "WHERE r.user.id = :userId AND r.resource.id = :resourceId AND r.orderId = :orderId")
+    boolean existsByUserIdAndResourceIdAndOrderId(
             @Param("userId") Long userId,
-            @Param("menuId") Long menuId,
+            @Param("resourceId") Long resourceId,
             @Param("orderId") Long orderId);
 
 }
