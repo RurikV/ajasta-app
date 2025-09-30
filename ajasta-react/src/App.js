@@ -37,7 +37,7 @@ function App() {
 
           <Route path="/resources" element={<ResourcesPage />} />
           <Route path="/resources/:id" element={<ResourceDetailsPage />} />
-          {/*<Route path="/resources/:id/book" element={<ResourceBookingPage />} />*/}
+          <Route path="/resources/:id/book" element={<ResourceBookingPage />} />
 
           <Route path="/profile" element={<CustomerRoute element={<ProfilePage />} />} />
 

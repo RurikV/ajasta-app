@@ -9,4 +9,5 @@ public interface ReviewService {
     Response<ReviewDTO> createReview(ReviewDTO reviewDTO);
     Response<List<ReviewDTO>> getReviewsForResource(Long resourceId);
     Response<Double> getAverageRating(Long resourceId);
+    Response<Boolean> hasBookingForResource(Long resourceId);
 }

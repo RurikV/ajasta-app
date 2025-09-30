@@ -22,4 +22,6 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
             @Param("resourceId") Long resourceId,
             @Param("orderId") Long orderId);
 
+    @Query("SELECT CASE WHEN COUNT(r) > 0 THEN true ELSE false END FROM Review r WHERE r.user.id = :userId AND r.resource.id = :resourceId")
+    boolean existsByUserIdAndResourceId(@Param("userId") Long userId, @Param("resourceId") Long resourceId);
 }

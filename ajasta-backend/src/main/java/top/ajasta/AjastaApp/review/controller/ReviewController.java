@@ -41,4 +41,11 @@ public class ReviewController {
         return ResponseEntity.ok(reviewService.getAverageRating(resourceId));
     }
 
+    @GetMapping("/resource/eligibility/{resourceId}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Response<Boolean>> hasBookingForResource(
+            @PathVariable Long resourceId) {
+        return ResponseEntity.ok(reviewService.hasBookingForResource(resourceId));
+    }
+
 }

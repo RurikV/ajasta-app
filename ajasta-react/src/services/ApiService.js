@@ -466,4 +466,29 @@ export default class ApiService {
 
 
 
+
+    /* REVIEWS SECTION */
+    static async getResourceReviews(resourceId) {
+        const resp = await axios.get(`${this.BASE_URL}/reviews/resource/${resourceId}`);
+        return resp.data;
+    }
+
+    static async getResourceAverageRating(resourceId) {
+        const resp = await axios.get(`${this.BASE_URL}/reviews/resource/average/${resourceId}`);
+        return resp.data;
+    }
+
+    static async getReviewEligibility(resourceId) {
+        const resp = await axios.get(`${this.BASE_URL}/reviews/resource/eligibility/${resourceId}`, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+    static async createReview(reviewDTO) {
+        const resp = await axios.post(`${this.BASE_URL}/reviews`, reviewDTO, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
 }

@@ -5,6 +5,7 @@ import top.ajasta.AjastaApp.auth_users.entity.User;
 import top.ajasta.AjastaApp.auth_users.services.UserService;
 import top.ajasta.AjastaApp.exceptions.BadRequestException;
 import top.ajasta.AjastaApp.exceptions.NotFoundException;
+import top.ajasta.AjastaApp.order.repository.OrderRepository;
 import top.ajasta.AjastaApp.reservation.entity.Resource;
 import top.ajasta.AjastaApp.reservation.repository.ResourceRepository;
 import top.ajasta.AjastaApp.response.Response;
@@ -30,6 +31,7 @@ public class ReviewServiceImpl implements ReviewService {
     private final ResourceRepository resourceRepository;
     private final ModelMapper modelMapper;
     private final UserService userService;
+    private final OrderRepository orderRepository;
 
 
     @Override
@@ -50,6 +52,12 @@ public class ReviewServiceImpl implements ReviewService {
         Resource resource = resourceRepository.findById(reviewDTO.getResourceId())
                 .orElseThrow(() -> new NotFoundException("Resource not found"));
 
+        // Ensure the user has booked this resource
+        boolean eligible = orderRepository.userHasBookingWithTitleLike(user.getId(), resource.getName());
+        if (!eligible) {
+            throw new BadRequestException("You can only review resources you've booked");
+        }
+
         // Optional: prevent duplicate reviews per order if provided
         if (reviewDTO.getOrderId() != null) {
             boolean exists = reviewRepository.existsByUserIdAndResourceIdAndOrderId(
@@ -57,6 +65,11 @@ public class ReviewServiceImpl implements ReviewService {
             if (exists) {
                 throw new BadRequestException("You've already reviewed this resource for this order");
             }
+        }
+        // Prevent duplicate review for the same resource by same user
+        boolean alreadyReviewed = reviewRepository.existsByUserIdAndResourceId(user.getId(), resource.getId());
+        if (alreadyReviewed) {
+            throw new BadRequestException("You've already reviewed this resource");
         }
 
         // Create and save review
@@ -117,6 +130,20 @@ public class ReviewServiceImpl implements ReviewService {
                 .statusCode(HttpStatus.OK.value())
                 .message("Average rating retrieved successfully")
                 .data(averageRating != null ? averageRating : 0.0)
+                .build();
+    }
+
+    @Override
+    public Response<Boolean> hasBookingForResource(Long resourceId) {
+        log.info("Inside hasBookingForResource()");
+        User user = userService.getCurrentLoggedInUser();
+        Resource resource = resourceRepository.findById(resourceId)
+                .orElseThrow(() -> new NotFoundException("Resource not found"));
+        boolean eligible = orderRepository.userHasBookingWithTitleLike(user.getId(), resource.getName());
+        return Response.<Boolean>builder()
+                .statusCode(HttpStatus.OK.value())
+                .message("Eligibility retrieved successfully")
+                .data(eligible)
                 .build();
     }
 }
