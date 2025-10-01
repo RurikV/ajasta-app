@@ -12,7 +12,7 @@ import java.util.List;
 public interface OrderService {
 
     Response<OrderDTO> getOrderById(Long id);
-    Response<Page<OrderDTO>> getAllOrders(OrderStatus orderStatus, int page, int size);
+    Response<Page<OrderDTO>> getAllOrders(OrderStatus orderStatus, int page, int size, String name);
     Response<List<OrderDTO>> getOrdersOfUser();
     Response<OrderItemDTO> getOrderItemById(Long orderItemId);
     Response<OrderDTO> updateOrderStatus(OrderDTO orderDTO);

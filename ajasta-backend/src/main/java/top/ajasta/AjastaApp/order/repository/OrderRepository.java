@@ -28,4 +28,9 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     Page<Order> findByResourceIdIn(List<Long> resourceIds, Pageable pageable);
 
     Page<Order> findByOrderStatusAndResourceIdIn(OrderStatus orderStatus, List<Long> resourceIds, Pageable pageable);
+
+    // Fallback queries for legacy booking orders without resourceId
+    Page<Order> findByResourceIdIsNullAndBookingTrue(Pageable pageable);
+
+    Page<Order> findByResourceIdIsNullAndBookingTrueAndOrderStatus(OrderStatus orderStatus, Pageable pageable);
 }

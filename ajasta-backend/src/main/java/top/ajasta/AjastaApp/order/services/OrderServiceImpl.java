@@ -73,12 +73,28 @@ public class OrderServiceImpl  implements OrderService{
             if (isRM) {
                 Long rid = order.getResourceId();
                 if (rid == null) {
-                    throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to view this order");
-                }
-                List<Long> managedIds = resourceRepository.findByManagers_Id(current.getId())
-                        .stream().map(top.ajasta.AjastaApp.reservation.entity.Resource::getId).toList();
-                if (!managedIds.contains(rid)) {
-                    throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to view this order");
+                    // Fallback: allow if booking title mentions a resource this manager controls
+                    List<top.ajasta.AjastaApp.reservation.entity.Resource> managed = resourceRepository.findByManagers_Id(current.getId());
+                    java.util.Set<Long> managedIds = managed.stream().map(top.ajasta.AjastaApp.reservation.entity.Resource::getId).collect(java.util.stream.Collectors.toSet());
+                    String bt = order.getBookingTitle();
+                    boolean allowedByTitle = false;
+                    if (bt != null && !managed.isEmpty()) {
+                        String low = bt.toLowerCase(java.util.Locale.ROOT);
+                        allowedByTitle = managed.stream()
+                                .map(top.ajasta.AjastaApp.reservation.entity.Resource::getName)
+                                .filter(java.util.Objects::nonNull)
+                                .map(s -> s.toLowerCase(java.util.Locale.ROOT))
+                                .anyMatch(low::contains);
+                    }
+                    if (!allowedByTitle) {
+                        throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to view this order");
+                    }
+                } else {
+                    List<Long> managedIds = resourceRepository.findByManagers_Id(current.getId())
+                            .stream().map(top.ajasta.AjastaApp.reservation.entity.Resource::getId).toList();
+                    if (!managedIds.contains(rid)) {
+                        throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to view this order");
+                    }
                 }
             } else {
                 // For other roles, deny (customers have dedicated endpoints)
@@ -96,7 +112,7 @@ public class OrderServiceImpl  implements OrderService{
     }
 
     @Override
-    public Response<Page<OrderDTO>> getAllOrders(OrderStatus orderStatus, int page, int size) {
+    public Response<Page<OrderDTO>> getAllOrders(OrderStatus orderStatus, int page, int size, String name) {
         log.info("Inside getAllOrders()");
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
@@ -114,16 +130,80 @@ public class OrderServiceImpl  implements OrderService{
             }
         } else {
             // Resource Manager: restrict to orders belonging to resources they manage
-            List<Long> managedIds = resourceRepository.findByManagers_Id(current.getId())
-                    .stream().map(top.ajasta.AjastaApp.reservation.entity.Resource::getId).toList();
-            if (managedIds.isEmpty()) {
-                orderPage = Page.empty(pageable);
-            } else {
+            List<top.ajasta.AjastaApp.reservation.entity.Resource> managedResources = resourceRepository.findByManagers_Id(current.getId());
+            List<Long> managedIds = managedResources.stream().map(top.ajasta.AjastaApp.reservation.entity.Resource::getId).toList();
+            List<String> managedNames = managedResources.stream()
+                    .map(top.ajasta.AjastaApp.reservation.entity.Resource::getName)
+                    .filter(java.util.Objects::nonNull)
+                    .map(s -> s.toLowerCase(Locale.ROOT))
+                    .toList();
+
+            List<Order> collected = new java.util.ArrayList<>();
+            if (!managedIds.isEmpty()) {
+                Page<Order> scoped;
                 if (orderStatus != null) {
-                    orderPage = orderRepository.findByOrderStatusAndResourceIdIn(orderStatus, managedIds, pageable);
+                    scoped = orderRepository.findByOrderStatusAndResourceIdIn(orderStatus, managedIds, pageable);
                 } else {
-                    orderPage = orderRepository.findByResourceIdIn(managedIds, pageable);
+                    scoped = orderRepository.findByResourceIdIn(managedIds, pageable);
                 }
+                collected.addAll(scoped.getContent());
+            }
+
+            // Fallback: include legacy booking orders with no resourceId but bookingTitle contains a managed resource name
+            if (!managedNames.isEmpty()) {
+                Page<Order> legacy;
+                if (orderStatus != null) {
+                    legacy = orderRepository.findByResourceIdIsNullAndBookingTrueAndOrderStatus(orderStatus, pageable);
+                } else {
+                    legacy = orderRepository.findByResourceIdIsNullAndBookingTrue(pageable);
+                }
+                for (Order o : legacy.getContent()) {
+                    String bt = o.getBookingTitle();
+                    if (bt != null) {
+                        String low = bt.toLowerCase(Locale.ROOT);
+                        boolean match = managedNames.stream().anyMatch(low::contains);
+                        if (match) collected.add(o);
+                    }
+                }
+            }
+
+            // Merge unique by id and sort desc by id
+            java.util.Map<Long, Order> unique = new java.util.LinkedHashMap<>();
+            collected.sort((a,b) -> java.lang.Long.compare(b.getId(), a.getId()));
+            for (Order o : collected) {
+                unique.putIfAbsent(o.getId(), o);
+            }
+            List<Order> merged = new java.util.ArrayList<>(unique.values());
+
+            // Optional filter by resource name via bookingTitle
+            if (name != null && !name.isBlank()) {
+                String kw = name.toLowerCase(Locale.ROOT);
+                merged = merged.stream()
+                        .filter(o -> {
+                            String bt = o.getBookingTitle();
+                            return bt != null && bt.toLowerCase(Locale.ROOT).contains(kw);
+                        })
+                        .toList();
+            }
+
+            // In-memory pagination
+            int from = Math.min(page * size, merged.size());
+            int to = Math.min(from + size, merged.size());
+            List<Order> slice = merged.subList(from, to);
+            orderPage = new org.springframework.data.domain.PageImpl<>(slice, pageable, merged.size());
+        }
+
+        // For admin branch, apply optional name filter after query
+        if (isAdmin) {
+            if (name != null && !name.isBlank()) {
+                String kw = name.toLowerCase(Locale.ROOT);
+                List<Order> filtered = orderPage.getContent().stream()
+                        .filter(o -> {
+                            String bt = o.getBookingTitle();
+                            return bt != null && bt.toLowerCase(Locale.ROOT).contains(kw);
+                        })
+                        .toList();
+                orderPage = new org.springframework.data.domain.PageImpl<>(filtered, pageable, filtered.size());
             }
         }
 

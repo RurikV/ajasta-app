@@ -10,6 +10,7 @@ const AdminOrdersPage = () => {
 
     const [orders, setOrders] = useState([]);
     const [filter, setFilter] = useState('all');
+    const [search, setSearch] = useState('');
 
     const { ErrorDisplay, showError } = useError();
     const navigate = useNavigate();
@@ -17,7 +18,7 @@ const AdminOrdersPage = () => {
 
     const fetchOrders = useCallback(async () => {
         try {
-            const response = await ApiService.getAllOrders(filter === 'all' ? null : filter);
+            const response = await ApiService.getAllOrders(filter === 'all' ? null : filter, 0, 200, search);
 
             if (response.statusCode === 200) {
                 setOrders(response.data.content);
@@ -26,7 +27,7 @@ const AdminOrdersPage = () => {
         } catch (error) {
             showError(error.response?.data?.message || error.message);
         }
-    }, [filter, showError]);
+    }, [filter, search, showError]);
 
     useEffect(() => {
         fetchOrders();
@@ -46,7 +47,7 @@ const AdminOrdersPage = () => {
             <ErrorDisplay />
             <div className="content-header">
                 <h1>Orders Management</h1>
-                <div className="order-filters">
+                <div className="order-filters" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
                     <select value={filter} onChange={(e) => setFilter(e.target.value)}>
                         <option value="all">All Orders</option>
                         <option value="INITIALIZED">Initialized</option>
@@ -54,6 +55,13 @@ const AdminOrdersPage = () => {
                         <option value="CANCELLED">Cancelled</option>
                         <option value="FAILED">Failed</option>
                     </select>
+                    <input
+                        type="text"
+                        placeholder="Search by resource name"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        style={{ padding: '8px 10px', border: '1px solid #ccc', borderRadius: 4 }}
+                    />
                 </div>
             </div>
 

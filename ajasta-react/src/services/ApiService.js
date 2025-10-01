@@ -263,13 +263,15 @@ export default class ApiService {
     }
 
 
-    static async getAllOrders(orderStatus, page = 0, size = 200) {
+    static async getAllOrders(orderStatus, page = 0, size = 200, name) {
 
-        let url = `${this.BASE_URL}/orders/all`;
-
-        if (orderStatus) {
-            url = `${this.BASE_URL}/orders/all?orderStatus=${encodeURIComponent(orderStatus)}&page=${page}&size=${size}`
-        }
+        let params = new URLSearchParams();
+        if (orderStatus) params.set('orderStatus', orderStatus);
+        if (page != null) params.set('page', String(page));
+        if (size != null) params.set('size', String(size));
+        if (name && String(name).trim()) params.set('name', String(name).trim());
+        const qs = params.toString();
+        const url = `${this.BASE_URL}/orders/all${qs ? ('?' + qs) : ''}`;
 
         const resp = await axios.get(url, {
             headers: this.getHeader()
