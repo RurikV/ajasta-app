@@ -23,4 +23,9 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @Query("SELECT CASE WHEN COUNT(o) > 0 THEN true ELSE false END FROM Order o " +
            "WHERE o.user.id = :userId AND o.booking = true AND (:keyword IS NULL OR LOWER(o.bookingTitle) LIKE LOWER(CONCAT('%', :keyword, '%')))")
     boolean userHasBookingWithTitleLike(@Param("userId") Long userId, @Param("keyword") String keyword);
+
+    // Scoped queries for resource managers
+    Page<Order> findByResourceIdIn(List<Long> resourceIds, Pageable pageable);
+
+    Page<Order> findByOrderStatusAndResourceIdIn(OrderStatus orderStatus, List<Long> resourceIds, Pageable pageable);
 }

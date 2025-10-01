@@ -21,4 +21,7 @@ public interface OrderService {
 
     // Create a simple order entry for a resource booking (no items)
     void createBookingOrder(BigDecimal totalAmount, String bookingTitle, String bookingDetails);
+
+    // Set resource context for subsequent booking order creation
+    void setCurrentBookingResourceId(Long resourceId);
 }

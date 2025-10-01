@@ -36,4 +36,7 @@ public class OrderDTO {
     private Boolean booking;
     private String bookingTitle;
     private String bookingDetails;
+
+    // Resource association (nullable)
+    private Long resourceId;
 }

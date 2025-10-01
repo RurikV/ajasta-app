@@ -56,6 +56,10 @@ public class Order {
     @Column(length = 4000)
     private String bookingDetails; // human-readable details (dates, times, units)
 
+    // Resource association (nullable): the resource this booking/order belongs to
+    @Column(name = "resource_id")
+    private Long resourceId;
+
 }
 
 

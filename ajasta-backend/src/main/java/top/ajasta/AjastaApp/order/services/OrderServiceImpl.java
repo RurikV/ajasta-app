@@ -49,7 +49,9 @@ public class OrderServiceImpl  implements OrderService{
     private final ModelMapper modelMapper;
     private final TemplateEngine templateEngine;
     private final PaymentRepository paymentRepository;
+    private final top.ajasta.AjastaApp.reservation.repository.ResourceRepository resourceRepository;
 
+    private static final ThreadLocal<Long> CURRENT_BOOKING_RESOURCE_ID = new ThreadLocal<>();
 
     @Value("${base.payment.link}")
     private String basePaymentLink;
@@ -62,6 +64,27 @@ public class OrderServiceImpl  implements OrderService{
         log.info("Inside getOrderById()");
         Order order = orderRepository.findById(id)
                 .orElseThrow(()-> new NotFoundException("Order Not Found"));
+
+        // Authorization: Admin can view any, Resource Manager only if manages the resource
+        User current = userService.getCurrentLoggedInUser();
+        boolean isAdmin = current.getRoles() != null && current.getRoles().stream().anyMatch(r -> "ADMIN".equalsIgnoreCase(r.getName()));
+        if (!isAdmin) {
+            boolean isRM = current.getRoles() != null && current.getRoles().stream().anyMatch(r -> "RESOURCE_MANAGER".equalsIgnoreCase(r.getName()));
+            if (isRM) {
+                Long rid = order.getResourceId();
+                if (rid == null) {
+                    throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to view this order");
+                }
+                List<Long> managedIds = resourceRepository.findByManagers_Id(current.getId())
+                        .stream().map(top.ajasta.AjastaApp.reservation.entity.Resource::getId).toList();
+                if (!managedIds.contains(rid)) {
+                    throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to view this order");
+                }
+            } else {
+                // For other roles, deny (customers have dedicated endpoints)
+                throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to view this order");
+            }
+        }
 
         OrderDTO orderDTO = modelMapper.map(order, OrderDTO.class);
 
@@ -78,16 +101,33 @@ public class OrderServiceImpl  implements OrderService{
 
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
 
-        Page<Order> orderPage;
+        // Determine caller role and scope
+        User current = userService.getCurrentLoggedInUser();
+        boolean isAdmin = current.getRoles() != null && current.getRoles().stream().anyMatch(r -> "ADMIN".equalsIgnoreCase(r.getName()));
 
-        if (orderStatus != null){
-            orderPage = orderRepository.findByOrderStatus(orderStatus, pageable);
-        }else {
-            orderPage = orderRepository.findAll(pageable);
+        Page<Order> orderPage;
+        if (isAdmin) {
+            if (orderStatus != null){
+                orderPage = orderRepository.findByOrderStatus(orderStatus, pageable);
+            } else {
+                orderPage = orderRepository.findAll(pageable);
+            }
+        } else {
+            // Resource Manager: restrict to orders belonging to resources they manage
+            List<Long> managedIds = resourceRepository.findByManagers_Id(current.getId())
+                    .stream().map(top.ajasta.AjastaApp.reservation.entity.Resource::getId).toList();
+            if (managedIds.isEmpty()) {
+                orderPage = Page.empty(pageable);
+            } else {
+                if (orderStatus != null) {
+                    orderPage = orderRepository.findByOrderStatusAndResourceIdIn(orderStatus, managedIds, pageable);
+                } else {
+                    orderPage = orderRepository.findByResourceIdIn(managedIds, pageable);
+                }
+            }
         }
 
         Page<OrderDTO> orderDTOPage  = orderPage.map(order -> modelMapper.map(order, OrderDTO.class));
-
 
         return Response.<Page<OrderDTO>>builder()
                 .statusCode(HttpStatus.OK.value())
@@ -122,6 +162,15 @@ public class OrderServiceImpl  implements OrderService{
     }
 
     @Override
+    public void setCurrentBookingResourceId(Long resourceId) {
+        if (resourceId == null) {
+            CURRENT_BOOKING_RESOURCE_ID.remove();
+        } else {
+            CURRENT_BOOKING_RESOURCE_ID.set(resourceId);
+        }
+    }
+
+    @Override
     public Response<OrderItemDTO> getOrderItemById(Long orderItemId) {
 
         log.info("Inside getOrderItemById()");
@@ -144,9 +193,27 @@ public class OrderServiceImpl  implements OrderService{
     public Response<OrderDTO> updateOrderStatus(OrderDTO orderDTO) {
         log.info("Inside updateOrderStatus()");
 
-
         Order order = orderRepository.findById(orderDTO.getId())
                 .orElseThrow(() -> new NotFoundException("Order not found: "));
+
+        // Authorization: Admin or assigned Resource Manager only
+        User current = userService.getCurrentLoggedInUser();
+        boolean isAdmin = current.getRoles() != null && current.getRoles().stream().anyMatch(r -> "ADMIN".equalsIgnoreCase(r.getName()));
+        if (!isAdmin) {
+            boolean isRM = current.getRoles() != null && current.getRoles().stream().anyMatch(r -> "RESOURCE_MANAGER".equalsIgnoreCase(r.getName()));
+            if (!isRM) {
+                throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to update this order");
+            }
+            Long rid = order.getResourceId();
+            if (rid == null) {
+                throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to update this order");
+            }
+            List<Long> managedIds = resourceRepository.findByManagers_Id(current.getId())
+                    .stream().map(top.ajasta.AjastaApp.reservation.entity.Resource::getId).toList();
+            if (!managedIds.contains(rid)) {
+                throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to update this order");
+            }
+        }
 
         OrderStatus orderStatus = orderDTO.getOrderStatus();
         order.setOrderStatus(orderStatus);
@@ -207,26 +274,33 @@ public class OrderServiceImpl  implements OrderService{
         log.info("Inside createBookingOrder() amount={}, title={}...", totalAmount, bookingTitle);
         User customer = userService.getCurrentLoggedInUser();
 
-        Order order = Order.builder()
-                .user(customer)
-                .orderDate(LocalDateTime.now())
-                .totalAmount(totalAmount == null ? BigDecimal.ZERO : totalAmount)
-                .orderStatus(OrderStatus.INITIALIZED)
-                .paymentStatus(PaymentStatus.PENDING)
-                .orderItems(new ArrayList<>())
-                .booking(Boolean.TRUE)
-                .bookingTitle(bookingTitle)
-                .bookingDetails(bookingDetails)
-                .build();
+        Long rid = CURRENT_BOOKING_RESOURCE_ID.get();
+        try {
+            Order order = Order.builder()
+                    .user(customer)
+                    .orderDate(LocalDateTime.now())
+                    .totalAmount(totalAmount == null ? BigDecimal.ZERO : totalAmount)
+                    .orderStatus(OrderStatus.INITIALIZED)
+                    .paymentStatus(PaymentStatus.PENDING)
+                    .orderItems(new ArrayList<>())
+                    .booking(Boolean.TRUE)
+                    .bookingTitle(bookingTitle)
+                    .bookingDetails(bookingDetails)
+                    .resourceId(rid)
+                    .build();
 
-        Order saved = orderRepository.save(order);
-        OrderDTO dto = modelMapper.map(saved, OrderDTO.class);
+            Order saved = orderRepository.save(order);
+            OrderDTO dto = modelMapper.map(saved, OrderDTO.class);
 
-        Response.<OrderDTO>builder()
-                .statusCode(HttpStatus.OK.value())
-                .message("Booking recorded in order history")
-                .data(dto)
-                .build();
+            Response.<OrderDTO>builder()
+                    .statusCode(HttpStatus.OK.value())
+                    .message("Booking recorded in order history")
+                    .data(dto)
+                    .build();
+        } finally {
+            // Clear context to avoid leakage across requests
+            CURRENT_BOOKING_RESOURCE_ID.remove();
+        }
     }
 
 

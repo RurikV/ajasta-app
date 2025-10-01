@@ -67,6 +67,7 @@ const AdminOrdersPage = () => {
                             <th>Total</th>
                             <th>Status</th>
                             <th>Payment</th>
+                            <th>Details</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -86,6 +87,17 @@ const AdminOrdersPage = () => {
                                     <span className={`payment-status ${order.paymentStatus?.toLowerCase() || 'pending'}`}>
                                         {order.paymentStatus || 'PENDING'}
                                     </span>
+                                </td>
+                                <td>
+                                    {order.orderItems && order.orderItems.length > 0 ? (
+                                        <span>{order.orderItems.map(i => i.itemName).filter(Boolean).slice(0,2).join(', ')}{order.orderItems.length > 2 ? '…' : ''}</span>
+                                    ) : (
+                                        (order.booking || order.bookingTitle) ? (
+                                            <span title={order.bookingDetails || ''}>{order.bookingTitle || 'Booking'}</span>
+                                        ) : (
+                                            <span>-</span>
+                                        )
+                                    )}
                                 </td>
                                 <td className="actions">
                                     <button

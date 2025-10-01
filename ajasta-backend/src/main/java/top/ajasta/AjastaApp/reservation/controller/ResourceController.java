@@ -147,6 +147,8 @@ public class ResourceController {
                     .append("Price per slot: ").append(totalAmount).append("\n")
                     .append("Total: ").append(totalAmount)
                     .toString();
+            // Bind resource context so the order is associated to this resource
+            orderService.setCurrentBookingResourceId(id);
             orderService.createBookingOrder(perSlot, bookingTitle, bookingDetails);
         } catch (Exception ignored) {}
 
@@ -234,6 +236,7 @@ public class ResourceController {
                     .append("Price per slot: ").append(pricePerSlot).append("\n")
                     .append("Total: ").append(totalAmount)
                     .toString();
+            orderService.setCurrentBookingResourceId(id);
             orderService.createBookingOrder(totalAmountBD, bookingTitle, bookingDetails);
         } catch (Exception ignored) {}
 
@@ -333,6 +336,7 @@ public class ResourceController {
             details.append("Total slots: ").append(totalSlots).append("\n")
                     .append("Price per slot: ").append(pricePerSlot).append("\n")
                     .append("Total: ").append(totalAmount);
+            orderService.setCurrentBookingResourceId(id);
             orderService.createBookingOrder(totalAmountBD, bookingTitle, details.toString());
         } catch (Exception ignored) {}
 

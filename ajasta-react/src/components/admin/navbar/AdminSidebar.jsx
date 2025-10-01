@@ -52,7 +52,7 @@ const AdminSidebar = () => {
               <span>Resources</span>
             </NavLink>
           </li>
-          {isAdmin && (
+          {(isAdmin || isRM) && (
             <li>
               <NavLink 
                 to="/admin/orders" 

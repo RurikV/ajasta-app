@@ -22,6 +22,7 @@ public class OrderController {
     private final OrderService orderService;
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyAuthority('ADMIN','RESOURCE_MANAGER')")
     public ResponseEntity<Response<OrderDTO>> getOrderById(@PathVariable Long id){
         return ResponseEntity.ok(orderService.getOrderById(id));
     }
@@ -39,7 +40,7 @@ public class OrderController {
 
 
     @GetMapping("/all")
-    @PreAuthorize("hasAuthority('ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','RESOURCE_MANAGER')")
     public ResponseEntity<Response<Page<OrderDTO>>> getAllOrders(
             @RequestParam(required = false) OrderStatus orderStatus,
             @RequestParam(defaultValue = "0") int page,
@@ -49,7 +50,7 @@ public class OrderController {
 
 
     @PutMapping("/update")
-    @PreAuthorize("hasAuthority('ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','RESOURCE_MANAGER')")
     public ResponseEntity<Response<OrderDTO>> updateOrderStatus(@RequestBody OrderDTO orderDTO) {
         return ResponseEntity.ok(orderService.updateOrderStatus(orderDTO));
     }
