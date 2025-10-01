@@ -286,12 +286,29 @@ public class OrderServiceImpl  implements OrderService{
             }
             Long rid = order.getResourceId();
             if (rid == null) {
-                throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to update this order");
-            }
-            List<Long> managedIds = resourceRepository.findByManagers_Id(current.getId())
-                    .stream().map(top.ajasta.AjastaApp.reservation.entity.Resource::getId).toList();
-            if (!managedIds.contains(rid)) {
-                throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to update this order");
+                // Fallback for legacy booking orders without resourceId: allow if bookingTitle mentions a managed resource
+                java.util.List<top.ajasta.AjastaApp.reservation.entity.Resource> managed = resourceRepository.findByManagers_Id(current.getId());
+                boolean allowedByTitle = false;
+                if (Boolean.TRUE.equals(order.getBooking())) {
+                    String bt = order.getBookingTitle();
+                    if (bt != null && !managed.isEmpty()) {
+                        String low = bt.toLowerCase(java.util.Locale.ROOT);
+                        allowedByTitle = managed.stream()
+                                .map(top.ajasta.AjastaApp.reservation.entity.Resource::getName)
+                                .filter(java.util.Objects::nonNull)
+                                .map(s -> s.toLowerCase(java.util.Locale.ROOT))
+                                .anyMatch(low::contains);
+                    }
+                }
+                if (!allowedByTitle) {
+                    throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to update this order");
+                }
+            } else {
+                List<Long> managedIds = resourceRepository.findByManagers_Id(current.getId())
+                        .stream().map(top.ajasta.AjastaApp.reservation.entity.Resource::getId).toList();
+                if (!managedIds.contains(rid)) {
+                    throw new top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException("Not allowed to update this order");
+                }
             }
         }
 
