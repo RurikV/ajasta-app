@@ -66,8 +66,10 @@ const AdminUsersPage = () => {
   return (
     <div className="container">
       <h2>Users & Roles</h2>
-      {error && <div className="alert alert-danger" role="alert">{error}</div>}
-      {message && <div className="alert alert-success" role="alert">{message}</div>}
+      <div style={{ height: 56, display: 'flex', alignItems: 'center' }}>
+        {error && <div className="alert alert-danger mb-0" role="alert">{error}</div>}
+        {!error && message && <div className="alert alert-success mb-0" role="alert">{message}</div>}
+      </div>
 
       <div className="table-responsive">
         <table className="table table-striped">
