@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import top.ajasta.AjastaApp.exceptions.UnauthorizedAccessException;
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.context.Context;
 
@@ -44,16 +45,41 @@ public class ResourceController {
     }
 
     @PutMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAuthority('ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','RESOURCE_MANAGER')")
     public ResponseEntity<Response<ResourceDTO>> update(@ModelAttribute ResourceDTO dto,
                                                         @RequestPart(value = "imageFile", required = false) MultipartFile imageFile) {
         dto.setImageFile(imageFile);
+
+        // If caller is a RESOURCE_MANAGER (not ADMIN), ensure they manage this resource
+        User current = userService.getCurrentLoggedInUser();
+        boolean isAdmin = current.getRoles() != null && current.getRoles().stream().anyMatch(r -> "ADMIN".equalsIgnoreCase(r.getName()));
+        if (!isAdmin) {
+            if (dto.getId() == null) {
+                throw new UnauthorizedAccessException("Only admins can create resources");
+            }
+            Response<ResourceDTO> existing = resourceService.getResourceById(dto.getId());
+            List<Long> mgrIds = existing.getData() != null ? existing.getData().getManagerIds() : null;
+            if (mgrIds == null || !mgrIds.contains(current.getId())) {
+                throw new UnauthorizedAccessException("You are not a manager of this resource");
+            }
+        }
+
         return ResponseEntity.ok(resourceService.updateResource(dto));
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAuthority('ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','RESOURCE_MANAGER')")
     public ResponseEntity<Response<?>> delete(@PathVariable Long id) {
+        // If caller is a RESOURCE_MANAGER (not ADMIN), ensure they manage this resource
+        User current = userService.getCurrentLoggedInUser();
+        boolean isAdmin = current.getRoles() != null && current.getRoles().stream().anyMatch(r -> "ADMIN".equalsIgnoreCase(r.getName()));
+        if (!isAdmin) {
+            Response<ResourceDTO> existing = resourceService.getResourceById(id);
+            List<Long> mgrIds = existing.getData() != null ? existing.getData().getManagerIds() : null;
+            if (mgrIds == null || !mgrIds.contains(current.getId())) {
+                throw new UnauthorizedAccessException("You are not a manager of this resource");
+            }
+        }
         return ResponseEntity.ok(resourceService.deleteResource(id));
     }
 

@@ -21,12 +21,26 @@ const AdminResourceFormPage = () => {
     closeTime: '20:00',
     unavailableWeekdays: '', // CSV of 0-6 (0=Sun)
     unavailableDates: '', // CSV yyyy-MM-dd
-    dailyUnavailableRanges: '' // e.g., 12:00-13:00;16:00-17:00
+    dailyUnavailableRanges: '', // e.g., 12:00-13:00;16:00-17:00
+    managerIds: []
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [managers, setManagers] = useState([]);
+
+  const loadManagers = async () => {
+    try {
+      const resp = await ApiService.getAllUsers();
+      const users = resp?.data || [];
+      const mgrs = users.filter(u => Array.isArray(u.roles) && u.roles.some(r => (r.name || '').toUpperCase() === 'RESOURCE_MANAGER'));
+      setManagers(mgrs);
+    } catch (e) {
+      // silently ignore; errors will be surfaced when saving anyway
+    }
+  };
 
   useEffect(() => {
+    loadManagers();
     if (id) {
       fetchResource();
     }
@@ -42,7 +56,8 @@ const AdminResourceFormPage = () => {
           type: response.data.type || '',
           active: !!response.data.active,
           pricePerSlot: response.data.pricePerSlot || '',
-          imageFile: null
+          imageFile: null,
+          managerIds: Array.isArray(response.data.managerIds) ? response.data.managerIds : []
         });
       }
     } catch (error) {
@@ -88,6 +103,14 @@ const AdminResourceFormPage = () => {
     });
   };
 
+  const handleManagerToggle = (userId) => {
+    setResource(prev => {
+      const current = new Set(prev.managerIds || []);
+      if (current.has(userId)) current.delete(userId); else current.add(userId);
+      return { ...prev, managerIds: Array.from(current) };
+    });
+  };
+
   const handleFileChange = (e) => {
     setResource(prev => ({ ...prev, imageFile: e.target.files[0] }));
   };
@@ -115,6 +138,9 @@ const AdminResourceFormPage = () => {
       if (resource.unavailableWeekdays !== undefined) formData.append('unavailableWeekdays', resource.unavailableWeekdays);
       if (resource.unavailableDates !== undefined) formData.append('unavailableDates', resource.unavailableDates);
       if (resource.dailyUnavailableRanges !== undefined) formData.append('dailyUnavailableRanges', resource.dailyUnavailableRanges);
+      if (Array.isArray(resource.managerIds)) {
+        resource.managerIds.forEach(mId => formData.append('managerIds', String(mId)));
+      }
 
       let response;
       if (id) {
@@ -307,7 +333,28 @@ const AdminResourceFormPage = () => {
             onChange={handleInputChange}
           />
         </div>
-
+        
+        <div className="form-group">
+          <label>Resource Managers</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {managers.length === 0 ? (
+              <small style={{ color: '#666' }}>No resource managers available</small>
+            ) : (
+              managers.map(m => (
+                <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1px solid #eee', borderRadius: 8, padding: '6px 10px' }}>
+                  <input
+                    type="checkbox"
+                    checked={(resource.managerIds || []).includes(m.id)}
+                    onChange={() => handleManagerToggle(m.id)}
+                  />
+                  <span>{m.name || m.email}</span>
+                  {m.email && <span style={{ color: '#999', fontSize: 12 }}>({m.email})</span>}
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+        
         <div className="form-actions">
           <button
             type="submit"
