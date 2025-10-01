@@ -385,6 +385,29 @@ export default class ApiService {
 
 
 
+    /* ADMIN USERS & ROLES */
+    static async getAllUsers() {
+        const resp = await axios.get(`${this.BASE_URL}/users/all`, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+    static async getAllRoles() {
+        const resp = await axios.get(`${this.BASE_URL}/roles`, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+    static async updateUserRoles(userId, roles) {
+        const resp = await axios.put(`${this.BASE_URL}/users/${userId}/roles`, roles, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+
     /* REVIEWS SECTION */
     static async getResourceReviews(resourceId) {
         const resp = await axios.get(`${this.BASE_URL}/reviews/resource/${resourceId}`);

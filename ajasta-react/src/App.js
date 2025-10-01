@@ -22,6 +22,7 @@ import AdminResourcesPage from "./components/admin/AdminResourcesPage";
 import AdminResourceFormPage from "./components/admin/AdminResourceFormPage";
 import ResourceBookingPage from "./components/resources/ResourceBookingPage";
 import HomePage from "./components/home/HomePage";
+import AdminUsersPage from "./components/admin/AdminUsersPage";
 
 function App() {
   return (
@@ -63,6 +64,8 @@ function App() {
 
             <Route path="payments" element={<AdminPaymentsPage />} />
             <Route path="payments/:id" element={<AdminPaymentDetailPage />} />
+
+            <Route path="users" element={<AdminUsersPage />} />
 
             <Route index element={<AdminDashboardPage />} />
             <Route path="register" element={<AdminUserRegistration />} />

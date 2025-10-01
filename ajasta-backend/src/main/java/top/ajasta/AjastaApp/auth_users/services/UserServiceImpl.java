@@ -10,6 +10,8 @@ import top.ajasta.AjastaApp.email_notification.services.NotificationService;
 import top.ajasta.AjastaApp.exceptions.BadRequestException;
 import top.ajasta.AjastaApp.exceptions.NotFoundException;
 import top.ajasta.AjastaApp.response.Response;
+import top.ajasta.AjastaApp.role.entity.Role;
+import top.ajasta.AjastaApp.role.repository.RoleRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.modelmapper.ModelMapper;
@@ -35,6 +37,7 @@ public class UserServiceImpl implements UserService {
     private final ModelMapper modelMapper;
     private final NotificationService notificationService;
     private final AWSS3Service awss3Service;
+    private final RoleRepository roleRepository;
 
 
     @Override
@@ -213,6 +216,50 @@ public class UserServiceImpl implements UserService {
         return Response.builder()
                 .statusCode(HttpStatus.OK.value())
                 .message("Saved")
+                .build();
+    }
+
+    @Override
+    public Response<UserDTO> updateUserRoles(Long userId, List<String> roleNames) {
+
+        log.info("INSIDE updateUserRoles() for userId: {}", userId);
+
+        // Normalize incoming role names: trim, uppercase, strip optional ROLE_ prefix, remove duplicates
+        List<String> normalized = (roleNames == null ? List.<String>of() : roleNames).stream()
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(String::toUpperCase)
+                .map(s -> s.startsWith("ROLE_") ? s.substring(5) : s)
+                .distinct()
+                .toList();
+
+        if (normalized.isEmpty()) {
+            throw new BadRequestException("At least one valid role must be provided");
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new NotFoundException("User not found"));
+
+        // Resolve roles, collect unknowns to return a clear 400 instead of generic 500
+        java.util.List<Role> roles = new java.util.ArrayList<>();
+        java.util.List<String> unknown = new java.util.ArrayList<>();
+        for (String name : normalized) {
+            roleRepository.findByName(name)
+                    .ifPresentOrElse(roles::add, () -> unknown.add(name));
+        }
+        if (!unknown.isEmpty()) {
+            throw new BadRequestException("Unknown roles: " + String.join(", ", unknown));
+        }
+
+        user.setRoles(roles);
+        userRepository.save(user);
+
+        UserDTO dto = modelMapper.map(user, UserDTO.class);
+
+        return Response.<UserDTO>builder()
+                .statusCode(HttpStatus.OK.value())
+                .message("User roles updated successfully")
+                .data(dto)
                 .build();
     }
 }

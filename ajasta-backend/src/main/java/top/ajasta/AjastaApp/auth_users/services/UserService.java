@@ -23,4 +23,5 @@ public interface UserService {
 
     Response<?> addSavedEmail(String email);
 
+    Response<UserDTO> updateUserRoles(Long userId, List<String> roleNames);
 }

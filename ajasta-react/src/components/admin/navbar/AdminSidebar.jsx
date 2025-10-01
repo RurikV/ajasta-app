@@ -4,7 +4,8 @@ import {
   faChartLine, 
   faList, 
   faShoppingBag, 
-  faCreditCard 
+  faCreditCard, 
+  faUsers
 } from '@fortawesome/free-solid-svg-icons';
 
 
@@ -58,6 +59,15 @@ const AdminSidebar = () => {
             >
               <FontAwesomeIcon icon={faCreditCard} />
               <span>Payments</span>
+            </NavLink>
+          </li>
+          <li>
+            <NavLink 
+              to="/admin/users" 
+              className={location.pathname.includes('/admin/users') ? 'active' : ''}
+            >
+              <FontAwesomeIcon icon={faUsers} />
+              <span>Users</span>
             </NavLink>
           </li>
         </ul>
