@@ -21,12 +21,6 @@ public class OrderController {
 
     private final OrderService orderService;
 
-    @PostMapping("/checkout")
-    @PreAuthorize("hasAuthority('CUSTOMER')")
-    public ResponseEntity<Response<?>> checkout(){
-        return ResponseEntity.ok(orderService.placeOrderFromCart());
-    }
-
     @GetMapping("/{id}")
     public ResponseEntity<Response<OrderDTO>> getOrderById(@PathVariable Long id){
         return ResponseEntity.ok(orderService.getOrderById(id));

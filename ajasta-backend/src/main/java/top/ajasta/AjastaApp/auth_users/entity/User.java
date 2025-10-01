@@ -1,6 +1,5 @@
 package top.ajasta.AjastaApp.auth_users.entity;
 
-import top.ajasta.AjastaApp.cart.entity.Cart;
 import top.ajasta.AjastaApp.order.entity.Order;
 import top.ajasta.AjastaApp.payment.entity.Payment;
 import top.ajasta.AjastaApp.review.entity.Review;
@@ -65,13 +64,8 @@ public class User {
     @OneToMany(mappedBy = "user",cascade = CascadeType.ALL)
     private List<Payment> payments;
 
-    @OneToOne(mappedBy = "user", cascade = CascadeType.ALL)
-    private Cart cart;
-
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
-
-
 
 }
 

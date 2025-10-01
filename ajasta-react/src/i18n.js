@@ -8,11 +8,8 @@ const resources = {
       // Navbar
       "app_title": "Ajasta App",
       "home": "Home",
-      "menu": "Menu",
-      "categories": "Categories",
       "resources": "Resources",
       "orders": "Orders",
-      "cart": "Cart",
       "admin": "Admin",
       "profile": "Profile",
       "logout": "Logout",
@@ -56,10 +53,7 @@ const resources = {
       // Navbar
       "app_title": "Ajasta App",
       "home": "Avaleht",
-      "menu": "Menüü",
-      "categories": "Kategooriad",
       "orders": "Tellimused",
-      "cart": "Ostukorv",
       "admin": "Administraator",
       "profile": "Profiil",
       "logout": "Välju",
@@ -103,10 +97,7 @@ const resources = {
       // Navbar
       "app_title": "Ajasta App",
       "home": "Inicio",
-      "menu": "Menú",
-      "categories": "Categorías",
       "orders": "Pedidos",
-      "cart": "Carrito",
       "admin": "Administrador",
       "profile": "Perfil",
       "logout": "Cerrar sesión",

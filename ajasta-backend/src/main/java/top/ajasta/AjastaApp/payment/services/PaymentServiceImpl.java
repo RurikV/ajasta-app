@@ -221,9 +221,6 @@ public class PaymentServiceImpl implements PaymentService {
 
         paymentDTOS.getUser().setRoles(null);
         paymentDTOS.getOrder().setUser(null);
-        paymentDTOS.getOrder().getOrderItems().forEach(item->{
-            item.getMenu().setReviews(null);
-        });
 
         return Response.<PaymentDTO>builder()
                 .statusCode(HttpStatus.OK.value())

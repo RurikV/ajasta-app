@@ -1,9 +1,7 @@
 package top.ajasta.AjastaApp.order.dtos;
 
-
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
-import top.ajasta.AjastaApp.menu.dtos.MenuDTO;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -17,11 +15,12 @@ public class OrderItemDTO {
 
     private int quantity;
 
-    private Long menuId;
-
-    private MenuDTO menu;
-
     private BigDecimal pricePerUnit;
 
     private BigDecimal subtotal;
+
+    // Snapshot of item details at time of order (decoupled from Menu)
+    private String itemName;
+    private String itemDescription;
+    private String itemImageUrl;
 }

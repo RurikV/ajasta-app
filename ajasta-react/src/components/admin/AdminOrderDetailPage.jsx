@@ -126,13 +126,13 @@ const AdminOrderDetailPage = () => {
                                     <td>
                                         <div className="item-details">
                                             <img
-                                                src={item.menu.imageUrl}
-                                                alt={item.menu.name}
+                                                src={item.itemImageUrl}
+                                                alt={item.itemName}
                                                 className="item-image"
                                             />
                                             <div>
-                                                <div className="item-name">{item.menu.name}</div>
-                                                <div className="item-description">{item.menu.description}</div>
+                                                <div className="item-name">{item.itemName}</div>
+                                                <div className="item-description">{item.itemDescription}</div>
                                             </div>
                                         </div>
                                     </td>

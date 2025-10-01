@@ -11,7 +11,6 @@ import java.util.List;
 
 public interface OrderService {
 
-    Response<?> placeOrderFromCart();
     Response<OrderDTO> getOrderById(Long id);
     Response<Page<OrderDTO>> getAllOrders(OrderStatus orderStatus, int page, int size);
     Response<List<OrderDTO>> getOrdersOfUser();

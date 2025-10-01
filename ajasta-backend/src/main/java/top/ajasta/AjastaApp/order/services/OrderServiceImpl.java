@@ -2,17 +2,12 @@ package top.ajasta.AjastaApp.order.services;
 
 import top.ajasta.AjastaApp.auth_users.entity.User;
 import top.ajasta.AjastaApp.auth_users.services.UserService;
-import top.ajasta.AjastaApp.cart.entity.Cart;
-import top.ajasta.AjastaApp.cart.entity.CartItem;
-import top.ajasta.AjastaApp.cart.repository.CartRepository;
-import top.ajasta.AjastaApp.cart.services.CartService;
 import top.ajasta.AjastaApp.email_notification.dtos.NotificationDTO;
 import top.ajasta.AjastaApp.email_notification.services.NotificationService;
 import top.ajasta.AjastaApp.enums.OrderStatus;
 import top.ajasta.AjastaApp.enums.PaymentStatus;
 import top.ajasta.AjastaApp.exceptions.BadRequestException;
 import top.ajasta.AjastaApp.exceptions.NotFoundException;
-import top.ajasta.AjastaApp.menu.dtos.MenuDTO;
 import top.ajasta.AjastaApp.order.dtos.OrderDTO;
 import top.ajasta.AjastaApp.order.dtos.OrderItemDTO;
 import top.ajasta.AjastaApp.order.entity.Order;
@@ -53,8 +48,6 @@ public class OrderServiceImpl  implements OrderService{
     private final NotificationService notificationService;
     private final ModelMapper modelMapper;
     private final TemplateEngine templateEngine;
-    private final CartService cartService;
-    private final CartRepository cartRepository;
     private final PaymentRepository paymentRepository;
 
 
@@ -62,103 +55,6 @@ public class OrderServiceImpl  implements OrderService{
     private String basePaymentLink;
 
 
-    @Transactional
-    @Override
-    public Response<?> placeOrderFromCart() {
-
-        log.info("Inside placeOrderFromCart()");
-
-        User customer = userService.getCurrentLoggedInUser();
-
-        log.info("user passed");
-
-        String address = customer.getAddress();
-
-        log.info("address passed");
-
-        if (address == null) {
-            throw new NotFoundException("Address not present for the user");
-        }
-        Cart cart = cartRepository.findByUser_Id(customer.getId())
-                .orElseThrow(()-> new NotFoundException("Cart not found for the user" ));
-
-
-        log.info("cart passed");
-
-        List<CartItem> cartItems = cart.getCartItems();
-
-        log.info("cartItems passed");
-
-        if (cartItems == null || cartItems.isEmpty()) throw new BadRequestException("Cart is empty");
-
-        List<OrderItem> orderItems = new ArrayList<>();
-
-        BigDecimal totalAmount = BigDecimal.ZERO;
-
-
-        log.info("totalAmount passed");
-
-        for (CartItem cartItem: cartItems){
-
-            OrderItem orderItem = OrderItem.builder()
-                    .menu(cartItem.getMenu())
-                    .quantity(cartItem.getQuantity())
-                    .pricePerUnit(cartItem.getPricePerUnit())
-                    .subtotal(cartItem.getSubtotal())
-                    .build();
-            orderItems.add(orderItem);
-            totalAmount = totalAmount.add(orderItem.getSubtotal());
-        }
-
-        log.info("orderItem adding passed");
-
-        Order order = Order.builder()
-                .user(customer)
-                .orderItems(orderItems)
-                .orderDate(LocalDateTime.now())
-                .totalAmount(totalAmount)
-                .orderStatus(OrderStatus.INITIALIZED)
-                .paymentStatus(PaymentStatus.PENDING)
-                .build();
-
-
-        log.info("order build passed");
-
-        Order savedOrder = orderRepository.save(order); //save order
-
-
-        log.info("order saved passed");
-
-        orderItems.forEach(orderItem -> orderItem.setOrder(savedOrder));
-
-        orderItemRepository.saveAll(orderItems); //save order item
-
-
-        log.info("order items saved");
-
-        // Clear the user's cart after the order is placed
-        cartService.clearShoppingCart();
-
-        log.info("shopping cart cleared");
-
-        OrderDTO orderDTO = modelMapper.map(savedOrder, OrderDTO.class);
-
-
-        log.info("model mappern mapped savedOrder to OrderDTO");
-
-        // Send email notifications
-        sendOrderConfirmationEmail(customer, orderDTO);
-
-
-        log.info("building response to send");
-
-
-        return Response.builder()
-                .statusCode(HttpStatus.OK.value())
-                .message("Your order has been received! We've sent a secure payment link to your email. Please proceed for payment to confirm your order.")
-                .build();
-
-    }
 
     @Override
     public Response<OrderDTO> getOrderById(Long id) {
@@ -190,15 +86,7 @@ public class OrderServiceImpl  implements OrderService{
             orderPage = orderRepository.findAll(pageable);
         }
 
-        Page<OrderDTO> orderDTOPage  = orderPage.map(order -> {
-            OrderDTO dto = modelMapper.map(order, OrderDTO.class);
-            dto.getOrderItems().forEach(orderItemDTO -> {
-                if (orderItemDTO.getMenu() != null) {
-                    orderItemDTO.getMenu().setReviews(null);
-                }
-            });
-            return dto;
-        });
+        Page<OrderDTO> orderDTOPage  = orderPage.map(order -> modelMapper.map(order, OrderDTO.class));
 
 
         return Response.<Page<OrderDTO>>builder()
@@ -222,7 +110,6 @@ public class OrderServiceImpl  implements OrderService{
 
         orderDTOS.forEach(orderItem -> {
             orderItem.setUser(null);
-            orderItem.getOrderItems().forEach(item-> item.getMenu().setReviews(null));
         });
 
 
@@ -244,9 +131,6 @@ public class OrderServiceImpl  implements OrderService{
 
 
         OrderItemDTO orderItemDTO = modelMapper.map(orderItem, OrderItemDTO.class);
-
-        orderItemDTO.setMenu(modelMapper.map(orderItem.getMenu(), MenuDTO.class));
-
 
         return Response.<OrderItemDTO>builder()
                 .statusCode(HttpStatus.OK.value())
@@ -370,7 +254,9 @@ public class OrderServiceImpl  implements OrderService{
 
         for (OrderItemDTO item : orderDTO.getOrderItems()) {
             orderItemsHtml.append("<div class=\"order-item\">")
-                    .append("<p>").append(item.getMenu().getName()).append(" x ").append(item.getQuantity()).append("</p>")
+                    .append("<p>")
+                    .append(item.getItemName() != null ? item.getItemName() : "Item")
+                    .append(" x ").append(item.getQuantity()).append("</p>")
                     .append("<p> $ ").append(item.getSubtotal()).append("</p>")
                     .append("</div>");
         }
