@@ -3,6 +3,7 @@ package top.ajasta.AjastaApp.security;
 import top.ajasta.AjastaApp.exceptions.CustomAuthenticationEntryPoint;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +46,44 @@ public class AuthFilter extends OncePerRequestFilter {
 
             }catch(Exception ex){
                 AuthenticationException authenticationException = new BadCredentialsException(ex.getMessage());
+                customAuthenticationEntryPoint.commence(request, response, authenticationException);
+                return;
+            }
+
+            // Validate that the token belongs to the same User-Agent (bound at login time)
+            try {
+                String currentUA = request.getHeader("User-Agent");
+                if (!jwtUtils.isUserAgentValid(token, currentUA)) {
+                    AuthenticationException authenticationException = new BadCredentialsException("Invalid authentication context");
+                    customAuthenticationEntryPoint.commence(request, response, authenticationException);
+                    return;
+                }
+            } catch (Exception ex) {
+                AuthenticationException authenticationException = new BadCredentialsException("Invalid token context");
+                customAuthenticationEntryPoint.commence(request, response, authenticationException);
+                return;
+            }
+
+            // Enforce session cookie (AJASTA_SID) to match token's sid claim to prevent token pasting
+            try {
+                String sidInToken = jwtUtils.getSessionIdFromToken(token);
+                String sidInCookie = null;
+                Cookie[] cookies = request.getCookies();
+                if (cookies != null) {
+                    for (Cookie c : cookies) {
+                        if ("AJASTA_SID".equals(c.getName())) {
+                            sidInCookie = c.getValue();
+                            break;
+                        }
+                    }
+                }
+                if (sidInToken == null || sidInToken.isEmpty() || sidInCookie == null || !sidInToken.equals(sidInCookie)) {
+                    AuthenticationException authenticationException = new BadCredentialsException("Invalid session context");
+                    customAuthenticationEntryPoint.commence(request, response, authenticationException);
+                    return;
+                }
+            } catch (Exception ex) {
+                AuthenticationException authenticationException = new BadCredentialsException("Invalid session");
                 customAuthenticationEntryPoint.commence(request, response, authenticationException);
                 return;
             }

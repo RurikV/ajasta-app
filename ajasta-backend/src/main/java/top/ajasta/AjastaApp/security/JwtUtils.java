@@ -56,6 +56,61 @@ public class JwtUtils {
     private boolean isTokenExpired(String token) {
         return extractClaims(token, Claims::getExpiration).before(new Date());
     }
+
+    // Include user-agent hash claim to bind token to client context
+    public String generateToken(String email, String uaHash) {
+        return Jwts.builder()
+                .subject(email)
+                .issuedAt(new Date(System.currentTimeMillis()))
+                .expiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
+                .claim("ua", uaHash == null ? "" : uaHash)
+                .signWith(key)
+                .compact();
+    }
+
+    // New overload: include both user-agent hash and session id (sid) claim
+    public String generateToken(String email, String uaHash, String sessionId) {
+        return Jwts.builder()
+                .subject(email)
+                .issuedAt(new Date(System.currentTimeMillis()))
+                .expiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
+                .claim("ua", uaHash == null ? "" : uaHash)
+                .claim("sid", sessionId == null ? "" : sessionId)
+                .signWith(key)
+                .compact();
+    }
+
+    public String getUserAgentHashFromToken(String token) {
+        return extractClaims(token, claims -> claims.get("ua", String.class));
+    }
+
+    public String getSessionIdFromToken(String token) {
+        return extractClaims(token, claims -> claims.get("sid", String.class));
+    }
+
+    public boolean isUserAgentValid(String token, String currentUserAgent) {
+        try {
+            String expected = getUserAgentHashFromToken(token);
+            if (expected == null || expected.isEmpty()) return false; // require UA binding
+            String actual = hashUserAgent(currentUserAgent);
+            return expected.equals(actual);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public String hashUserAgent(String ua) {
+        if (ua == null) return "";
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(ua.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
 }
 
 
