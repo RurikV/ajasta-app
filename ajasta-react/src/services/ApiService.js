@@ -9,6 +9,26 @@ export default class ApiService {
     // In-memory cache for roles (never persisted to localStorage)
     static cachedRoles = null;
 
+    // Simple listeners to notify components when roles change
+    static roleListeners = new Set();
+
+    static onRolesChange(callback) {
+        if (typeof callback === 'function') {
+            this.roleListeners.add(callback);
+            return () => this.roleListeners.delete(callback);
+        }
+        return () => {};
+    }
+
+    static emitRolesChange() {
+        try {
+            const roles = this.getRoles();
+            this.roleListeners.forEach(cb => {
+                try { cb(roles); } catch {}
+            });
+        } catch {}
+    }
+
     static saveToken(token) {
         localStorage.setItem("token", token);
     }
@@ -17,14 +37,20 @@ export default class ApiService {
         return localStorage.getItem("token");
     }
 
-    // Save roles in-memory only (do NOT store in localStorage)
+    // Save roles: keep an in-memory cache for fast checks (no localStorage persistence)
     static saveRole(roles) {
         try {
-            if (!roles) { this.cachedRoles = null; return; }
+            if (!roles) {
+                this.cachedRoles = null;
+                this.emitRolesChange();
+                return;
+            }
             const arr = Array.isArray(roles) ? roles : [roles];
             this.cachedRoles = Array.from(new Set(arr.map(r => String(r).replace(/^ROLE_/,'').toUpperCase())));
+            this.emitRolesChange();
         } catch {
             this.cachedRoles = null;
+            this.emitRolesChange();
         }
     }
 
@@ -53,11 +79,17 @@ export default class ApiService {
         }
     }
 
-    // Get roles from token (preferred) or from in-memory cache
+    // Get roles from token (preferred) or in-memory cache
     static getRoles() {
+        // Prefer parsed roles from token if present
         const fromToken = this.parseRolesFromToken();
-        if (fromToken && fromToken.length) return fromToken;
-        return this.cachedRoles || [];
+        if (fromToken && fromToken.length) {
+            this.cachedRoles = fromToken;
+            return fromToken;
+        }
+        // Fall back to in-memory cached roles
+        if (this.cachedRoles && this.cachedRoles.length) return this.cachedRoles;
+        return [];
     }
 
     // Check if the user has a specific role
@@ -78,13 +110,18 @@ export default class ApiService {
         return this.hasRole('CUSTOMER');
     }
 
+    // Check if the user is a resource manager
+    static isResourceManager() {
+        return this.hasRole('RESOURCE_MANAGER');
+    }
+
 
 
     static logout() {
         localStorage.removeItem("token");
-        // Clear any legacy roles key and reset in-memory cache
-        try { localStorage.removeItem("roles"); } catch {}
+        // Reset in-memory cache and notify listeners
         this.cachedRoles = null;
+        this.emitRolesChange();
     }
 
     static isAuthenticated() {
@@ -119,6 +156,27 @@ export default class ApiService {
     static async loginUser(loginData) {
         const resp = await axios.post(`${this.BASE_URL}/auth/login`, loginData);
         return resp.data;
+    }
+
+    // Bootstrap roles securely from backend (in-memory only)
+    static async bootstrapRoles(force = false) {
+        if (!this.isAuthenticated()) {
+            this.saveRole(null);
+            return [];
+        }
+        if (!force) {
+            const existing = this.getRoles();
+            if (existing && existing.length) return existing;
+        }
+        try {
+            const profile = await this.myProfile();
+            const list = (profile?.data?.roles || []).map(r => (r?.name || '').toUpperCase()).filter(Boolean);
+            this.saveRole(list);
+            return list;
+        } catch (e) {
+            this.saveRole([]);
+            return [];
+        }
     }
 
 
