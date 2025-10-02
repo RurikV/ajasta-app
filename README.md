@@ -19,10 +19,10 @@ flowchart LR
     B[Browser]
   end
 
-  B -->|HTTPS/HTTP| N[Nginx (serves React SPA)]
-  N -->|XHR/Fetch /api/*| A[Ajasta Backend (Spring Boot)]
+  B -->|HTTP| N[Nginx (serves React SPA)]
+  N -->|API calls| A[Ajasta Backend (Spring Boot)]
   A -->|JDBC| P[(PostgreSQL)]
-  A -.->|SMTP (dev)| M[Mailhog]
+  A -.->|SMTP dev| M[Mailhog]
   DevTools[[Adminer]] --> P
 
   classDef svc fill:#eef,stroke:#365,stroke-width:1px;
