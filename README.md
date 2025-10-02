@@ -19,9 +19,9 @@ flowchart LR
     B[Browser]
   end
 
-  B -->|HTTP| N[Nginx (serves React SPA)]
-  N -->|API calls| A[Ajasta Backend (Spring Boot)]
-  A -->|JDBC| P[(PostgreSQL)]
+  B -->|HTTP| N[Nginx - serves React SPA]
+  N -->|API calls| A[Ajasta Backend - Spring Boot]
+  A -->|JDBC| P[PostgreSQL]
   A -.->|SMTP dev| M[Mailhog]
   DevTools[[Adminer]] --> P
 
