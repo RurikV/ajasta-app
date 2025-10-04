@@ -57,17 +57,6 @@ public class JwtUtils {
         return extractClaims(token, Claims::getExpiration).before(new Date());
     }
 
-    // Include user-agent hash claim to bind token to client context
-    public String generateToken(String email, String uaHash) {
-        return Jwts.builder()
-                .subject(email)
-                .issuedAt(new Date(System.currentTimeMillis()))
-                .expiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
-                .claim("ua", uaHash == null ? "" : uaHash)
-                .signWith(key)
-                .compact();
-    }
-
     // New overload: include both user-agent hash and session id (sid) claim
     public String generateToken(String email, String uaHash, String sessionId) {
         return Jwts.builder()
