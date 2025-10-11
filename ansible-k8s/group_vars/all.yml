@@ -38,3 +38,14 @@ metadata_yaml: "./scripts/metadata.yaml"
 
 # Paths
 scripts_dir: "./scripts"
+
+# Rancher Dashboard
+install_rancher: true
+rancher_hostname: "rancher.local"
+
+# Kubernetes bootstrap toggles and SSH retry tuning
+# If false, playbook will provision VMs and networks only (no kubeadm, no Rancher)
+bootstrap_k8s: false
+# Tune SSH retry logic used by setup-k8s-cluster.zsh (seconds)
+ssh_retry_attempts: 8
+ssh_retry_delay: 3

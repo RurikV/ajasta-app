@@ -122,6 +122,7 @@ yc compute instance create \
   --zone "$YC_ZONE" \
   --memory=2 \
   --cores=2 \
+  --core-fraction=20 \
   --create-boot-disk image-folder-id=standard-images,image-family=ubuntu-2204-lts,type=network-hdd,size=10 \
   --network-interface subnet-name="$YC_SUBNET_NAME" \
   --serial-port-settings ssh-authorization=INSTANCE_METADATA \

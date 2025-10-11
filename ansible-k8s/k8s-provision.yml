@@ -135,3 +135,70 @@
           - "Master public ({{ master_vm_name }}): {{ master_ip_out.stdout | default('') }}"
           - "Worker1 internal ({{ worker1_vm_name }}): {{ worker1_ip_out.stdout | default('n/a - no public IP') }}"
           - "Worker2 internal ({{ worker2_vm_name }}): {{ worker2_ip_out.stdout | default('n/a - no public IP') }}"
+
+    # --- Bootstrap Kubernetes cluster on the provisioned VMs ---
+    - name: Derive SSH private key candidate from public key
+      ansible.builtin.set_fact:
+        ssh_privkey_guess: "{{ (ssh_key_file_resolved | default('')) | regex_replace('\\.pub$', '') }}"
+
+    - name: Check if derived SSH private key exists
+      ansible.builtin.stat:
+        path: "{{ ssh_privkey_guess }}"
+      register: ssh_privkey_stat
+      when: (ssh_privkey_guess | default('') | length) > 0
+
+    - name: Build optional SSH private key env dict
+      ansible.builtin.set_fact:
+        ssh_privkey_env_optional: "{{ {'SSH_KEY_FILE': ssh_privkey_guess} if (ssh_privkey_stat.stat.exists | default(false)) else {} }}"
+
+    - name: Derive clean master and worker IPs from script output
+      ansible.builtin.set_fact:
+        master_ip_clean: "{{ (master_ip_out.stdout | default('') | regex_findall('\\d+\\.\\d+\\.\\d+\\.\\d+') | last | default('')) }}"
+        worker1_ip_clean: "{{ (worker1_ip_out.stdout | default('') | regex_findall('\\d+\\.\\d+\\.\\d+\\.\\d+') | last | default('')) }}"
+        worker2_ip_clean: "{{ (worker2_ip_out.stdout | default('') | regex_findall('\\d+\\.\\d+\\.\\d+\\.\\d+') | last | default('')) }}"
+
+    - name: Debug resolved IPs
+      ansible.builtin.debug:
+        msg:
+          - "Resolved master IP: {{ master_ip_clean | default('') }}"
+          - "Resolved worker1 IP: {{ worker1_ip_clean | default('') }}"
+          - "Resolved worker2 IP: {{ worker2_ip_clean | default('') }}"
+
+    - name: Prepare worker IP CSV
+      ansible.builtin.set_fact:
+        workers_csv: "{{ [worker1_ip_clean, worker2_ip_clean] | reject('equalto','') | join(',') }}"
+
+    - name: Ensure master IP is available before bootstrap
+      ansible.builtin.assert:
+        that:
+          - (master_ip_clean | length) > 0
+        fail_msg: "Failed to resolve master public IP address from provisioning output. Check previous tasks' logs."
+
+    - name: Bootstrap Kubernetes cluster (kubeadm)
+      ansible.builtin.shell: |
+        zsh {{ scripts_dir }}/setup-k8s-cluster.zsh "{{ master_ip_clean }}" "{{ workers_csv }}"
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'SSH_USERNAME': ssh_username, 'SSH_RETRY_ATTEMPTS': ssh_retry_attempts | string, 'SSH_RETRY_DELAY': ssh_retry_delay | string}) | combine(ssh_privkey_env_optional) }}"
+      register: k8s_bootstrap_out
+      when: bootstrap_k8s | default(false) | bool
+
+    - name: Show cluster bootstrap output (summary)
+      ansible.builtin.debug:
+        var: k8s_bootstrap_out.stdout_lines
+      when: bootstrap_k8s | default(false) | bool
+
+    # --- Optional: Install Rancher Dashboard ---
+    - name: Install Rancher dashboard on cluster
+      ansible.builtin.shell: |
+        zsh {{ scripts_dir }}/install-rancher.zsh "{{ master_ip_clean }}"
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'SSH_USERNAME': ssh_username, 'RANCHER_HOSTNAME': rancher_hostname | default('rancher.local')}) | combine(ssh_privkey_env_optional) }}"
+      register: rancher_install_out
+      when: (bootstrap_k8s | default(false) | bool) and (install_rancher | default(true) | bool)
+
+    - name: Show Rancher installation output
+      ansible.builtin.debug:
+        var: rancher_install_out.stdout_lines
+      when: (bootstrap_k8s | default(false) | bool) and (install_rancher | default(true) | bool)
