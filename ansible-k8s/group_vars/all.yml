@@ -1,0 +1,40 @@
+# Global variables for ansible-k8s playbooks
+
+# Yandex Cloud context
+yc_cloud_id: ""
+yc_folder_id: ""
+yc_zone: "ru-central1-b"
+
+# Networking (external/public not used for workers)
+yc_network_name: "external-ajasta-network"
+yc_subnet_name: "ajasta-external-segment"
+yc_subnet_cidr: "172.16.17.0/28"
+
+# Internal (private) networking for cluster communication
+yc_internal_network_name: "internal-ajasta-network"
+yc_internal_subnet_name: "ajasta-internal-segment"
+yc_internal_subnet_cidr: "10.10.0.0/24"
+
+# Service account
+yc_sa_name: "otus"
+
+# Static IPs
+master_address_name: "ajasta-k8s-master-ip"
+worker1_address_name: "ajasta-k8s-worker1-ip"
+worker2_address_name: "ajasta-k8s-worker2-ip"
+
+# VM names
+master_vm_name: "k8s-master"
+worker1_vm_name: "k8s-worker-1"
+worker2_vm_name: "k8s-worker-2"
+
+# SSH
+ssh_username: "ajasta"
+ssh_pubkey_file: "~/.ssh/id_rsa.pub"
+
+# Metadata (cloud-init)
+# Use the standard metadata from scripts by default
+metadata_yaml: "./scripts/metadata.yaml"
+
+# Paths
+scripts_dir: "./scripts"

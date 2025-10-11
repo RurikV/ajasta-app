@@ -1,3 +1,4 @@
 /.idea/
-/scripts/.tmp-user-data-ajasta-host.yaml
 /.env
+/scripts/.tmp-user-data**.yaml
+/sa-key.json
