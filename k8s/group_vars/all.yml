@@ -1,0 +1,68 @@
+# Global variables for ansible-k8s playbooks
+
+# Yandex Cloud context
+yc_cloud_id: ""
+yc_folder_id: ""
+yc_zone: "ru-central1-b"
+
+# Networking (external/public not used for workers)
+yc_network_name: "external-ajasta-network"
+yc_subnet_name: "ajasta-external-segment"
+yc_subnet_cidr: "172.16.17.0/28"
+
+# Internal (private) networking for cluster communication
+yc_internal_network_name: "internal-ajasta-network"
+yc_internal_subnet_name: "ajasta-internal-segment"
+yc_internal_subnet_cidr: "10.10.0.0/24"
+
+# Service account
+yc_sa_name: "otus"
+
+# Static IPs (one for master, one for worker)
+master_address_name: "ajasta-k8s-master-ip"
+worker1_address_name: "ajasta-k8s-worker1-ip"
+
+# VM names
+master_vm_name: "k8s-master"
+worker1_vm_name: "k8s-worker-1"
+
+# VM Resources (memory in GB, cores as integer)
+# IMPORTANT: 2GB RAM is the absolute minimum for Kubernetes control plane, but it's very tight
+# and often causes API server startup failures due to resource pressure.
+# Recommendation: 4GB for master (stable operation), 3-4GB for workers
+# Cost consideration: While larger VMs cost more per hour, they SAVE money by:
+#   - Reducing failed deployments and manual intervention
+#   - Faster pod startup and better performance
+#   - Avoiding repeated VM recreation due to failures
+master_vm_memory: 4              # GB of RAM for master node (control plane + etcd + API server)
+master_vm_cores: 2               # CPU cores for master node
+worker_vm_memory: 3              # GB of RAM for worker nodes (can be less than master)
+worker_vm_cores: 2               # CPU cores for worker nodes
+
+# SSH
+ssh_username: "ajasta"
+ssh_pubkey_file: "~/.ssh/id_rsa.pub"
+
+# Metadata (cloud-init)
+# Use the standard metadata from scripts by default
+metadata_yaml: "./scripts/metadata.yaml"
+
+# Paths
+scripts_dir: "./scripts"
+
+# Rancher Dashboard
+install_rancher: true
+rancher_hostname: "rancher.local"
+
+# Kubernetes bootstrap toggles and SSH retry tuning
+# If false, playbook will provision VMs and networks only (no kubeadm, no Rancher)
+bootstrap_k8s: true
+# Use role-based bootstrap from ./other-k8s (recommended). Set to false to use legacy script-based bootstrap.
+use_other_k8s: true
+# Tune SSH retry logic used by setup-k8s-cluster.zsh
+ssh_retry_attempts: 20         # Number of retry attempts for SSH connections
+ssh_retry_delay: 6             # Delay in seconds between retry attempts
+ssh_cmd_timeout: 300           # Maximum execution time in seconds for each SSH command (default: 300 = 5 minutes)
+
+# Timeouts
+rancher_install_timeout: 900

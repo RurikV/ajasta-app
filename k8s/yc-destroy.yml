@@ -1,0 +1,78 @@
+---
+- name: Destroy k8s infrastructure in Yandex Cloud
+  hosts: local
+  gather_facts: false
+  vars:
+    env_base:
+      YC_CLOUD_ID: "{{ yc_cloud_id }}"
+      YC_FOLDER_ID: "{{ yc_folder_id }}"
+      YC_ZONE: "{{ yc_zone }}"
+  tasks:
+    - name: Populate YC IDs from environment if not set
+      ansible.builtin.set_fact:
+        yc_cloud_id: "{{ lookup('env','YC_CLOUD_ID') | default('', true) }}"
+        yc_folder_id: "{{ lookup('env','YC_FOLDER_ID') | default('', true) }}"
+      when:
+        - (yc_cloud_id | default('') | length) == 0 or (yc_folder_id | default('') | length) == 0
+
+    - name: Detect YC cloud-id from yc CLI if still not set
+      ansible.builtin.command: yc config get cloud-id
+      register: yc_cloud_id_cmd
+      changed_when: false
+      failed_when: false
+      when: (yc_cloud_id | default('') | length) == 0
+
+    - name: Set yc_cloud_id from yc CLI result
+      ansible.builtin.set_fact:
+        yc_cloud_id: "{{ yc_cloud_id_cmd.stdout | trim }}"
+      when:
+        - (yc_cloud_id | default('') | length) == 0
+        - (yc_cloud_id_cmd.stdout | default('') | trim | length) > 0
+
+    - name: Detect YC folder-id from yc CLI if still not set
+      ansible.builtin.command: yc config get folder-id
+      register: yc_folder_id_cmd
+      changed_when: false
+      failed_when: false
+      when: (yc_folder_id | default('') | length) == 0
+
+    - name: Set yc_folder_id from yc CLI result
+      ansible.builtin.set_fact:
+        yc_folder_id: "{{ yc_folder_id_cmd.stdout | trim }}"
+      when:
+        - (yc_folder_id | default('') | length) == 0
+        - (yc_folder_id_cmd.stdout | default('') | trim | length) > 0
+
+    - name: Validate required vars are set
+      ansible.builtin.assert:
+        that:
+          - yc_cloud_id | length > 0
+          - yc_folder_id | length > 0
+        fail_msg: "yc_cloud_id and yc_folder_id must be provided in group_vars/all.yml or via YC_CLOUD_ID/YC_FOLDER_ID env vars or yc CLI config (yc init)"
+
+    - name: Destroy worker1 static IP address
+      ansible.builtin.shell: |
+        yc vpc address delete {{ worker1_address_name }} --folder-id {{ yc_folder_id }} 2>/dev/null || echo "Address {{ worker1_address_name }} not found or already deleted"
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base }}"
+      failed_when: false
+
+    - name: Destroy all created YC resources (VMs, addresses, network, SA)
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/destroy-all.zsh
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({
+          'ajasta_VM_NAME': master_vm_name,
+          'VM1_NAME': worker1_vm_name,
+          'VM2_NAME': '',
+          'YC_ADDRESS_NAME': master_address_name,
+          'EXT_NET_NAME': yc_network_name,
+          'EXT_SUBNET_NAME': yc_subnet_name,
+          'INT_NET_NAME': yc_internal_network_name,
+          'INT_SUBNET_NAME': yc_internal_subnet_name,
+          'YC_SA_NAME': yc_sa_name,
+          'CLEAN_LOCAL_KEYS': 'false',
+          'CLEAN_SA_KEY': 'true'
+        }) }}"

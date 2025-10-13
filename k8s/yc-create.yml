@@ -1,0 +1,235 @@
+---
+- name: Create k8s infrastructure in Yandex Cloud (1 master + 1 worker)
+  hosts: local
+  gather_facts: false
+  vars:
+    env_base:
+      YC_CLOUD_ID: "{{ yc_cloud_id }}"
+      YC_FOLDER_ID: "{{ yc_folder_id }}"
+      YC_ZONE: "{{ yc_zone }}"
+  tasks:
+    - name: Populate YC IDs from environment if not set
+      ansible.builtin.set_fact:
+        yc_cloud_id: "{{ lookup('env','YC_CLOUD_ID') | default('', true) }}"
+        yc_folder_id: "{{ lookup('env','YC_FOLDER_ID') | default('', true) }}"
+      when:
+        - (yc_cloud_id | default('') | length) == 0 or (yc_folder_id | default('') | length) == 0
+
+    - name: Detect YC cloud-id from yc CLI if still not set
+      ansible.builtin.command: yc config get cloud-id
+      register: yc_cloud_id_cmd
+      changed_when: false
+      failed_when: false
+      when: (yc_cloud_id | default('') | length) == 0
+
+    - name: Set yc_cloud_id from yc CLI result
+      ansible.builtin.set_fact:
+        yc_cloud_id: "{{ yc_cloud_id_cmd.stdout | trim }}"
+      when:
+        - (yc_cloud_id | default('') | length) == 0
+        - (yc_cloud_id_cmd.stdout | default('') | trim | length) > 0
+
+    - name: Detect YC folder-id from yc CLI if still not set
+      ansible.builtin.command: yc config get folder-id
+      register: yc_folder_id_cmd
+      changed_when: false
+      failed_when: false
+      when: (yc_folder_id | default('') | length) == 0
+
+    - name: Set yc_folder_id from yc CLI result
+      ansible.builtin.set_fact:
+        yc_folder_id: "{{ yc_folder_id_cmd.stdout | trim }}"
+      when:
+        - (yc_folder_id | default('') | length) == 0
+        - (yc_folder_id_cmd.stdout | default('') | trim | length) > 0
+
+    - name: Validate required vars are set
+      ansible.builtin.assert:
+        that:
+          - yc_cloud_id | length > 0
+          - yc_folder_id | length > 0
+        fail_msg: "yc_cloud_id and yc_folder_id must be provided in group_vars/all.yml or via YC_CLOUD_ID/YC_FOLDER_ID env vars or yc CLI config (yc init)"
+
+    - name: Ensure external VPC network and subnet exist (for master public IP)
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-network.zsh
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'YC_NETWORK_NAME': yc_network_name, 'YC_SUBNET_NAME': yc_subnet_name, 'YC_SUBNET_RANGE': yc_subnet_cidr}) }}"
+
+    - name: Ensure internal VPC network and subnet exist (private cluster network)
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-network.zsh
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'YC_NETWORK_NAME': yc_internal_network_name, 'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_SUBNET_RANGE': yc_internal_subnet_cidr}) }}"
+
+    - name: Ensure static IP for master exists
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-static-ip.zsh
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'YC_ADDRESS_NAME': master_address_name}) }}"
+
+    - name: Ensure static IP for worker1 exists
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-static-ip.zsh
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'YC_ADDRESS_NAME': worker1_address_name}) }}"
+
+    - name: Ensure service account exists
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-sa.zsh
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'YC_SA_NAME': yc_sa_name}) }}"
+
+    # --- SSH public key auto-detection (only pass if file exists) ---
+    - name: Determine HOME directory
+      ansible.builtin.set_fact:
+        home_dir: "{{ lookup('env','HOME') }}"
+
+    - name: Build SSH key candidate list
+      ansible.builtin.set_fact:
+        ssh_key_candidates:
+          - "{{ ((ssh_pubkey_file | default('') | length) > 0) | ternary(ssh_pubkey_file | replace('~', home_dir), '') }}"
+          - "{{ home_dir }}/.ssh/id_ed25519.pub"
+          - "{{ home_dir }}/.ssh/id_rsa.pub"
+          - "{{ playbook_dir }}/../scripts/ajasta_ed25519.pub"
+
+    - name: Check which SSH key candidate exists
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ ssh_key_candidates | reject('equalto', '') | list }}"
+      register: ssh_key_stats
+
+    - name: Select first existing SSH key
+      ansible.builtin.set_fact:
+        ssh_key_file_resolved: "{{ (ssh_key_stats.results | selectattr('stat.exists') | map(attribute='item') | list | first) | default('') }}"
+
+    - name: Build optional SSH env dict
+      ansible.builtin.set_fact:
+        ssh_env_optional: "{{ {'SSH_PUBKEY_FILE': ssh_key_file_resolved} if (ssh_key_file_resolved | default('') | length) > 0 else {} }}"
+
+    - name: Create/ensure master VM (with static public IP on private subnet)
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-vm-static-ip.zsh {{ master_vm_name }}
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      register: master_ip_out
+      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_ADDRESS_NAME': master_address_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': master_vm_memory | string, 'VM_CORES': master_vm_cores | string}) | combine(ssh_env_optional) }}"
+
+    - name: Create/ensure worker1 VM (with static public IP on private subnet)
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-vm-static-ip.zsh {{ worker1_vm_name }}
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      register: worker1_ip_out
+      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_ADDRESS_NAME': worker1_address_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': worker_vm_memory | string, 'VM_CORES': worker_vm_cores | string}) | combine(ssh_env_optional) }}"
+
+    - name: Show resulting IP addresses
+      ansible.builtin.debug:
+        msg:
+          - "Master public ({{ master_vm_name }}): {{ master_ip_out.stdout | default('') }}"
+          - "Worker1 public ({{ worker1_vm_name }}): {{ worker1_ip_out.stdout | default('') }}"
+
+    # --- Bootstrap Kubernetes cluster on the provisioned VMs ---
+    - name: Derive SSH private key candidate from public key
+      ansible.builtin.set_fact:
+        ssh_privkey_guess: "{{ (ssh_key_file_resolved | default('')) | regex_replace('\\.pub$', '') }}"
+
+    - name: Check if derived SSH private key exists
+      ansible.builtin.stat:
+        path: "{{ ssh_privkey_guess }}"
+      register: ssh_privkey_stat
+      when: (ssh_privkey_guess | default('') | length) > 0
+
+    - name: Build optional SSH private key env dict
+      ansible.builtin.set_fact:
+        ssh_privkey_env_optional: "{{ {'SSH_KEY_FILE': ssh_privkey_guess} if (ssh_privkey_stat.stat.exists | default(false)) else {} }}"
+
+    - name: Derive clean master and worker IPs from script output
+      ansible.builtin.set_fact:
+        master_ip_clean: "{{ (master_ip_out.stdout | default('') | regex_findall('\\d+\\.\\d+\\.\\d+\\.\\d+') | last | default('')) }}"
+        worker1_ip_clean: "{{ (worker1_ip_out.stdout | default('') | regex_findall('\\d+\\.\\d+\\.\\d+\\.\\d+') | last | default('')) }}"
+
+    - name: Debug resolved IPs
+      ansible.builtin.debug:
+        msg:
+          - "Resolved master IP: {{ master_ip_clean | default('') }}"
+          - "Resolved worker1 IP: {{ worker1_ip_clean | default('') }}"
+
+    - name: Prepare worker IP CSV (single worker)
+      ansible.builtin.set_fact:
+        workers_csv: "{{ worker1_ip_clean }}"
+
+    - name: Ensure master IP is available before bootstrap
+      ansible.builtin.assert:
+        that:
+          - (master_ip_clean | length) > 0
+        fail_msg: "Failed to resolve master public IP address from provisioning output. Check previous tasks' logs."
+      when: bootstrap_k8s | default(false) | bool
+
+    - name: Precheck SSH reachability to master (fail fast)
+      ansible.builtin.wait_for:
+        host: "{{ master_ip_clean }}"
+        port: 22
+        timeout: 60
+        sleep: 3
+        state: started
+      when: bootstrap_k8s | default(false) | bool
+      tags: ["bootstrap"]
+
+    - name: Bootstrap Kubernetes cluster (kubeadm)
+      ansible.builtin.shell: |
+        zsh {{ scripts_dir }}/setup-k8s-cluster.zsh "{{ master_ip_clean }}" "{{ workers_csv }}"
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'SSH_USERNAME': ssh_username, 'SSH_RETRY_ATTEMPTS': ssh_retry_attempts | string, 'SSH_RETRY_DELAY': ssh_retry_delay | string, 'SSH_CMD_TIMEOUT': ssh_cmd_timeout | string}) | combine(ssh_privkey_env_optional) }}"
+      async: 7200
+      poll: 15
+      register: k8s_bootstrap_out
+      when: bootstrap_k8s | default(false) | bool
+      tags: ["bootstrap"]
+
+    - name: Show cluster bootstrap output (summary)
+      ansible.builtin.debug:
+        var: k8s_bootstrap_out.stdout_lines
+      when: bootstrap_k8s | default(false) | bool
+
+    # --- Optional: Install Rancher Dashboard ---
+    - name: Install Rancher dashboard on cluster
+      ansible.builtin.shell: |
+        timeout {{ rancher_install_timeout | default(900) }} zsh {{ scripts_dir }}/install-rancher.zsh "{{ master_ip_clean }}"
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'SSH_USERNAME': ssh_username, 'RANCHER_HOSTNAME': rancher_hostname | default('rancher.local')}) | combine(ssh_privkey_env_optional) }}"
+      register: rancher_install_out
+      when: (bootstrap_k8s | default(false) | bool) and (install_rancher | default(true) | bool)
+      tags: ["rancher"]
+
+    - name: Show Rancher installation output
+      ansible.builtin.debug:
+        var: rancher_install_out.stdout_lines
+      when: (bootstrap_k8s | default(false) | bool) and (install_rancher | default(true) | bool)
+
+    # --- Generate inventory file after successful provisioning ---
+    - name: Generate inventory.ini file
+      ansible.builtin.shell: |
+        {{ playbook_dir }}/generate-inventory.sh "{{ master_ip_clean }}" "{{ worker1_ip_clean }}" ""
+      args:
+        chdir: "{{ playbook_dir }}"
+      when: (master_ip_clean | default('') | length) > 0
+      tags: ["inventory"]
+
+    - name: Show completion message
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Kubernetes cluster provisioned successfully!"
+          - "Master IP: {{ master_ip_clean }}"
+          - "Worker1 IP: {{ worker1_ip_clean }}"
+          - "Inventory file: {{ playbook_dir }}/inventory.ini"
+          - "=========================================="
+      when: (master_ip_clean | default('') | length) > 0
