@@ -4,6 +4,7 @@ Overview
 - Creates one master VM and two worker VMs in Yandex Cloud
 - Master gets a static public IP; workers have no public IPs and live on a private subnet shared with master
 - Uses existing project scripts in ./scripts for idempotent provisioning
+- Uses CentOS Stream 9 images (centos-stream-9-oslogin family) for all VMs; the bootstrap script supports RHEL-based systems (CentOS 9) and Debian/Ubuntu.
 - Bootstraps a Kubernetes cluster (kubeadm) automatically: initializes control plane and joins both workers
 - Provides a destroy playbook to remove all created resources
 
@@ -67,16 +68,43 @@ Quick toggle (no more long wait):
   bootstrap_k8s: false  # default; only infra + VMs created
   install_rancher: false # recommended to avoid extra time until cluster is ready
 
+Role-based bootstrap (default):
+- By default we reuse the working roles from ../other-k8s, so cluster setup runs as regular Ansible roles with clear per-task output (no ASYNC POLL spam).
+- The playbooks dynamically add the provisioned VMs to a transient `k8s` group and import ../other-k8s/playbook.yml.
+- Workers are reached via SSH ProxyJump through the master automatically.
+- Toggle with use_other_k8s in group_vars/all.yml (default: true).
+- Note: We locally override only the `system_checks` role under ansible-k8s/roles to avoid external collection dependencies (community.general, ansible.posix). This keeps ./other-k8s untouched while ensuring the playbook runs without extra collection installs.
+
+Legacy script-based bootstrap (optional):
+- If you prefer the single shell script approach, set use_other_k8s: false. It will run scripts/setup-k8s-cluster.zsh.
+- This path still supports async execution and SSH retry tunables; you can adjust ssh_retry_attempts, ssh_retry_delay, and ssh_cmd_timeout in group_vars/all.yml.
+
 Enable cluster bootstrap later (faster and controlled):
-1) Provision infra and VMs first (default behavior):
+1) Provision infra and VMs first (default behavior — bootstrap disabled):
    ansible-playbook -i ansible-k8s/inventory.ini ansible-k8s/k8s-provision.yml
-2) When ready, enable bootstrap and (optionally) Rancher:
-   - Set bootstrap_k8s: true
+2) When ready, bootstrap the cluster using a dedicated playbook (recommended):
+   ansible-playbook -i ansible-k8s/inventory.ini ansible-k8s/k8s-bootstrap.yml
+   
+   You can also run specific parts via tags:
+   - Only kubeadm bootstrap:  ansible-playbook -i ansible-k8s/inventory.ini ansible-k8s/k8s-bootstrap.yml --tags bootstrap
+   - Only Rancher install:   ansible-playbook -i ansible-k8s/inventory.ini ansible-k8s/k8s-bootstrap.yml --tags rancher
+
+3) Alternatively, re-enable in main provision (not recommended for speed):
+   - Set bootstrap_k8s: true in ansible-k8s/group_vars/all.yml
    - Optionally set install_rancher: true
-   - Optionally tune retries:
-       ssh_retry_attempts: 8
-       ssh_retry_delay: 3
-   - Run the provision playbook again; it will only run the bootstrap and Rancher steps.
+   - Optionally tune SSH timeout and retry parameters (in group_vars/all.yml):
+       ssh_retry_attempts: 20   # Number of SSH connection retry attempts (default: 20)
+       ssh_retry_delay: 6       # Delay in seconds between retries (default: 6)
+       ssh_cmd_timeout: 300     # Max execution time per SSH command in seconds (default: 300 = 5 minutes)
+   - Run the provision playbook again; it will only run the bootstrap and Rancher steps (tagged).
+
+SSH timeout protection:
+The bootstrap script includes timeout protection to prevent indefinite hanging:
+- Connection timeout: 10 seconds to establish SSH connection
+- Keepalive: SSH connections send keepalive packets every 5 seconds (3 attempts = 15s total before declaring connection dead)
+- Command timeout: Each SSH command (package installation, kubeadm operations) has a maximum execution time (default: 5 minutes)
+- If operations legitimately need more time (slow network, large downloads), increase ssh_cmd_timeout in group_vars/all.yml
+- The script will retry failed operations up to ssh_retry_attempts times with ssh_retry_delay seconds between attempts
 
 Why was a bastion used?
 - Workers have no public IPs by design (to save costs and increase security), so they are reachable only from the master over the private subnet. The master’s public IP acts as a bastion for SSH ProxyCommand to reach workers without exposing them to the Internet.

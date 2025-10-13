@@ -1,0 +1,141 @@
+---
+# Ensure containerd's CRI plugin is ready before kubeadm_init runs.
+# This role makes no assumptions about external collections and uses only ansible.builtin.
+
+- name: Wait for containerd socket to appear
+  ansible.builtin.wait_for:
+    path: /run/containerd/containerd.sock
+    timeout: 120
+  register: containerd_sock_wait
+  failed_when: false
+
+- name: Check if ctr is available
+  ansible.builtin.command: command -v ctr
+  register: ctr_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Check if crictl is available
+  ansible.builtin.command: command -v crictl
+  register: crictl_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Check if CRI plugin is reported by ctr (best-effort)
+  ansible.builtin.shell: |
+    set -o pipefail
+    ctr plugins ls -q 2>/dev/null | grep -q '^io.containerd.grpc.v1.cri$'
+  args:
+    executable: /bin/bash
+  register: cri_plugin_present
+  changed_when: false
+  failed_when: false
+  when: ctr_cmd.rc == 0
+
+- name: Ensure containerd config exists (generate default if missing)
+  when: cri_plugin_present.rc is defined and cri_plugin_present.rc != 0
+  block:
+    - name: Stat containerd config
+      ansible.builtin.stat:
+        path: /etc/containerd/config.toml
+      register: containerd_cfg
+
+    - name: Create default containerd config.toml
+      ansible.builtin.shell: |
+        set -euo pipefail
+        mkdir -p /etc/containerd
+        containerd config default > /etc/containerd/config.toml
+      args:
+        executable: /bin/bash
+      when: not containerd_cfg.stat.exists
+
+    - name: Enforce SystemdCgroup = true in containerd config
+      ansible.builtin.replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup\s*=\s*false'
+        replace: 'SystemdCgroup = true'
+      register: systemdcgroup_patch
+
+    - name: Ensure disabled_plugins does not disable CRI
+      ansible.builtin.lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '^disabled_plugins\s*=.*'
+        line: 'disabled_plugins = []'
+        backrefs: false
+      register: disabled_plugins_patch
+
+    - name: Restart containerd to pick up config changes or when CRI plugin missing
+      ansible.builtin.service:
+        name: containerd
+        state: restarted
+      when: systemdcgroup_patch is changed or disabled_plugins_patch.changed or (cri_plugin_present.rc is defined and cri_plugin_present.rc != 0)
+
+    - name: Wait for containerd socket after restart
+      ansible.builtin.wait_for:
+        path: /run/containerd/containerd.sock
+        timeout: 120
+
+- name: Best-effort install crictl (cri-tools) via dnf/apt
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if command -v crictl >/dev/null 2>&1; then exit 0; fi
+    if command -v dnf >/dev/null 2>&1; then
+      dnf -y install cri-tools || true
+    elif command -v yum >/dev/null 2>&1; then
+      yum -y install cri-tools || true
+    elif command -v apt-get >/dev/null 2>&1; then
+      apt-get update -y || true
+      apt-get install -y cri-tools || true
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+
+- name: Check if crictl is available after package attempt
+  ansible.builtin.command: command -v crictl
+  register: crictl_present_after_pkg
+  changed_when: false
+  failed_when: false
+
+- name: Compute crictl architecture suffix
+  ansible.builtin.set_fact:
+    crictl_arch: "{{ crictl_arch_map.get(ansible_architecture | default('x86_64'), 'amd64') }}"
+  when: crictl_present_after_pkg.rc != 0
+
+- name: Download crictl static tarball if still missing
+  ansible.builtin.get_url:
+    url: "https://github.com/kubernetes-sigs/cri-tools/releases/download/v{{ crictl_version }}/crictl-v{{ crictl_version }}-linux-{{ crictl_arch | default('amd64') }}.tar.gz"
+    dest: "/tmp/crictl-v{{ crictl_version }}-linux-{{ crictl_arch | default('amd64') }}.tar.gz"
+    mode: '0644'
+  when: crictl_present_after_pkg.rc != 0
+
+- name: Install crictl to /usr/local/bin
+  ansible.builtin.unarchive:
+    src: "/tmp/crictl-v{{ crictl_version }}-linux-{{ crictl_arch | default('amd64') }}.tar.gz"
+    dest: /usr/local/bin/
+    remote_src: true
+    mode: '0755'
+  when: crictl_present_after_pkg.rc != 0
+
+- name: Verify crictl now available
+  ansible.builtin.command: command -v crictl
+  register: crictl_present_final
+  changed_when: false
+  failed_when: false
+
+- name: Verify CRI is ready (prefer crictl; fallback to ctr plugin) with retries
+  ansible.builtin.shell: |
+    set -o pipefail
+    if command -v crictl >/dev/null 2>&1; then
+      crictl --runtime-endpoint={{ cri_runtime_endpoint }} info >/dev/null 2>&1
+    else
+      ctr plugins ls -q 2>/dev/null | grep -q '^io.containerd.grpc.v1.cri$'
+    fi
+  args:
+    executable: /bin/bash
+  register: cri_ready_check
+  changed_when: false
+  retries: 40
+  delay: 3
+  until: cri_ready_check.rc == 0

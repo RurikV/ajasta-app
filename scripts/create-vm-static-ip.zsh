@@ -8,6 +8,8 @@
 #   METADATA_YAML (default: ./metadata.yaml)
 #   SSH_USERNAME (optional; if set with a pubkey, authorizes this user; default: ubuntu)
 #   SSH_PUBKEY_FILE or SSH_PUBKEY (optional; path or content of public key)
+#   VM_MEMORY (default: 4) - Memory in GB for the VM
+#   VM_CORES (default: 2) - CPU cores for the VM
 
 set -euo pipefail
 SCRIPT_DIR=$(cd -- "${0:A:h}" && pwd)
@@ -24,6 +26,8 @@ YC_SUBNET_NAME=${YC_SUBNET_NAME:-ajasta-external-segment}
 YC_ADDRESS_NAME=${YC_ADDRESS_NAME:-ajasta-static-ip}
 METADATA_YAML=${METADATA_YAML:-./metadata.yaml}
 SSH_USERNAME=${SSH_USERNAME:-ajasta}
+VM_MEMORY=${VM_MEMORY:-4}
+VM_CORES=${VM_CORES:-2}
 
 if [ ! -f "$METADATA_YAML" ]; then
   log "Metadata file '$METADATA_YAML' not found" >&2
@@ -73,16 +77,17 @@ elif [ -n "${SSH_PUBKEY_FILE:-}" ] || [ -n "${SSH_PUBKEY:-}" ]; then
   cat > "$TEMP_USER_DATA" <<EOF
 #cloud-config
 users:
-  - name: ubuntu
-    groups: sudo
-    shell: /bin/bash
-    sudo: ['ALL=(ALL) NOPASSWD:ALL']
   - name: ${SSH_USERNAME}
-    groups: sudo
+    groups: [wheel, sudo]
     shell: /bin/bash
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
     ssh_authorized_keys:
       - ${PUBKEY_CONTENT}
+write_files:
+  - path: /etc/sudoers.d/90-${SSH_USERNAME}
+    content: '${SSH_USERNAME} ALL=(ALL) NOPASSWD:ALL'
+    owner: root:root
+    permissions: '0440'
 EOF
   SSH_META_ARGS=( --metadata "ssh-keys=${SSH_USERNAME}:${PUBKEY_CONTENT}" )
   log "Will seed cloud-init authorized_keys and instance metadata for user '${SSH_USERNAME}'."
@@ -134,16 +139,16 @@ else
   log "Created static IP: $STATIC_IP_ADDRESS (ID: $STATIC_IP_ID)"
 fi
 
-log "Creating VM '$vm_name' using static IP $STATIC_IP_ADDRESS..."
+log "Creating VM '$vm_name' using static IP $STATIC_IP_ADDRESS (Memory: ${VM_MEMORY}GB, Cores: ${VM_CORES})..."
 yc compute instance create \
   --preemptible \
   --name "$vm_name" \
   --hostname "$vm_name" \
   --zone "$YC_ZONE" \
-  --memory=2 \
-  --cores=2 \
+  --memory="$VM_MEMORY" \
+  --cores="$VM_CORES" \
   --core-fraction=20 \
-  --create-boot-disk image-folder-id=standard-images,image-family=ubuntu-2204-lts,type=network-hdd,size=10 \
+  --create-boot-disk image-folder-id=standard-images,image-family=centos-stream-9-oslogin,type=network-hdd,size=10 \
   --network-interface subnet-name="$YC_SUBNET_NAME",nat-ip-version=ipv4,nat-address="$STATIC_IP_ADDRESS" \
   --serial-port-settings ssh-authorization=INSTANCE_METADATA \
   --metadata-from-file user-data="${TEMP_USER_DATA:-$METADATA_YAML}" \

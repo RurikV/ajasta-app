@@ -1,0 +1,32 @@
+---
+# Ports verification role override: gracefully handle absence of firewalld
+
+- name: Check for firewall-cmd availability
+  ansible.builtin.command: command -v firewall-cmd
+  register: firewall_cmd_check
+  changed_when: false
+  failed_when: false
+
+- name: Get runtime open ports from firewalld
+  ansible.builtin.command: firewall-cmd --list-ports
+  register: firewall_runtime_ports
+  changed_when: false
+  when: firewall_cmd_check.rc == 0
+
+- name: Get permanent open ports from firewalld
+  ansible.builtin.command: firewall-cmd --permanent --list-ports
+  register: firewall_permanent_ports
+  changed_when: false
+  when: firewall_cmd_check.rc == 0
+
+- name: Show firewalld open ports (if available)
+  ansible.builtin.debug:
+    msg:
+      - "firewalld runtime ports: {{ firewall_runtime_ports.stdout | default('') }}"
+      - "firewalld permanent ports: {{ firewall_permanent_ports.stdout | default('') }}"
+  when: firewall_cmd_check.rc == 0
+
+- name: Firewalld not installed - skipping ports verification
+  ansible.builtin.debug:
+    msg: "firewall-cmd not found; skipping ports verification role (firewalld not installed)."
+  when: firewall_cmd_check.rc != 0

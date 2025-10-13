@@ -7,6 +7,8 @@
 #   METADATA_YAML (default: ./metadata.yaml)
 #   SSH_USERNAME (optional; if set with a pubkey, authorizes this user; default: ubuntu)
 #   SSH_PUBKEY_FILE or SSH_PUBKEY (optional; path or content of public key)
+#   VM_MEMORY (default: 3) - Memory in GB for the VM
+#   VM_CORES (default: 2) - CPU cores for the VM
 #
 # Notes:
 # - Reuses helper functions from yc-common.zsh
@@ -27,6 +29,8 @@ vm_name="$1"
 YC_SUBNET_NAME=${YC_SUBNET_NAME:-}
 METADATA_YAML=${METADATA_YAML:-./metadata.yaml}
 SSH_USERNAME=${SSH_USERNAME:-ajasta}
+VM_MEMORY=${VM_MEMORY:-3}
+VM_CORES=${VM_CORES:-2}
 
 if [ -z "$YC_SUBNET_NAME" ]; then
   log "YC_SUBNET_NAME must be provided via environment" >&2
@@ -76,16 +80,17 @@ elif [ -n "${SSH_PUBKEY_FILE:-}" ] || [ -n "${SSH_PUBKEY:-}" ]; then
   cat > "$TEMP_USER_DATA" <<EOF
 #cloud-config
 users:
-  - name: ubuntu
-    groups: sudo
-    shell: /bin/bash
-    sudo: ['ALL=(ALL) NOPASSWD:ALL']
   - name: ${SSH_USERNAME}
-    groups: sudo
+    groups: [wheel, sudo]
     shell: /bin/bash
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
     ssh_authorized_keys:
       - ${PUBKEY_CONTENT}
+write_files:
+  - path: /etc/sudoers.d/90-${SSH_USERNAME}
+    content: '${SSH_USERNAME} ALL=(ALL) NOPASSWD:ALL'
+    owner: root:root
+    permissions: '0440'
 EOF
   SSH_META_ARGS=( --metadata "ssh-keys=${SSH_USERNAME}:${PUBKEY_CONTENT}" )
   log "Will seed cloud-init authorized_keys and instance metadata for user '${SSH_USERNAME}'."
@@ -114,16 +119,16 @@ else
   log "Instance '$vm_name' does not exist. Will create new VM."
 fi
 
-log "Creating VM '$vm_name' without public IP on subnet '$YC_SUBNET_NAME'..."
+log "Creating VM '$vm_name' without public IP on subnet '$YC_SUBNET_NAME' (Memory: ${VM_MEMORY}GB, Cores: ${VM_CORES})..."
 yc compute instance create \
   --preemptible \
   --name "$vm_name" \
   --hostname "$vm_name" \
   --zone "$YC_ZONE" \
-  --memory=2 \
-  --cores=2 \
+  --memory="$VM_MEMORY" \
+  --cores="$VM_CORES" \
   --core-fraction=20 \
-  --create-boot-disk image-folder-id=standard-images,image-family=ubuntu-2204-lts,type=network-hdd,size=10 \
+  --create-boot-disk image-folder-id=standard-images,image-family=centos-stream-9-oslogin,type=network-hdd,size=10 \
   --network-interface subnet-name="$YC_SUBNET_NAME" \
   --serial-port-settings ssh-authorization=INSTANCE_METADATA \
   --metadata-from-file user-data="${TEMP_USER_DATA:-$METADATA_YAML}" \

@@ -1,0 +1,392 @@
+---
+# Local override of other-k8s registry role
+# Changes vs upstream:
+# - Do NOT fail when nerdctl is initially missing. Instead, ensure it is installed
+#   (via package manager if available; otherwise download static binary from GitHub).
+# - If nerdctl still cannot be installed, WARN and skip the registry setup instead of failing the play.
+# - Keep the rest of the behavior identical (ensure registry container, helper scripts, optional image push).
+
+- name: Wait for containerd socket
+  ansible.builtin.wait_for:
+    path: /run/containerd/containerd.sock
+    timeout: 60
+
+- name: Ensure jq is installed (for JSON parsing)
+  ansible.builtin.package:
+    name: jq
+    state: present
+
+- name: Ensure curl is installed (for registry API checks)
+  ansible.builtin.package:
+    name: curl
+    state: present
+
+# Try to install nerdctl from OS packages first (non-fatal)
+- name: Attempt to install nerdctl via dnf (RHEL/CentOS/Fedora)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if command -v dnf >/dev/null 2>&1; then
+      dnf -y install nerdctl || true
+    elif command -v yum >/dev/null 2>&1; then
+      yum -y install nerdctl || true
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+
+- name: Attempt to install nerdctl via apt (Debian/Ubuntu)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if command -v apt-get >/dev/null 2>&1; then
+      apt-get update -y || true
+      apt-get install -y nerdctl || true
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+
+- name: Check if nerdctl is available (after package attempts)
+  ansible.builtin.shell: command -v nerdctl >/dev/null 2>&1
+  register: nerdctl_present
+  changed_when: false
+  failed_when: false
+
+- name: Compute nerdctl architecture suffix
+  ansible.builtin.set_fact:
+    nerdctl_arch: "{{ nerdctl_arch_map.get(ansible_architecture | default('x86_64'), 'amd64') }}"
+  when: nerdctl_present.rc != 0
+
+- name: Download nerdctl static binary if still missing
+  ansible.builtin.get_url:
+    url: "https://github.com/containerd/nerdctl/releases/download/v{{ nerdctl_version }}/nerdctl-{{ nerdctl_version }}-linux-{{ nerdctl_arch | default('amd64') }}.tar.gz"
+    dest: "/tmp/nerdctl-{{ nerdctl_version }}-linux-{{ nerdctl_arch | default('amd64') }}.tar.gz"
+    mode: '0644'
+  when: nerdctl_present.rc != 0
+
+- name: Install nerdctl to /usr/local/bin
+  ansible.builtin.unarchive:
+    src: "/tmp/nerdctl-{{ nerdctl_version }}-linux-{{ nerdctl_arch | default('amd64') }}.tar.gz"
+    dest: /usr/local/bin/
+    remote_src: true
+    mode: '0755'
+  when: nerdctl_present.rc != 0
+
+- name: Verify nerdctl now available
+  ansible.builtin.shell: command -v nerdctl >/dev/null 2>&1
+  register: nerdctl_present_final
+  changed_when: false
+  failed_when: false
+
+- name: Warn and skip registry setup because nerdctl is unavailable
+  ansible.builtin.debug:
+    msg: "Skipping local registry setup: nerdctl could not be installed (package repos or GitHub may be unreachable). Continuing without registry."
+  when: nerdctl_present_final.rc != 0
+
+- block:
+    - name: Check if registry container exists
+      ansible.builtin.command: "nerdctl container inspect {{ registry_name }}"
+      register: registry_inspect
+      changed_when: false
+      failed_when: false
+
+    - name: Start registry container if it exists but is not running
+      ansible.builtin.shell: |
+        set -euo pipefail
+        STATUS=$(nerdctl inspect {{ registry_name }} | jq -r '.[0].State.Status // empty')
+        if [ "${STATUS}" != "running" ]; then
+          nerdctl start {{ registry_name }} && echo started
+        fi
+      args:
+        executable: /bin/bash
+      register: registry_start
+      changed_when: "'started' in registry_start.stdout"
+      when: registry_inspect.rc == 0
+      failed_when: false
+
+    - name: Create and start registry container if it does not exist
+      ansible.builtin.command: "nerdctl run -d --restart=always --name {{ registry_name }} -p {{ registry_port }}:5000 {{ registry_image }}"
+      register: registry_run
+      changed_when: true
+      failed_when: false
+      when: registry_inspect.rc != 0
+
+    - name: Detect registry IP (unknown-eth0 preferred, fallback to first network)
+      ansible.builtin.shell: |
+        set -eo pipefail
+        IP=$(nerdctl inspect {{ registry_name }} | jq -r '.[].NetworkSettings.Networks["unknown-eth0"].IPAddress // empty')
+        if [ -z "$IP" ] || [ "$IP" = "null" ]; then
+          IP=$(nerdctl inspect {{ registry_name }} | jq -r '.[0].NetworkSettings.Networks | to_entries | .[0].value.IPAddress // empty')
+        fi
+        echo "$IP"
+      args:
+        executable: /bin/bash
+      register: registry_ip_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: Evaluate registry container compliance (running, restart=always, port 5000 bound, correct image)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if ! nerdctl inspect {{ registry_name }} >/dev/null 2>&1; then
+          echo compliant
+          exit 0
+        fi
+        JSON=$(nerdctl inspect {{ registry_name }})
+        STATUS=$(echo "$JSON" | jq -r '.[0].State.Status // empty')
+        IMAGE=$(echo "$JSON" | jq -r '.[0].Config.Image // empty')
+        RESTART=$(echo "$JSON" | jq -r '.[0].HostConfig.RestartPolicy.Name // empty')
+        PORT5000=$(echo "$JSON" | jq -r '.[0].HostConfig.PortBindings["5000/tcp"][0].HostPort // empty')
+        NEED=""
+        if [ "$STATUS" != "running" ]; then NEED=1; fi
+        if [ "$RESTART" != "always" ]; then NEED=1; fi
+        if [ "$PORT5000" != "5000" ]; then NEED=1; fi
+        if [ "$IMAGE" != "{{ registry_image }}" ]; then NEED=1; fi
+        if [ -n "$NEED" ]; then echo recreate; else echo compliant; fi
+      args:
+        executable: /bin/bash
+      register: registry_compliance
+      changed_when: false
+      failed_when: false
+
+    - name: Recreate registry container to enforce desired configuration
+    
+      block:
+        - name: Stop and remove existing registry container
+          ansible.builtin.shell: |
+            nerdctl rm -f {{ registry_name }} >/dev/null 2>&1 || true
+          changed_when: true
+
+        - name: Create and start registry container with desired settings
+          ansible.builtin.command: "nerdctl run -d --restart=always --name {{ registry_name }} -p {{ registry_port }}:5000 {{ registry_image }}"
+          register: registry_recreate_run
+          changed_when: true
+          failed_when: false
+      when: registry_compliance.stdout == 'recreate'
+
+    - name: Detect registry IP (unknown-eth0 preferred, fallback to first network)
+      ansible.builtin.shell: |
+        set -eo pipefail
+        IP=$(nerdctl inspect {{ registry_name }} | jq -r '.[].NetworkSettings.Networks["unknown-eth0"].IPAddress // empty')
+        if [ -z "$IP" ] || [ "$IP" = "null" ]; then
+          IP=$(nerdctl inspect {{ registry_name }} | jq -r '.[0].NetworkSettings.Networks | to_entries | .[0].value.IPAddress // empty')
+        fi
+        echo "$IP"
+      args:
+        executable: /bin/bash
+      register: registry_ip_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: Set detected registry IP fact
+      ansible.builtin.set_fact:
+        registry_ip: "{{ registry_ip_cmd.stdout | default('') }}"
+
+    - name: Display detected registry IP
+      ansible.builtin.debug:
+        msg: "Registry IP: {{ registry_ip }}"
+
+    - name: Install registry-ip helper script
+      ansible.builtin.copy:
+        dest: /usr/local/bin/registry-ip
+        mode: '0755'
+        owner: root
+        group: root
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          # Prints the IP address of the local nerdctl registry container
+          # Falls back to 127.0.0.1 if the registry port is bound only on localhost
+          NAME="${1:-registry}"
+          if command -v nerdctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+            IP=$(nerdctl inspect "$NAME" 2>/dev/null | jq -r '.[].NetworkSettings.Networks["unknown-eth0"].IPAddress // empty')
+            if [[ -z "$IP" || "$IP" == "null" ]]; then
+              IP=$(nerdctl inspect "$NAME" 2>/dev/null | jq -r '.[0].NetworkSettings.Networks | to_entries | .[0].value.IPAddress // empty')
+            fi
+            if [[ -n "$IP" && "$IP" != "null" ]]; then
+              echo "$IP"
+              exit 0
+            fi
+          fi
+          # Fallback heuristic: if port 5000 listens on 0.0.0.0, use the node's primary IP
+          if command -v ss >/dev/null 2>&1 && ss -tlnH | awk '{print $4}' | grep -qE '^(0\.0\.0\.0|::):5000$'; then
+            # Try to detect default route IP
+            if command -v ip >/dev/null 2>&1; then
+              ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
+              exit 0
+            fi
+          fi
+          # As last resort, use localhost
+          echo 127.0.0.1
+
+    - name: Install registry status script
+      ansible.builtin.copy:
+        dest: /usr/local/bin/registry-status.sh
+        mode: '0755'
+        owner: root
+        group: root
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          echo "=== Registry Service Status Check ==="
+
+          KUBECONFIG_PATH="${KUBECONFIG:-%KCFG%}"
+
+          echo "1. Kubernetes Registry Services:"
+          if command -v kubectl >/dev/null 2>&1; then
+            kubectl --kubeconfig="$KUBECONFIG_PATH" get services --all-namespaces | grep -i registry || echo "   No registry services found"
+          else
+            echo "   kubectl not found"
+          fi
+
+          echo -e "\n2. Registry Pods/Deployments:"
+          if command -v kubectl >/dev/null 2>&1; then
+            kubectl --kubeconfig="$KUBECONFIG_PATH" get pods,deployments --all-namespaces | grep -i registry || echo "   No registry pods found"
+          else
+            echo "   kubectl not found"
+          fi
+
+          echo -e "\n3. Registry Processes:"
+          ps aux | grep -E '(registry|harbor)' | grep -v grep || echo "   No registry processes found"
+
+          echo -e "\n4. Registry Ports (5000, 5001, 8080, 8443):"
+          if command -v ss >/dev/null 2>&1; then
+            ss -tlnp | grep -E ':(5000|5001|8080|8443)' || echo "   No registry ports listening"
+          else
+            netstat -tlnp | grep -E ':(5000|5001|8080|8443)' || echo "   No registry ports listening"
+          fi
+
+          echo -e "\n5. Registry Accessibility Test:"
+          curl -f -s http://localhost:5000/v2/ && echo "   ✅ localhost:5000 accessible" || echo "   ❌ localhost:5000 not accessible"
+
+          if command -v nerdctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+            IP=$(nerdctl inspect %RNAME% | jq -r '.[]."NetworkSettings"."Networks"."unknown-eth0"."IPAddress"')
+            if [[ -z "$IP" || "$IP" == "null" ]]; then
+              IP=$(nerdctl inspect %RNAME% | jq -r '.[0].NetworkSettings.Networks | to_entries | .[0].value.IPAddress')
+            fi
+            if [[ -n "$IP" && "$IP" != "null" ]]; then
+              curl -f -s "http://$IP:5000/v2/" && echo "   ✅ $IP:5000 accessible" || echo "   ❌ $IP:5000 not accessible"
+            else
+              echo "   (No container IP detected)"
+            fi
+          else
+            echo "   (nerdctl/jq not available to detect container IP)"
+          fi
+
+          echo -e "\n=== End Check ==="
+
+    - name: Install push-to-local-registry helper
+      ansible.builtin.copy:
+        dest: /usr/local/bin/push-to-local-registry
+        mode: '0755'
+        owner: root
+        group: root
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          # Usage: push-to-local-registry [IMAGE[:TAG]]
+          # Default: price-fetcher-service:latest
+          IMG="${1:-price-fetcher-service:latest}"
+          if ! command -v buildah >/dev/null 2>&1; then
+            echo "buildah is required but not found in PATH" >&2
+            exit 1
+          fi
+          if ! command -v registry-ip >/dev/null 2>&1; then
+            echo "registry-ip helper is required but not found (expected at /usr/local/bin/registry-ip)" >&2
+            exit 1
+          fi
+          # Resolve provided image to an actual local reference if necessary
+          SRC="$IMG"
+          if ! buildah inspect "$SRC" >/dev/null 2>&1; then
+            MAP=$(buildah images --format '{{"{{"}}.Name{{"}}"}}:{{"{{"}}.Tag{{"}}"}}')
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              short="${line##*/}"
+              if [ "$short" = "$IMG" ]; then
+                SRC="$line"
+                break
+              fi
+            done <<< "$MAP"
+          fi
+          if ! buildah inspect "$SRC" >/dev/null 2>&1; then
+            echo "Image '$IMG' not found locally (resolved source '$SRC')." >&2
+            exit 2
+          fi
+          IP=$(registry-ip)
+          NAME="${IMG##*/}"
+          echo "Pushing $SRC to docker://$IP:5000/$NAME (TLS verify disabled)"
+          exec buildah push --tls-verify=false "$SRC" "docker://$IP:5000/$NAME"
+
+    - name: Replace placeholders in installed script (portable variable substitution)
+      ansible.builtin.replace:
+        path: /usr/local/bin/registry-status.sh
+        regexp: '%KCFG%'
+        replace: '{{ registry_kubeconfig }}'
+
+    - name: Replace container name placeholder in installed script
+      ansible.builtin.replace:
+        path: /usr/local/bin/registry-status.sh
+        regexp: '%RNAME%'
+        replace: '{{ registry_name }}'
+
+    # Auto-push selected images to the local registry (if present locally)
+    - name: Check if buildah is available
+      ansible.builtin.shell: command -v buildah >/dev/null 2>&1
+      register: buildah_present
+      changed_when: false
+      failed_when: false
+
+    - name: Gather local images list (name:tag)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        buildah images --format '{{"{{"}}.Name{{"}}"}}:{{"{{"}}.Tag{{"}}"}}' | sort -u
+      args:
+        executable: /bin/bash
+      register: local_images
+      changed_when: false
+      failed_when: false
+      when: buildah_present.rc == 0
+
+    - name: Build short-name list of local images (strip registry/repo prefixes)
+      ansible.builtin.set_fact:
+        local_images_short: "{{ (local_images.stdout_lines | default([])) | map('regex_replace','^.*/','') | list }}"
+      when: buildah_present.rc == 0
+
+    - name: Check if images exist in local registry
+      ansible.builtin.shell: |
+        set -euo pipefail
+        IMG="{{ item }}"
+        NAME="${IMG%%:*}"
+        TAG="${IMG##*:}"
+        if [[ "$NAME" == "$TAG" ]]; then TAG="latest"; fi
+        if curl -fsS -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' "http://localhost:5000/v2/${NAME}/manifests/${TAG}" >/dev/null; then
+          echo present
+        else
+          echo missing
+        fi
+      args:
+        executable: /bin/bash
+      register: image_registry_presence
+      changed_when: false
+      failed_when: false
+      when:
+        - buildah_present.rc == 0
+      loop: "{{ registry_push_images | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Push images to local registry using helper
+      ansible.builtin.shell: "/usr/local/bin/push-to-local-registry {{ item }}"
+      args:
+        executable: /bin/bash
+      register: push_result
+      changed_when: "'Pushing ' in push_result.stdout"
+      failed_when: false
+      when:
+        - buildah_present.rc == 0
+        - (image_registry_presence.results | selectattr('item','equalto', item) | map(attribute='stdout') | first | default('missing')) == 'missing'
+      loop: "{{ registry_push_images | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+  when: nerdctl_present_final.rc == 0

@@ -2,3 +2,4 @@
 /.env
 /scripts/.tmp-user-data**.yaml
 /sa-key.json
+/other-k8s/

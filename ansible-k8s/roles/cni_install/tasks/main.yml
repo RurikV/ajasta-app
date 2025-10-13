@@ -1,0 +1,76 @@
+---
+# Install a simple CNI (Flannel) and make the cluster schedulable on a single control-plane node.
+# This role runs on all k8s hosts but only performs actions on the master.
+
+- name: Determine kubeconfig path (prefer admin.conf)
+  ansible.builtin.set_fact:
+    cni_kubeconfig: "/etc/kubernetes/admin.conf"
+
+- name: Check if running on master host
+  ansible.builtin.set_fact:
+    is_master_host: "{{ (inventory_hostname == 'k8s-master') | bool }}"
+
+- name: Skip non-master hosts
+  ansible.builtin.meta: noop
+  when: not is_master_host
+
+- name: Ensure kubectl is available on master
+  ansible.builtin.command: command -v kubectl
+  register: kubectl_cmd
+  changed_when: false
+  when: is_master_host
+
+- name: Fail if kubectl is not available on master
+  ansible.builtin.fail:
+    msg: "kubectl is not available on k8s-master; kubeadm_init may not have completed."
+  when: is_master_host and kubectl_cmd.rc != 0
+
+- name: Check if Flannel namespace exists
+  ansible.builtin.shell: |
+    set -euo pipefail
+    # Use -o name to avoid Jinja/go-template brace conflicts
+    KUBECONFIG={{ cni_kubeconfig }} kubectl get ns kube-flannel -o name 2>/dev/null || true
+  args:
+    executable: /bin/bash
+  register: flannel_ns
+  changed_when: false
+  when: is_master_host
+
+- name: Apply Flannel CNI (if missing)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    KUBECONFIG={{ cni_kubeconfig }} kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/refs/heads/master/Documentation/kube-flannel.yml
+  args:
+    executable: /bin/bash
+  when: is_master_host and (flannel_ns.stdout | default('')) == ''
+
+- name: Remove control-plane/master NoSchedule taints (single-node friendly)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    KUBECONFIG={{ cni_kubeconfig }} kubectl taint nodes --all node-role.kubernetes.io/control-plane- || true
+    KUBECONFIG={{ cni_kubeconfig }} kubectl taint nodes --all node-role.kubernetes.io/master- || true
+  args:
+    executable: /bin/bash
+  when: is_master_host
+
+- name: Wait for Nodes to report Ready (up to 5m)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    KUBECONFIG={{ cni_kubeconfig }} kubectl wait --for=condition=Ready nodes --all --timeout=300s
+  args:
+    executable: /bin/bash
+  register: nodes_ready
+  changed_when: false
+  failed_when: false
+  when: is_master_host
+
+- name: Wait for CoreDNS rollout to complete (up to 5m)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    KUBECONFIG={{ cni_kubeconfig }} kubectl -n kube-system rollout status deploy/coredns --timeout=300s
+  args:
+    executable: /bin/bash
+  register: coredns_rollout
+  changed_when: false
+  failed_when: false
+  when: is_master_host

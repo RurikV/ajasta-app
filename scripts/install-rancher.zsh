@@ -61,7 +61,8 @@ kubectl create namespace cert-manager 2>/dev/null || true
 helm upgrade --install cert-manager jetstack/cert-manager \
   --namespace cert-manager \
   --version v1.13.3 \
-  --wait
+  --wait \
+  --timeout 10m0s
 
 echo "[rancher] Waiting for cert-manager to be ready..."
 kubectl wait --for=condition=Available --timeout=300s deployment/cert-manager -n cert-manager
@@ -76,7 +77,8 @@ helm upgrade --install rancher rancher-latest/rancher \
   --set hostname=${RANCHER_HOST} \
   --set replicas=1 \
   --set bootstrapPassword=admin \
-  --wait
+  --wait \
+  --timeout 15m0s
 
 echo "[rancher] Waiting for Rancher to be ready..."
 kubectl wait --for=condition=Available --timeout=600s deployment/rancher -n cattle-system || true

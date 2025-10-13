@@ -1,5 +1,5 @@
 ---
-- name: Provision k8s infrastructure in Yandex Cloud (1 master + 2 workers)
+- name: Bootstrap Kubernetes on existing VMs (master + workers)
   hosts: local
   gather_facts: false
   vars:
@@ -50,125 +50,51 @@
           - yc_folder_id | length > 0
         fail_msg: "yc_cloud_id and yc_folder_id must be provided in group_vars/all.yml or via YC_CLOUD_ID/YC_FOLDER_ID env vars or yc CLI config (yc init)"
 
-    - name: Ensure external VPC network and subnet exist (for master public IP)
+    # Resolve IPs from existing instances
+    - name: Resolve master public IP from YC
       ansible.builtin.shell: |
-        {{ scripts_dir }}/create-network.zsh
-      args:
-        chdir: "{{ playbook_dir }}/.."
-      environment: "{{ env_base | combine({'YC_NETWORK_NAME': yc_network_name, 'YC_SUBNET_NAME': yc_subnet_name, 'YC_SUBNET_RANGE': yc_subnet_cidr}) }}"
-
-    - name: Ensure internal VPC network and subnet exist (private cluster network)
-      ansible.builtin.shell: |
-        {{ scripts_dir }}/create-network.zsh
-      args:
-        chdir: "{{ playbook_dir }}/.."
-      environment: "{{ env_base | combine({'YC_NETWORK_NAME': yc_internal_network_name, 'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_SUBNET_RANGE': yc_internal_subnet_cidr}) }}"
-
-    - name: Ensure static IP for master exists
-      ansible.builtin.shell: |
-        {{ scripts_dir }}/create-static-ip.zsh
-      args:
-        chdir: "{{ playbook_dir }}/.."
-      environment: "{{ env_base | combine({'YC_ADDRESS_NAME': master_address_name}) }}"
-
-    - name: Ensure service account exists
-      ansible.builtin.shell: |
-        {{ scripts_dir }}/create-sa.zsh
-      args:
-        chdir: "{{ playbook_dir }}/.."
-      environment: "{{ env_base | combine({'YC_SA_NAME': yc_sa_name}) }}"
-
-    # --- SSH public key auto-detection (only pass if file exists) ---
-    - name: Determine HOME directory
-      ansible.builtin.set_fact:
-        home_dir: "{{ lookup('env','HOME') }}"
-
-    - name: Build SSH key candidate list
-      ansible.builtin.set_fact:
-        ssh_key_candidates:
-          - "{{ ((ssh_pubkey_file | default('') | length) > 0) | ternary(ssh_pubkey_file | replace('~', home_dir), '') }}"
-          - "{{ home_dir }}/.ssh/id_ed25519.pub"
-          - "{{ home_dir }}/.ssh/id_rsa.pub"
-          - "{{ playbook_dir }}/../scripts/ajasta_ed25519.pub"
-
-    - name: Check which SSH key candidate exists
-      ansible.builtin.stat:
-        path: "{{ item }}"
-      loop: "{{ ssh_key_candidates | reject('equalto', '') | list }}"
-      register: ssh_key_stats
-
-    - name: Select first existing SSH key
-      ansible.builtin.set_fact:
-        ssh_key_file_resolved: "{{ (ssh_key_stats.results | selectattr('stat.exists') | map(attribute='item') | list | first) | default('') }}"
-
-    - name: Build optional SSH env dict
-      ansible.builtin.set_fact:
-        ssh_env_optional: "{{ {'SSH_PUBKEY_FILE': ssh_key_file_resolved} if (ssh_key_file_resolved | default('') | length) > 0 else {} }}"
-
-    - name: Create/ensure master VM (with static public IP on private subnet)
-      ansible.builtin.shell: |
-        {{ scripts_dir }}/create-vm-static-ip.zsh {{ master_vm_name }}
+        yc compute instance get --name "{{ master_vm_name }}" --format json | \
+        jq -r '.network_interfaces[0].primary_v4_address.one_to_one_nat.address // empty'
       args:
         chdir: "{{ playbook_dir }}/.."
       register: master_ip_out
-      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_ADDRESS_NAME': master_address_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': master_vm_memory | string, 'VM_CORES': master_vm_cores | string}) | combine(ssh_env_optional) }}"
+      changed_when: false
 
-    - name: Create/ensure worker1 VM (no public IP, private subnet only)
+    - name: Resolve worker1 internal IP from YC
       ansible.builtin.shell: |
-        zsh {{ scripts_dir }}/create-vm-no-nat.zsh {{ worker1_vm_name }}
+        yc compute instance get --name "{{ worker1_vm_name }}" --format json | \
+        jq -r '.network_interfaces[0].primary_v4_address.address // empty'
       args:
         chdir: "{{ playbook_dir }}/.."
       register: worker1_ip_out
-      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': worker_vm_memory | string, 'VM_CORES': worker_vm_cores | string}) | combine(ssh_env_optional) }}"
+      changed_when: false
 
-    - name: Create/ensure worker2 VM (no public IP, private subnet only)
+    - name: Resolve worker2 internal IP from YC
       ansible.builtin.shell: |
-        zsh {{ scripts_dir }}/create-vm-no-nat.zsh {{ worker2_vm_name }}
+        yc compute instance get --name "{{ worker2_vm_name }}" --format json | \
+        jq -r '.network_interfaces[0].primary_v4_address.address // empty'
       args:
         chdir: "{{ playbook_dir }}/.."
       register: worker2_ip_out
-      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': worker_vm_memory | string, 'VM_CORES': worker_vm_cores | string}) | combine(ssh_env_optional) }}"
+      changed_when: false
 
-    - name: Show resulting IP addresses
-      ansible.builtin.debug:
-        msg:
-          - "Master public ({{ master_vm_name }}): {{ master_ip_out.stdout | default('') }}"
-          - "Worker1 internal ({{ worker1_vm_name }}): {{ worker1_ip_out.stdout | default('n/a - no public IP') }}"
-          - "Worker2 internal ({{ worker2_vm_name }}): {{ worker2_ip_out.stdout | default('n/a - no public IP') }}"
-
-    # --- Bootstrap Kubernetes cluster on the provisioned VMs ---
-    - name: Derive SSH private key candidate from public key
+    - name: Derive clean master and worker IPs
       ansible.builtin.set_fact:
-        ssh_privkey_guess: "{{ (ssh_key_file_resolved | default('')) | regex_replace('\\.pub$', '') }}"
+        master_ip_clean: "{{ master_ip_out.stdout | trim }}"
+        worker1_ip_clean: "{{ worker1_ip_out.stdout | trim }}"
+        worker2_ip_clean: "{{ worker2_ip_out.stdout | trim }}"
 
-    - name: Check if derived SSH private key exists
-      ansible.builtin.stat:
-        path: "{{ ssh_privkey_guess }}"
-      register: ssh_privkey_stat
-      when: (ssh_privkey_guess | default('') | length) > 0
-
-    - name: Build optional SSH private key env dict
-      ansible.builtin.set_fact:
-        ssh_privkey_env_optional: "{{ {'SSH_KEY_FILE': ssh_privkey_guess} if (ssh_privkey_stat.stat.exists | default(false)) else {} }}"
-
-    - name: Derive clean master and worker IPs from script output
-      ansible.builtin.set_fact:
-        master_ip_clean: "{{ (master_ip_out.stdout | default('') | regex_findall('\\d+\\.\\d+\\.\\d+\\.\\d+') | last | default('')) }}"
-        worker1_ip_clean: "{{ (worker1_ip_out.stdout | default('') | regex_findall('\\d+\\.\\d+\\.\\d+\\.\\d+') | last | default('')) }}"
-        worker2_ip_clean: "{{ (worker2_ip_out.stdout | default('') | regex_findall('\\d+\\.\\d+\\.\\d+\\.\\d+') | last | default('')) }}"
-
-    - name: Debug resolved IPs
-      ansible.builtin.debug:
-        msg:
-          - "Resolved master IP: {{ master_ip_clean | default('') }}"
-          - "Resolved worker1 IP: {{ worker1_ip_clean | default('') }}"
-          - "Resolved worker2 IP: {{ worker2_ip_clean | default('') }}"
+    - name: Assert master IP resolved
+      ansible.builtin.assert:
+        that:
+          - (master_ip_clean | length) > 0
+        fail_msg: "Failed to resolve master public IP; ensure instances exist."
 
     - name: Prepare worker IP CSV
       ansible.builtin.set_fact:
         workers_csv: "{{ [worker1_ip_clean, worker2_ip_clean] | reject('equalto','') | join(',') }}"
 
-    # Build dynamic inventory for other-k8s roles (runs on group `k8s`)
+    # Build dynamic inventory for other-k8s roles (group `k8s`)
     - name: Add master host to dynamic inventory (group k8s)
       ansible.builtin.add_host:
         name: k8s-master
@@ -181,9 +107,6 @@
         ansible_pipelining: true
         ansible_ssh_private_key_file: "{{ ssh_privkey_guess if (ssh_privkey_stat.stat.exists | default(false)) else omit }}"
         ansible_ssh_common_args: "-o BatchMode=yes -o NumberOfPasswordPrompts=0 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o CheckHostIP=no -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -o ConnectionAttempts=10"
-      when:
-        - bootstrap_k8s | default(false) | bool
-        - use_other_k8s | default(true) | bool
 
     - name: Add worker1 host to dynamic inventory (via ProxyJump through master)
       ansible.builtin.add_host:
@@ -199,8 +122,6 @@
         ansible_ssh_common_args: >-
           -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ProxyJump={{ ssh_username }}@{{ master_ip_clean }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o CheckHostIP=no -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -o ConnectionAttempts=10
       when:
-        - bootstrap_k8s | default(false) | bool
-        - use_other_k8s | default(true) | bool
         - (worker1_ip_clean | default('') | length) > 0
 
     - name: Add worker2 host to dynamic inventory (via ProxyJump through master)
@@ -217,15 +138,7 @@
         ansible_ssh_common_args: >-
           -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ProxyJump={{ ssh_username }}@{{ master_ip_clean }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o CheckHostIP=no -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -o ConnectionAttempts=10
       when:
-        - bootstrap_k8s | default(false) | bool
-        - use_other_k8s | default(true) | bool
         - (worker2_ip_clean | default('') | length) > 0
-
-    - name: Ensure master IP is available before bootstrap
-      ansible.builtin.assert:
-        that:
-          - (master_ip_clean | length) > 0
-        fail_msg: "Failed to resolve master public IP address from provisioning output. Check previous tasks' logs."
 
     - name: Precheck SSH reachability to master (fail fast)
       ansible.builtin.wait_for:
@@ -234,8 +147,30 @@
         timeout: 60
         sleep: 3
         state: started
-      when: bootstrap_k8s | default(false) | bool
       tags: ["bootstrap"]
+
+    # Build optional SSH private key env (derive from public key path)
+    - name: Determine HOME directory
+      ansible.builtin.set_fact:
+        home_dir: "{{ lookup('env','HOME') }}"
+
+    - name: Resolve public key path (from group var)
+      ansible.builtin.set_fact:
+        ssh_pubkey_resolved: "{{ (ssh_pubkey_file | default('') | replace('~', home_dir)) }}"
+
+    - name: Derive private key guess and check
+      ansible.builtin.set_fact:
+        ssh_privkey_guess: "{{ (ssh_pubkey_resolved | default('')) | regex_replace('\\.pub$', '') }}"
+
+    - name: Check if derived SSH private key exists
+      ansible.builtin.stat:
+        path: "{{ ssh_privkey_guess }}"
+      register: ssh_privkey_stat
+      when: (ssh_privkey_guess | default('') | length) > 0
+
+    - name: Build optional SSH private key env dict
+      ansible.builtin.set_fact:
+        ssh_privkey_env_optional: "{{ {'SSH_KEY_FILE': ssh_privkey_guess} if (ssh_privkey_stat.stat.exists | default(false)) else {} }}"
 
     - name: Bootstrap Kubernetes cluster (kubeadm)
       ansible.builtin.shell: |
@@ -247,30 +182,30 @@
       poll: 15
       register: k8s_bootstrap_out
       when:
-        - bootstrap_k8s | default(false) | bool
         - not (use_other_k8s | default(true) | bool)
       tags: ["bootstrap"]
 
     - name: Show cluster bootstrap output (summary)
       ansible.builtin.debug:
         var: k8s_bootstrap_out.stdout_lines
-      when: bootstrap_k8s | default(false) | bool
+      tags: ["bootstrap"]
 
-    # --- Optional: Install Rancher Dashboard ---
-    - name: Install Rancher dashboard on cluster
+    - name: Install Rancher dashboard on cluster (optional)
       ansible.builtin.shell: |
-        timeout {{ rancher_install_timeout | default(900) }} zsh {{ scripts_dir }}/install-rancher.zsh "{{ master_ip_clean }}"
+        zsh {{ scripts_dir }}/install-rancher.zsh "{{ master_ip_clean }}"
       args:
         chdir: "{{ playbook_dir }}/.."
       environment: "{{ env_base | combine({'SSH_USERNAME': ssh_username, 'RANCHER_HOSTNAME': rancher_hostname | default('rancher.local')}) | combine(ssh_privkey_env_optional) }}"
       register: rancher_install_out
-      when: (bootstrap_k8s | default(false) | bool) and (install_rancher | default(true) | bool) and (not (use_other_k8s | default(true) | bool))
+      when: (install_rancher | default(true) | bool) and (not (use_other_k8s | default(true) | bool))
       tags: ["rancher"]
 
     - name: Show Rancher installation output
       ansible.builtin.debug:
         var: rancher_install_out.stdout_lines
-      when: (bootstrap_k8s | default(false) | bool) and (install_rancher | default(true) | bool) and (not (use_other_k8s | default(true) | bool))
+      when: (install_rancher | default(true) | bool) and (not (use_other_k8s | default(true) | bool))
+      tags: ["rancher"]
+
 
 # Reuse the working approach from ./other-k8s (role-based bootstrap)
 # Note: import_playbook is static; execution will no-op if group 'k8s' is empty
@@ -288,16 +223,16 @@
   tasks:
     - name: Install Rancher dashboard on cluster (other-k8s path)
       ansible.builtin.shell: |
-        timeout {{ rancher_install_timeout | default(900) }} zsh {{ scripts_dir }}/install-rancher.zsh "{{ master_ip_clean }}"
+        zsh {{ scripts_dir }}/install-rancher.zsh "{{ master_ip_clean }}"
       args:
         chdir: "{{ playbook_dir }}/.."
       environment: "{{ env_base | combine({'SSH_USERNAME': ssh_username, 'RANCHER_HOSTNAME': rancher_hostname | default('rancher.local')}) | combine(ssh_privkey_env_optional) }}"
       register: rancher_install_other_out
-      when: (bootstrap_k8s | default(false) | bool) and (install_rancher | default(true) | bool) and (use_other_k8s | default(true) | bool)
+      when: (install_rancher | default(true) | bool) and (use_other_k8s | default(true) | bool)
       tags: ["rancher"]
 
     - name: Show Rancher installation output (other-k8s path)
       ansible.builtin.debug:
         var: rancher_install_other_out.stdout_lines
-      when: (bootstrap_k8s | default(false) | bool) and (install_rancher | default(true) | bool) and (use_other_k8s | default(true) | bool)
+      when: (install_rancher | default(true) | bool) and (use_other_k8s | default(true) | bool)
       tags: ["rancher"]

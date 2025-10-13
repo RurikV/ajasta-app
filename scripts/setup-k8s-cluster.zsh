@@ -34,7 +34,16 @@ if [ -n "$WORKERS_CSV" ]; then
   IFS=',' read -rA WORKER_IPS <<< "$WORKERS_CSV"
 fi
 
-ssh_common=( -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 )
+ssh_common=( 
+  -o StrictHostKeyChecking=no 
+  -o UserKnownHostsFile=/dev/null 
+  -o GlobalKnownHostsFile=/dev/null
+  -o CheckHostIP=no
+  -o LogLevel=ERROR
+  -o ConnectTimeout=10
+  -o ServerAliveInterval=5
+  -o ServerAliveCountMax=3
+)
 if [ -n "$SSH_KEY_FILE" ]; then
   ssh_common+=( -i "$SSH_KEY_FILE" )
 fi
@@ -55,15 +64,25 @@ function rsh_retry() {
   local cmd="$@"
   local attempts=${SSH_RETRY_ATTEMPTS:-10}
   local delay=${SSH_RETRY_DELAY:-5}
+  local cmd_timeout=${SSH_CMD_TIMEOUT:-300}  # 5 minutes default timeout for command execution
   local n=1
   while true; do
-    if output=$(ssh "${ssh_common[@]}" ${SSH_USERNAME}@${host} ${cmd} 2>&1); then
+    # Use timeout command to limit total execution time
+    if output=$(timeout ${cmd_timeout} ssh "${ssh_common[@]}" ${SSH_USERNAME}@${host} ${cmd} 2>&1); then
       echo "$output"
       return 0
+    fi
+    local exit_code=$?
+    # timeout command returns 124 on timeout, 125+ on other errors
+    if [ $exit_code -eq 124 ]; then
+      echo "[setup-k8s][error] SSH command to ${host} timed out after ${cmd_timeout}s (attempt ${n}/${attempts})" >&2
     fi
     if [ $n -ge $attempts ]; then
       echo "[setup-k8s][error] SSH to ${host} failed after ${attempts} attempts. Last error:" >&2
       echo "$output" >&2
+      if [ $exit_code -eq 124 ]; then
+        echo "[setup-k8s][error] Note: Last attempt timed out. Consider increasing SSH_CMD_TIMEOUT (current: ${cmd_timeout}s)" >&2
+      fi
       return 1
     fi
     echo "[setup-k8s] SSH to ${host} not ready yet (attempt ${n}/${attempts}). Retrying in ${delay}s..." >&2
@@ -76,11 +95,19 @@ function rsh_retry() {
 read -r -d '' REMOTE_NODE_SETUP <<'EOF' || true
 set -euo pipefail
 
+# Detect OS
+OS_ID=""
+OS_ID_LIKE=""
+if [ -f /etc/os-release ]; then
+  . /etc/os-release
+  OS_ID="${ID:-}"
+  OS_ID_LIKE="${ID_LIKE:-}"
+fi
+
 # 1) Disable swap (required for kubelet)
 if grep -q ' swap ' /proc/swaps 2>/dev/null; then
   swapoff -a || true
 fi
-# Also remove swap from fstab (idempotent)
 sed -ri.bak '/\sswap\s/d' /etc/fstab || true
 
 # 2) Kernel modules and sysctl for Kubernetes networking
@@ -99,54 +126,95 @@ net.ipv4.ip_forward                 = 1
 SYS
 sysctl --system >/dev/null 2>&1 || true
 
-# 3) Install containerd
-if ! command -v containerd >/dev/null 2>&1; then
-  apt-get update -y
-  apt-get install -y ca-certificates curl gnupg apt-transport-https software-properties-common
-  install -m 0755 -d /etc/apt/keyrings
-  if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
+if echo "${OS_ID} ${OS_ID_LIKE}" | grep -qiE '(rhel|centos|fedora)'; then
+  # CentOS/RHEL/Fedora path
+  if ! command -v containerd >/dev/null 2>&1; then
+    dnf -y install yum-utils ca-certificates curl gnupg2
+    dnf -y config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+    dnf -y install containerd.io
   fi
-  ARCH=$(dpkg --print-architecture)
-  . /etc/os-release
-  echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list
-  apt-get update -y
-  apt-get install -y containerd.io
-fi
 
-mkdir -p /etc/containerd
-# Remove existing config and regenerate to ensure CRI plugin is enabled
-rm -f /etc/containerd/config.toml
-containerd config default > /etc/containerd/config.toml
-# Ensure SystemdCgroup = true for kubelet compatibility
-sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml || true
-systemctl restart containerd
-systemctl enable containerd
-# Wait for containerd to be fully ready
-sleep 3
+  mkdir -p /etc/containerd
+  rm -f /etc/containerd/config.toml
+  containerd config default > /etc/containerd/config.toml
+  sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml || true
+  systemctl restart containerd
+  systemctl enable containerd
+  sleep 3
 
-# 4) Install kubelet, kubeadm, kubectl
-if ! command -v kubeadm >/dev/null 2>&1; then
-  apt-get update -y
-  apt-get install -y ca-certificates curl
-  install -m 0755 -d /etc/apt/keyrings
-  if [ ! -f /etc/apt/keyrings/kubernetes-apt-keyring.gpg ]; then
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | \
-      gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-    chmod a+r /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  # Kubernetes repo (v1.30)
+  cat >/etc/yum.repos.d/kubernetes.repo <<KREPO
+[kubernetes]
+name=Kubernetes
+baseurl=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://pkgs.k8s.io/core:/stable:/v1.30/rpm/repodata/repomd.xml.key
+exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
+KREPO
+
+  # Optional: Relax SELinux to permissive
+  if command -v getenforce >/dev/null 2>&1; then
+    if [ "$(getenforce)" = "Enforcing" ]; then
+      setenforce 0 || true
+      sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config || true
+    fi
   fi
-  echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
-  apt-get update -y
-  # If K8S_VERSION passed down, honor it; otherwise install latest available in repo
-  if [ -n "${K8S_VERSION:-}" ]; then
-    apt-get install -y kubelet="${K8S_VERSION}"-* kubeadm="${K8S_VERSION}"-* kubectl="${K8S_VERSION}"-*
-  else
-    apt-get install -y kubelet kubeadm kubectl
+
+  if ! command -v kubeadm >/dev/null 2>&1; then
+    if [ -n "${K8S_VERSION:-}" ]; then
+      dnf -y install kubelet-"${K8S_VERSION}"* kubeadm-"${K8S_VERSION}"* kubectl-"${K8S_VERSION}"* --disableexcludes=kubernetes
+    else
+      dnf -y install kubelet kubeadm kubectl --disableexcludes=kubernetes
+    fi
   fi
-  apt-mark hold kubelet kubeadm kubectl || true
+  systemctl enable --now kubelet || true
+
+else
+  # Debian/Ubuntu path
+  if ! command -v containerd >/dev/null 2>&1; then
+    apt-get update -y
+    apt-get install -y ca-certificates curl gnupg apt-transport-https software-properties-common
+    install -m 0755 -d /etc/apt/keyrings
+    if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      chmod a+r /etc/apt/keyrings/docker.gpg
+    fi
+    ARCH=$(dpkg --print-architecture)
+    . /etc/os-release
+    echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list
+    apt-get update -y
+    apt-get install -y containerd.io
+  fi
+
+  mkdir -p /etc/containerd
+  rm -f /etc/containerd/config.toml
+  containerd config default > /etc/containerd/config.toml
+  sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml || true
+  systemctl restart containerd
+  systemctl enable containerd
+  sleep 3
+
+  if ! command -v kubeadm >/dev/null 2>&1; then
+    apt-get update -y
+    apt-get install -y ca-certificates curl
+    install -m 0755 -d /etc/apt/keyrings
+    if [ ! -f /etc/apt/keyrings/kubernetes-apt-keyring.gpg ]; then
+      curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | \
+        gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      chmod a+r /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    fi
+    echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
+    apt-get update -y
+    if [ -n "${K8S_VERSION:-}" ]; then
+      apt-get install -y kubelet="${K8S_VERSION}"-* kubeadm="${K8S_VERSION}"-* kubectl="${K8S_VERSION}"-*
+    else
+      apt-get install -y kubelet kubeadm kubectl
+    fi
+    apt-mark hold kubelet kubeadm kubectl || true
+  fi
+  systemctl enable --now kubelet || true
 fi
-systemctl enable --now kubelet || true
 EOF
 
 # Script to run only on the master
@@ -227,11 +295,33 @@ ssh_proxyjump=(
   -o StrictHostKeyChecking=no 
   -o UserKnownHostsFile=/dev/null 
   -o GlobalKnownHostsFile=/dev/null
+  -o CheckHostIP=no
+  -o LogLevel=ERROR
   -o ConnectTimeout=10
-  -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null ${ssh_key_opts} -W %h:%p ${SSH_USERNAME}@${MASTER_IP}"
+  -o ServerAliveInterval=5
+  -o ServerAliveCountMax=3
 )
+# Use ProxyJump (-J) which is simpler and more robust than ProxyCommand -W %h:%p
+# Append -J after potential -i to ensure option ordering is fine
 if [ -n "$SSH_KEY_FILE" ]; then
   ssh_proxyjump+=( -i "$SSH_KEY_FILE" )
+fi
+ssh_proxyjump+=( -J ${SSH_USERNAME}@${MASTER_IP} )
+
+# Alternative tunneling via ProxyCommand (-W %h:%p) for fallback
+ssh_proxycmd=(
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o GlobalKnownHostsFile=/dev/null
+  -o CheckHostIP=no
+  -o LogLevel=ERROR
+  -o ConnectTimeout=10
+  -o ServerAliveInterval=5
+  -o ServerAliveCountMax=3
+  -o ProxyCommand="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o CheckHostIP=no -o LogLevel=ERROR -o ServerAliveInterval=5 -o ServerAliveCountMax=3 ${ssh_key_opts} -W %h:%p ${SSH_USERNAME}@${MASTER_IP}"
+)
+if [ -n "$SSH_KEY_FILE" ]; then
+  ssh_proxycmd+=( -i "$SSH_KEY_FILE" )
 fi
 
 function rsh_worker_retry() {
@@ -239,15 +329,41 @@ function rsh_worker_retry() {
   local cmd="$@"
   local attempts=${SSH_RETRY_ATTEMPTS:-10}
   local delay=${SSH_RETRY_DELAY:-5}
+  local cmd_timeout=${SSH_CMD_TIMEOUT:-300}  # 5 minutes default timeout for command execution
   local n=1
+  local proxy_mode="jump"  # jump | cmd
   while true; do
-    if output=$(ssh "${ssh_proxyjump[@]}" ${SSH_USERNAME}@${worker_ip} ${cmd} 2>&1); then
-      echo "$output"
-      return 0
+    # Use timeout command to limit total execution time
+    if [ "$proxy_mode" = "jump" ]; then
+      if output=$(timeout ${cmd_timeout} ssh "${ssh_proxyjump[@]}" ${SSH_USERNAME}@${worker_ip} ${cmd} 2>&1); then
+        echo "$output"
+        return 0
+      fi
+    else
+      if output=$(timeout ${cmd_timeout} ssh "${ssh_proxycmd[@]}" ${SSH_USERNAME}@${worker_ip} ${cmd} 2>&1); then
+        echo "$output"
+        return 0
+      fi
+    fi
+    local exit_code=$?
+    # timeout command returns 124 on timeout, 125+ on other errors
+    if [ $exit_code -eq 124 ]; then
+      echo "[setup-k8s][error] SSH command to worker ${worker_ip} timed out after ${cmd_timeout}s (attempt ${n}/${attempts})" >&2
+    fi
+    # One-time fallback to ProxyCommand on host-key-ish or unknown port symptoms
+    if [ "$proxy_mode" = "jump" ] && echo "$output" | grep -qiE 'Host key verification failed|UNKNOWN port 65535|banner exchange|Connection timed out during banner exchange'; then
+      echo "[setup-k8s] Switching to ProxyCommand tunnel for worker ${worker_ip} due to SSH error signature" >&2
+      proxy_mode="cmd"
+      # do not count this as a full attempt; sleep briefly and retry immediately with ProxyCommand
+      sleep 1
+      continue
     fi
     if [ $n -ge $attempts ]; then
       echo "[setup-k8s][error] SSH to worker ${worker_ip} via master failed after ${attempts} attempts. Last error:" >&2
       echo "$output" >&2
+      if [ $exit_code -eq 124 ]; then
+        echo "[setup-k8s][error] Note: Last attempt timed out. Consider increasing SSH_CMD_TIMEOUT (current: ${cmd_timeout}s)" >&2
+      fi
       return 1
     fi
     echo "[setup-k8s] SSH to worker ${worker_ip} not ready yet (attempt ${n}/${attempts}). Retrying in ${delay}s..." >&2
