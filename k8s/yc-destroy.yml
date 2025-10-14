@@ -52,7 +52,7 @@
 
     - name: Build list of static IP addresses to destroy
       ansible.builtin.set_fact:
-        static_ip_addresses: "{{ [master_address_name, worker1_address_name] | select('defined') | select('string') | reject('equalto', '') | list }}"
+        static_ip_addresses: "{{ ([master_address_name] + (workers | map(attribute='address_name') | list)) | select('defined') | select('string') | reject('equalto', '') | list }}"
 
     - name: Destroy static IP addresses
       ansible.builtin.shell: |
@@ -70,8 +70,9 @@
         chdir: "{{ playbook_dir }}/.."
       environment: "{{ env_base | combine({
           'ajasta_VM_NAME': master_vm_name,
-          'VM1_NAME': worker1_vm_name,
-          'VM2_NAME': '',
+          'VM1_NAME': workers[0].vm_name,
+          'VM2_NAME': workers[1].vm_name if (workers | length > 1) else '',
+          'VM3_NAME': workers[2].vm_name if (workers | length > 2) else '',
           'YC_ADDRESS_NAME': master_address_name,
           'EXT_NET_NAME': yc_network_name,
           'EXT_SUBNET_NAME': yc_subnet_name,

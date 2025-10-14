@@ -20,11 +20,21 @@ yc_sa_name: "otus"
 
 # Static IPs (one for master, one for worker)
 master_address_name: "ajasta-k8s-master-ip"
-worker1_address_name: "ajasta-k8s-worker1-ip"
+worker1_address_name: "ajasta-k8s-worker1-ip"  # Kept for backward compatibility
 
 # VM names
 master_vm_name: "k8s-master"
-worker1_vm_name: "k8s-worker-1"
+worker1_vm_name: "k8s-worker-1"  # Kept for backward compatibility
+
+# Worker nodes configuration (list-based for scalability)
+# Each worker needs a unique vm_name and address_name
+workers:
+  - vm_name: "k8s-worker-1"
+    address_name: "ajasta-k8s-worker1-ip"
+  - vm_name: "k8s-worker-2"
+    address_name: "ajasta-k8s-worker2-ip"
+  - vm_name: "k8s-worker-3"
+    address_name: "ajasta-k8s-worker3-ip"
 
 # VM Resources (memory in GB, cores as integer)
 # IMPORTANT: 2GB RAM is the absolute minimum for Kubernetes control plane, but it's very tight

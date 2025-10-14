@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Generate ansible inventory from Yandex Cloud VMs
-# This script fetches the IPs of k8s-master and k8s-worker-1
+# This script dynamically discovers k8s-master and all k8s-worker-* VMs
 # and creates a proper inventory.ini file
 
 set -euo pipefail
@@ -22,22 +22,29 @@ fi
 
 echo "Master public IP: $MASTER_IP"
 
-# Get worker1 public IP (one_to_one_nat address)
-WORKER1_IP=$(yc compute instance get k8s-worker-1 --format json 2>/dev/null | \
-  jq -r '.network_interfaces[0].primary_v4_address.one_to_one_nat.address // empty' || echo "")
+# Discover all worker VMs (k8s-worker-*)
+echo "Discovering worker nodes..."
+WORKERS_JSON=$(yc compute instance list --format json 2>/dev/null | \
+  jq -r '[.[] | select(.name | startswith("k8s-worker-")) | {name: .name, ip: .network_interfaces[0].primary_v4_address.one_to_one_nat.address}] | sort_by(.name)')
 
-if [ -z "$WORKER1_IP" ]; then
-  echo "WARNING: Could not find public IP for k8s-worker-1" >&2
-  echo "Worker1 IP: NOT FOUND" >&2
-fi
+WORKER_COUNT=$(echo "$WORKERS_JSON" | jq -r 'length')
+echo "Found $WORKER_COUNT worker node(s)"
 
-# Generate inventory file
+# Build worker IP list for header comments
+WORKER_IPS_COMMENT=""
+while IFS= read -r worker; do
+  WORKER_NAME=$(echo "$worker" | jq -r '.name')
+  WORKER_IP=$(echo "$worker" | jq -r '.ip // "NOT_FOUND"')
+  echo "  $WORKER_NAME: $WORKER_IP"
+  WORKER_IPS_COMMENT="${WORKER_IPS_COMMENT}# ${WORKER_NAME} IP: ${WORKER_IP}\n"
+done < <(echo "$WORKERS_JSON" | jq -c '.[]')
+
+# Generate inventory file header
 cat > "$INVENTORY_FILE" <<EOF
 # Ansible inventory for Kubernetes cluster
 # Generated automatically on $(date)
 # Master IP: $MASTER_IP
-# Worker1 IP: $WORKER1_IP
-
+$(echo -e "$WORKER_IPS_COMMENT")
 [local]
 localhost ansible_connection=local
 
@@ -47,11 +54,19 @@ k8s-master ansible_host=$MASTER_IP ansible_user=ajasta ansible_become=true
 [k8s_workers]
 EOF
 
-if [ -n "$WORKER1_IP" ]; then
-  cat >> "$INVENTORY_FILE" <<EOF
-k8s-worker-1 ansible_host=$WORKER1_IP ansible_user=ajasta ansible_become=true
+# Add all discovered workers to inventory
+while IFS= read -r worker; do
+  WORKER_NAME=$(echo "$worker" | jq -r '.name')
+  WORKER_IP=$(echo "$worker" | jq -r '.ip // empty')
+  
+  if [ -n "$WORKER_IP" ]; then
+    cat >> "$INVENTORY_FILE" <<EOF
+$WORKER_NAME ansible_host=$WORKER_IP ansible_user=ajasta ansible_become=true
 EOF
-fi
+  else
+    echo "WARNING: Skipping $WORKER_NAME (no public IP found)" >&2
+  fi
+done < <(echo "$WORKERS_JSON" | jq -c '.[]')
 
 cat >> "$INVENTORY_FILE" <<EOF
 

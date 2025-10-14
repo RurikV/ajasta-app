@@ -1,5 +1,5 @@
 ---
-- name: Create k8s infrastructure in Yandex Cloud (1 master + 1 worker)
+- name: Create k8s infrastructure in Yandex Cloud (1 master + 3 workers)
   hosts: local
   gather_facts: false
   vars:
@@ -71,12 +71,13 @@
         chdir: "{{ playbook_dir }}/.."
       environment: "{{ env_base | combine({'YC_ADDRESS_NAME': master_address_name}) }}"
 
-    - name: Ensure static IP for worker1 exists
+    - name: Ensure static IP for workers exist
       ansible.builtin.shell: |
         {{ scripts_dir }}/create-static-ip.zsh
       args:
         chdir: "{{ playbook_dir }}/.."
-      environment: "{{ env_base | combine({'YC_ADDRESS_NAME': worker1_address_name}) }}"
+      environment: "{{ env_base | combine({'YC_ADDRESS_NAME': item.address_name}) }}"
+      loop: "{{ workers }}"
 
     - name: Ensure service account exists
       ansible.builtin.shell: |
@@ -120,19 +121,20 @@
       register: master_ip_out
       environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_ADDRESS_NAME': master_address_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': master_vm_memory | string, 'VM_CORES': master_vm_cores | string, 'VM_DISK_SIZE': master_vm_disk_size | string}) | combine(ssh_env_optional) }}"
 
-    - name: Create/ensure worker1 VM (with static public IP on private subnet)
+    - name: Create/ensure worker VMs (with static public IP on private subnet)
       ansible.builtin.shell: |
-        {{ scripts_dir }}/create-vm-static-ip.zsh {{ worker1_vm_name }}
+        {{ scripts_dir }}/create-vm-static-ip.zsh {{ item.vm_name }}
       args:
         chdir: "{{ playbook_dir }}/.."
-      register: worker1_ip_out
-      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_ADDRESS_NAME': worker1_address_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': worker_vm_memory | string, 'VM_CORES': worker_vm_cores | string, 'VM_DISK_SIZE': worker_vm_disk_size | string}) | combine(ssh_env_optional) }}"
+      register: workers_ip_out
+      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_ADDRESS_NAME': item.address_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': worker_vm_memory | string, 'VM_CORES': worker_vm_cores | string, 'VM_DISK_SIZE': worker_vm_disk_size | string}) | combine(ssh_env_optional) }}"
+      loop: "{{ workers }}"
 
     - name: Show resulting IP addresses
       ansible.builtin.debug:
         msg:
           - "Master public ({{ master_vm_name }}): {{ master_ip_out.stdout | default('') }}"
-          - "Worker1 public ({{ worker1_vm_name }}): {{ worker1_ip_out.stdout | default('') }}"
+          - "Worker IPs: {{ workers_ip_out.results | map(attribute='stdout') | list }}"
 
     # --- Bootstrap Kubernetes cluster on the provisioned VMs ---
     - name: Derive SSH private key candidate from public key
@@ -149,20 +151,24 @@
       ansible.builtin.set_fact:
         ssh_privkey_env_optional: "{{ {'SSH_KEY_FILE': ssh_privkey_guess} if (ssh_privkey_stat.stat.exists | default(false)) else {} }}"
 
-    - name: Derive clean master and worker IPs from script output
+    - name: Derive clean master IP from script output
       ansible.builtin.set_fact:
         master_ip_clean: "{{ (master_ip_out.stdout | default('') | regex_findall('\\d+\\.\\d+\\.\\d+\\.\\d+') | last | default('')) }}"
-        worker1_ip_clean: "{{ (worker1_ip_out.stdout | default('') | regex_findall('\\d+\\.\\d+\\.\\d+\\.\\d+') | last | default('')) }}"
+
+    - name: Extract worker IPs from loop results
+      ansible.builtin.set_fact:
+        worker_ips_list: "{{ workers_ip_out.results | map(attribute='stdout') | map('regex_findall', '\\d+\\.\\d+\\.\\d+\\.\\d+') | map('last') | list }}"
+
+    - name: Prepare worker IP CSV (comma-separated)
+      ansible.builtin.set_fact:
+        workers_csv: "{{ worker_ips_list | join(',') }}"
 
     - name: Debug resolved IPs
       ansible.builtin.debug:
         msg:
           - "Resolved master IP: {{ master_ip_clean | default('') }}"
-          - "Resolved worker1 IP: {{ worker1_ip_clean | default('') }}"
-
-    - name: Prepare worker IP CSV (single worker)
-      ansible.builtin.set_fact:
-        workers_csv: "{{ worker1_ip_clean }}"
+          - "Resolved worker IPs: {{ worker_ips_list }}"
+          - "Worker CSV: {{ workers_csv }}"
 
     - name: Ensure master IP is available before bootstrap
       ansible.builtin.assert:
@@ -217,7 +223,7 @@
     # --- Generate inventory file after successful provisioning ---
     - name: Generate inventory.ini file
       ansible.builtin.shell: |
-        {{ playbook_dir }}/generate-inventory.sh "{{ master_ip_clean }}" "{{ worker1_ip_clean }}" ""
+        {{ playbook_dir }}/generate-inventory.sh
       args:
         chdir: "{{ playbook_dir }}"
       when: (master_ip_clean | default('') | length) > 0
@@ -229,7 +235,7 @@
           - "=========================================="
           - "Kubernetes cluster provisioned successfully!"
           - "Master IP: {{ master_ip_clean }}"
-          - "Worker1 IP: {{ worker1_ip_clean }}"
+          - "Worker IPs: {{ worker_ips_list | join(', ') }}"
           - "Inventory file: {{ playbook_dir }}/inventory.ini"
           - "=========================================="
       when: (master_ip_clean | default('') | length) > 0
