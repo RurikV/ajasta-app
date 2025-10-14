@@ -118,7 +118,7 @@
       args:
         chdir: "{{ playbook_dir }}/.."
       register: master_ip_out
-      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_ADDRESS_NAME': master_address_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': master_vm_memory | string, 'VM_CORES': master_vm_cores | string}) | combine(ssh_env_optional) }}"
+      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_ADDRESS_NAME': master_address_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': master_vm_memory | string, 'VM_CORES': master_vm_cores | string, 'VM_DISK_SIZE': master_vm_disk_size | string}) | combine(ssh_env_optional) }}"
 
     - name: Create/ensure worker1 VM (with static public IP on private subnet)
       ansible.builtin.shell: |
@@ -126,7 +126,7 @@
       args:
         chdir: "{{ playbook_dir }}/.."
       register: worker1_ip_out
-      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_ADDRESS_NAME': worker1_address_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': worker_vm_memory | string, 'VM_CORES': worker_vm_cores | string}) | combine(ssh_env_optional) }}"
+      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_ADDRESS_NAME': worker1_address_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': worker_vm_memory | string, 'VM_CORES': worker_vm_cores | string, 'VM_DISK_SIZE': worker_vm_disk_size | string}) | combine(ssh_env_optional) }}"
 
     - name: Show resulting IP addresses
       ansible.builtin.debug:

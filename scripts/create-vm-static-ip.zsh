@@ -10,6 +10,7 @@
 #   SSH_PUBKEY_FILE or SSH_PUBKEY (optional; path or content of public key)
 #   VM_MEMORY (default: 4) - Memory in GB for the VM
 #   VM_CORES (default: 2) - CPU cores for the VM
+#   VM_DISK_SIZE (default: 30) - Boot disk size in GB for the VM
 
 set -euo pipefail
 SCRIPT_DIR=$(cd -- "${0:A:h}" && pwd)
@@ -28,6 +29,7 @@ METADATA_YAML=${METADATA_YAML:-./metadata.yaml}
 SSH_USERNAME=${SSH_USERNAME:-ajasta}
 VM_MEMORY=${VM_MEMORY:-4}
 VM_CORES=${VM_CORES:-2}
+VM_DISK_SIZE=${VM_DISK_SIZE:-30}
 
 if [ ! -f "$METADATA_YAML" ]; then
   log "Metadata file '$METADATA_YAML' not found" >&2
@@ -139,7 +141,7 @@ else
   log "Created static IP: $STATIC_IP_ADDRESS (ID: $STATIC_IP_ID)"
 fi
 
-log "Creating VM '$vm_name' using static IP $STATIC_IP_ADDRESS (Memory: ${VM_MEMORY}GB, Cores: ${VM_CORES})..."
+log "Creating VM '$vm_name' using static IP $STATIC_IP_ADDRESS (Memory: ${VM_MEMORY}GB, Cores: ${VM_CORES}, Disk: ${VM_DISK_SIZE}GB)..."
 yc compute instance create \
   --preemptible \
   --name "$vm_name" \
@@ -148,7 +150,7 @@ yc compute instance create \
   --memory="$VM_MEMORY" \
   --cores="$VM_CORES" \
   --core-fraction=20 \
-  --create-boot-disk image-folder-id=standard-images,image-family=centos-stream-9-oslogin,type=network-hdd,size=10 \
+  --create-boot-disk image-folder-id=standard-images,image-family=centos-stream-9-oslogin,type=network-hdd,size="$VM_DISK_SIZE" \
   --network-interface subnet-name="$YC_SUBNET_NAME",nat-ip-version=ipv4,nat-address="$STATIC_IP_ADDRESS" \
   --serial-port-settings ssh-authorization=INSTANCE_METADATA \
   --metadata-from-file user-data="${TEMP_USER_DATA:-$METADATA_YAML}" \

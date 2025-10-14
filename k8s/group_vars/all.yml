@@ -36,8 +36,10 @@ worker1_vm_name: "k8s-worker-1"
 #   - Avoiding repeated VM recreation due to failures
 master_vm_memory: 4              # GB of RAM for master node (control plane + etcd + API server)
 master_vm_cores: 2               # CPU cores for master node
+master_vm_disk_size: 30          # GB of disk space for master node boot disk
 worker_vm_memory: 3              # GB of RAM for worker nodes (can be less than master)
 worker_vm_cores: 2               # CPU cores for worker nodes
+worker_vm_disk_size: 30          # GB of disk space for worker node boot disk
 
 # SSH
 ssh_username: "ajasta"

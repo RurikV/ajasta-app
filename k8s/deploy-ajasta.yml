@@ -87,19 +87,28 @@
       retries: 3
       delay: 10
       
-    - name: Check for existing StorageClasses
-      shell: kubectl get storageclass -o name 2>/dev/null | wc -l
-      register: storageclass_count
+    - name: Check if local-path StorageClass exists
+      shell: kubectl get storageclass local-path -o name 2>/dev/null || echo "not-found"
+      register: local_path_check
       changed_when: false
       
-    - name: Display StorageClass status
+    - name: Check if local-path-provisioner pod is running
+      shell: |
+        kubectl get pods -n local-path-storage -l app=local-path-provisioner -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "not-found"
+      register: local_path_pod_check
+      changed_when: false
+      failed_when: false
+      
+    - name: Display StorageClass and provisioner status
       debug:
-        msg: "Found {{ storageclass_count.stdout }} StorageClass(es) in the cluster"
+        msg:
+          - "Local-path StorageClass: {{ local_path_check.stdout }}"
+          - "Local-path provisioner pod status: {{ local_path_pod_check.stdout }}"
       
     - name: Install local-path storage provisioner
       shell: |
         kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.24/deploy/local-path-storage.yaml
-      when: storageclass_count.stdout | int == 0
+      when: local_path_check.stdout == "not-found" or local_path_pod_check.stdout != "Running"
       register: storage_install
       
     - name: Wait for local-path provisioner to be ready
@@ -108,14 +117,25 @@
           --for=condition=ready pod \
           --selector=app=local-path-provisioner \
           --timeout=120s
-      when: storageclass_count.stdout | int == 0
+      when: local_path_check.stdout == "not-found" or local_path_pod_check.stdout != "Running"
       retries: 2
       delay: 5
       
     - name: Set local-path as default StorageClass
       shell: |
         kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
-      when: storageclass_count.stdout | int == 0
+      when: local_path_check.stdout == "not-found" or local_path_pod_check.stdout != "Running"
+      
+    - name: Verify local-path provisioner is operational
+      shell: |
+        kubectl get pods -n local-path-storage -l app=local-path-provisioner
+      register: provisioner_status
+      changed_when: false
+      failed_when: false
+      
+    - name: Display provisioner pod status
+      debug:
+        msg: "{{ provisioner_status.stdout_lines }}"
       
     - name: Copy manifests directory to master node
       copy:
@@ -195,19 +215,88 @@
           changed_when: false
           failed_when: false
           
+        - name: Get PVC status on failure
+          shell: kubectl get pvc -n {{ app_namespace }}
+          register: postgres_pvc_status
+          changed_when: false
+          failed_when: false
+          
+        - name: Describe PVC on failure
+          shell: kubectl describe pvc -n {{ app_namespace }}
+          register: postgres_pvc_describe
+          changed_when: false
+          failed_when: false
+          
+        - name: Get PV list on failure
+          shell: kubectl get pv
+          register: postgres_pv_list
+          changed_when: false
+          failed_when: false
+          
+        - name: Get StorageClass details on failure
+          shell: kubectl get storageclass -o wide
+          register: postgres_sc_status
+          changed_when: false
+          failed_when: false
+          
+        - name: Get local-path provisioner status on failure
+          shell: kubectl get pods -n local-path-storage -l app=local-path-provisioner
+          register: postgres_provisioner_status
+          changed_when: false
+          failed_when: false
+          
+        - name: Describe local-path provisioner on failure
+          shell: kubectl describe pod -n local-path-storage -l app=local-path-provisioner
+          register: postgres_provisioner_describe
+          changed_when: false
+          failed_when: false
+          
         - name: Display PostgreSQL diagnostics
           debug:
             msg:
               - "=== PostgreSQL Pod Status ==="
               - "{{ postgres_pod_status.stdout_lines | default(['No output']) }}"
+              - ""
+              - "=== PVC Status ==="
+              - "{{ postgres_pvc_status.stdout_lines | default(['No PVCs found']) }}"
+              - ""
+              - "=== PVC Description ==="
+              - "{{ postgres_pvc_describe.stdout_lines | default(['No PVC details']) }}"
+              - ""
+              - "=== PersistentVolumes ==="
+              - "{{ postgres_pv_list.stdout_lines | default(['No PVs found']) }}"
+              - ""
+              - "=== StorageClasses ==="
+              - "{{ postgres_sc_status.stdout_lines | default(['No StorageClasses found']) }}"
+              - ""
+              - "=== Local-Path Provisioner Status ==="
+              - "{{ postgres_provisioner_status.stdout_lines | default(['Provisioner not found']) }}"
+              - ""
+              - "=== Local-Path Provisioner Details ==="
+              - "{{ postgres_provisioner_describe.stdout_lines | default(['No provisioner details']) }}"
+              - ""
               - "=== PostgreSQL Pod Description ==="
               - "{{ postgres_pod_describe.stdout_lines | default(['No output']) }}"
+              - ""
               - "=== PostgreSQL Pod Logs ==="
               - "{{ postgres_pod_logs.stdout_lines | default(['No logs available']) }}"
               
         - name: Fail after diagnostics
           fail:
-            msg: "PostgreSQL pod failed to become ready. See diagnostics above."
+            msg: |
+              PostgreSQL pod failed to become ready. See diagnostics above.
+              
+              Common causes:
+              1. PVC not bound: Check if local-path-provisioner pod is running
+              2. No PersistentVolume: Provisioner may not be creating PVs
+              3. StorageClass missing: Ensure 'local-path' StorageClass exists
+              4. Insufficient disk space: Check worker node disk usage
+              
+              To fix:
+              - Ensure local-path-provisioner is running: kubectl get pods -n local-path-storage
+              - Check provisioner logs: kubectl logs -n local-path-storage -l app=local-path-provisioner
+              - Verify StorageClass: kubectl get storageclass local-path -o yaml
+              - Check node disk space: kubectl describe nodes
       
     - name: Apply Backend secret
       command: kubectl apply -f /tmp/ajasta-manifests/05-backend-secret.yml

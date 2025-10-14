@@ -86,9 +86,10 @@ spec:
         component: database
     spec:
       accessModes: ["ReadWriteOnce"]
-      # Use longhorn storage class for persistent storage
-      # For production, specify explicit storageClassName (e.g., "standard", "fast-ssd")
-      storageClassName: "longhorn"
+      # Use local-path storage class for persistent storage
+      # The local-path-provisioner is automatically installed by deploy-ajasta.yml
+      # For production with dedicated storage, consider using a different storageClassName
+      storageClassName: "local-path"
       resources:
         requests:
           storage: 5Gi
