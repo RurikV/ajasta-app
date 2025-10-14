@@ -1,0 +1,126 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ajasta-backend
+  namespace: ajasta
+  labels:
+    app: ajasta
+    component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ajasta
+      component: backend
+  template:
+    metadata:
+      labels:
+        app: ajasta
+        component: backend
+    spec:
+      # Schedule on worker nodes (avoid master/control-plane nodes)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane
+                operator: DoesNotExist
+      containers:
+      - name: backend
+        image: vladimirryrik/ajasta-backend:alpine
+        ports:
+        - containerPort: 8090
+          name: http
+        env:
+        - name: DB_URL
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: DB_URL
+        - name: DB_USERNAME
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: DB_USERNAME
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: backend-secret
+              key: DB_PASSWORD
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: backend-secret
+              key: JWT_SECRET
+        - name: MAIL_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: backend-secret
+              key: MAIL_USERNAME
+        - name: MAIL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: backend-secret
+              key: MAIL_PASSWORD
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: backend-secret
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: backend-secret
+              key: AWS_SECRET_ACCESS_KEY
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: AWS_REGION
+        - name: AWS_S3_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: AWS_S3_BUCKET
+        - name: STRIPE_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: backend-secret
+              key: STRIPE_PUBLIC_KEY
+        - name: STRIPE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: backend-secret
+              key: STRIPE_SECRET_KEY
+        - name: JAVA_OPTS
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: JAVA_OPTS
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8090
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8090
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 6
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+            ephemeral-storage: "1Gi"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+            ephemeral-storage: "2Gi"

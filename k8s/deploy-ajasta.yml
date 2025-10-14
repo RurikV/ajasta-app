@@ -1,0 +1,335 @@
+---
+- name: Deploy Ajasta Application to Kubernetes
+  hosts: k8s_master
+  gather_facts: false
+  become: true
+  
+  vars:
+    manifests_dir: "manifests"
+    app_namespace: "ajasta"
+    
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+    
+  tasks:
+    - name: Check if kubectl is available
+      command: kubectl version --client
+      register: kubectl_check
+      changed_when: false
+      failed_when: false
+      
+    - name: Fail if kubectl is not available
+      fail:
+        msg: "kubectl is not available on the master node"
+      when: kubectl_check.rc != 0
+      
+    - name: Check worker nodes disk space
+      shell: |
+        kubectl get nodes -o json | \
+        jq -r '.items[] | select(.spec.taints == null or (.spec.taints | map(select(.key == "node-role.kubernetes.io/control-plane")) | length == 0)) | 
+        .metadata.name + " " + (.status.conditions[] | select(.type == "DiskPressure") | .status)'
+      register: disk_check
+      changed_when: false
+      failed_when: false
+      
+    - name: Get detailed node disk usage
+      shell: |
+        kubectl get nodes -o json | \
+        jq -r '.items[] | select(.spec.taints == null or (.spec.taints | map(select(.key == "node-role.kubernetes.io/control-plane")) | length == 0)) |
+        .metadata.name + " - Available: " + .status.allocatable."ephemeral-storage" + " - Capacity: " + .status.capacity."ephemeral-storage"'
+      register: disk_usage
+      changed_when: false
+      failed_when: false
+      
+    - name: Display worker node disk status
+      debug:
+        msg: 
+          - "=== Worker Node Disk Status ==="
+          - "{{ disk_check.stdout_lines | default(['Unable to check disk pressure']) }}"
+          - "=== Worker Node Disk Usage ==="
+          - "{{ disk_usage.stdout_lines | default(['Unable to check disk usage']) }}"
+          - ""
+          - "⚠️  WARNING: If DiskPressure=True, you MUST clean up disk space before deployment!"
+          - "   Run on worker nodes: sudo docker system prune -af && sudo rm -rf /var/lib/containerd/io.containerd.grpc.v1.cri/containers/*"
+      
+    - name: Fail if any worker node has disk pressure
+      fail:
+        msg: |
+          CRITICAL: One or more worker nodes have disk pressure (DiskPressure=True)!
+          
+          You must clean up disk space on worker nodes before deployment:
+          1. SSH to each affected worker node
+          2. Run: sudo docker system prune -af
+          3. Run: sudo crictl rmi --prune
+          4. Check: df -h
+          
+          Disk pressure will cause pod evictions and deployment failures.
+      when: disk_check.stdout is defined and "True" in disk_check.stdout
+      
+    - name: Check if nginx ingress controller is installed
+      shell: kubectl get ingressclass nginx -o name 2>/dev/null || echo "not-found"
+      register: nginx_ingress_check
+      changed_when: false
+      
+    - name: Install nginx ingress controller
+      shell: |
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/cloud/deploy.yaml
+      when: nginx_ingress_check.stdout == "not-found"
+      register: nginx_install
+      
+    - name: Wait for nginx ingress controller to be ready
+      shell: |
+        kubectl wait --namespace ingress-nginx \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/component=controller \
+          --timeout=300s
+      when: nginx_ingress_check.stdout == "not-found"
+      retries: 3
+      delay: 10
+      
+    - name: Check for existing StorageClasses
+      shell: kubectl get storageclass -o name 2>/dev/null | wc -l
+      register: storageclass_count
+      changed_when: false
+      
+    - name: Display StorageClass status
+      debug:
+        msg: "Found {{ storageclass_count.stdout }} StorageClass(es) in the cluster"
+      
+    - name: Install local-path storage provisioner
+      shell: |
+        kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.24/deploy/local-path-storage.yaml
+      when: storageclass_count.stdout | int == 0
+      register: storage_install
+      
+    - name: Wait for local-path provisioner to be ready
+      shell: |
+        kubectl wait --namespace local-path-storage \
+          --for=condition=ready pod \
+          --selector=app=local-path-provisioner \
+          --timeout=120s
+      when: storageclass_count.stdout | int == 0
+      retries: 2
+      delay: 5
+      
+    - name: Set local-path as default StorageClass
+      shell: |
+        kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+      when: storageclass_count.stdout | int == 0
+      
+    - name: Copy manifests directory to master node
+      copy:
+        src: "{{ manifests_dir }}/"
+        dest: "/tmp/ajasta-manifests/"
+        mode: '0644'
+        
+    - name: Apply namespace
+      command: kubectl apply -f /tmp/ajasta-manifests/01-namespace.yml
+      register: namespace_result
+      changed_when: "'created' in namespace_result.stdout or 'configured' in namespace_result.stdout"
+      
+    - name: Apply PostgreSQL secret
+      command: kubectl apply -f /tmp/ajasta-manifests/02-postgres-secret.yml
+      register: postgres_secret_result
+      changed_when: "'created' in postgres_secret_result.stdout or 'configured' in postgres_secret_result.stdout"
+      
+    - name: Check if PostgreSQL StatefulSet exists
+      shell: kubectl get statefulset ajasta-postgres -n {{ app_namespace }} -o name 2>/dev/null || echo "not-found"
+      register: postgres_statefulset_check
+      changed_when: false
+      
+    - name: Delete existing PostgreSQL StatefulSet (if exists) to handle immutable field updates
+      shell: |
+        kubectl delete statefulset ajasta-postgres -n {{ app_namespace }} --cascade=orphan
+      when: postgres_statefulset_check.stdout != "not-found"
+      register: postgres_statefulset_delete
+      changed_when: postgres_statefulset_delete.rc == 0
+      
+    - name: Apply PostgreSQL StatefulSet
+      command: kubectl apply -f /tmp/ajasta-manifests/03-postgres-statefulset.yml
+      register: postgres_statefulset_result
+      changed_when: "'created' in postgres_statefulset_result.stdout or 'configured' in postgres_statefulset_result.stdout"
+      
+    - name: Apply PostgreSQL Service
+      command: kubectl apply -f /tmp/ajasta-manifests/04-postgres-service.yml
+      register: postgres_service_result
+      changed_when: "'created' in postgres_service_result.stdout or 'configured' in postgres_service_result.stdout"
+      
+    - name: Check PostgreSQL PVC status
+      shell: kubectl get pvc -n {{ app_namespace }}
+      register: pvc_status
+      changed_when: false
+      failed_when: false
+      
+    - name: Display PVC status
+      debug:
+        msg: "{{ pvc_status.stdout_lines }}"
+      when: pvc_status.stdout is defined
+      
+    - name: Wait for PostgreSQL to be ready
+      block:
+        - name: Wait for PostgreSQL pod
+          shell: |
+            kubectl wait --namespace {{ app_namespace }} \
+              --for=condition=ready pod \
+              --selector=app=ajasta,component=database \
+              --timeout=600s
+          retries: 2
+          delay: 15
+      rescue:
+        - name: Get PostgreSQL pod status on failure
+          shell: kubectl get pods -n {{ app_namespace }} -l component=database
+          register: postgres_pod_status
+          changed_when: false
+          failed_when: false
+          
+        - name: Describe PostgreSQL pod on failure
+          shell: kubectl describe pod -n {{ app_namespace }} -l component=database
+          register: postgres_pod_describe
+          changed_when: false
+          failed_when: false
+          
+        - name: Get PostgreSQL pod logs on failure
+          shell: kubectl logs -n {{ app_namespace }} -l component=database --tail=100
+          register: postgres_pod_logs
+          changed_when: false
+          failed_when: false
+          
+        - name: Display PostgreSQL diagnostics
+          debug:
+            msg:
+              - "=== PostgreSQL Pod Status ==="
+              - "{{ postgres_pod_status.stdout_lines | default(['No output']) }}"
+              - "=== PostgreSQL Pod Description ==="
+              - "{{ postgres_pod_describe.stdout_lines | default(['No output']) }}"
+              - "=== PostgreSQL Pod Logs ==="
+              - "{{ postgres_pod_logs.stdout_lines | default(['No logs available']) }}"
+              
+        - name: Fail after diagnostics
+          fail:
+            msg: "PostgreSQL pod failed to become ready. See diagnostics above."
+      
+    - name: Apply Backend secret
+      command: kubectl apply -f /tmp/ajasta-manifests/05-backend-secret.yml
+      register: backend_secret_result
+      changed_when: "'created' in backend_secret_result.stdout or 'configured' in backend_secret_result.stdout"
+      
+    - name: Apply Backend ConfigMap
+      command: kubectl apply -f /tmp/ajasta-manifests/06-backend-configmap.yml
+      register: backend_config_result
+      changed_when: "'created' in backend_config_result.stdout or 'configured' in backend_config_result.stdout"
+      
+    - name: Apply Backend Deployment
+      command: kubectl apply -f /tmp/ajasta-manifests/07-backend-deployment.yml
+      register: backend_deployment_result
+      changed_when: "'created' in backend_deployment_result.stdout or 'configured' in backend_deployment_result.stdout"
+      
+    - name: Apply Backend Service
+      command: kubectl apply -f /tmp/ajasta-manifests/08-backend-service.yml
+      register: backend_service_result
+      changed_when: "'created' in backend_service_result.stdout or 'configured' in backend_service_result.stdout"
+      
+    - name: Wait for Backend to be ready
+      block:
+        - name: Wait for Backend pod
+          shell: |
+            kubectl wait --namespace {{ app_namespace }} \
+              --for=condition=ready pod \
+              --selector=app=ajasta,component=backend \
+              --timeout=600s
+          retries: 2
+          delay: 15
+      rescue:
+        - name: Get Backend pod status on failure
+          shell: kubectl get pods -n {{ app_namespace }} -l component=backend
+          register: backend_pod_status
+          changed_when: false
+          failed_when: false
+          
+        - name: Describe Backend pod on failure
+          shell: kubectl describe pod -n {{ app_namespace }} -l component=backend
+          register: backend_pod_describe
+          changed_when: false
+          failed_when: false
+          
+        - name: Get Backend pod logs on failure
+          shell: kubectl logs -n {{ app_namespace }} -l component=backend --tail=100
+          register: backend_pod_logs
+          changed_when: false
+          failed_when: false
+          
+        - name: Display Backend diagnostics
+          debug:
+            msg:
+              - "=== Backend Pod Status ==="
+              - "{{ backend_pod_status.stdout_lines | default(['No output']) }}"
+              - "=== Backend Pod Description ==="
+              - "{{ backend_pod_describe.stdout_lines | default(['No output']) }}"
+              - "=== Backend Pod Logs ==="
+              - "{{ backend_pod_logs.stdout_lines | default(['No logs available']) }}"
+              
+        - name: Fail after diagnostics
+          fail:
+            msg: "Backend pod failed to become ready. See diagnostics above."
+      
+    - name: Apply Frontend Deployment
+      command: kubectl apply -f /tmp/ajasta-manifests/09-frontend-deployment.yml
+      register: frontend_deployment_result
+      changed_when: "'created' in frontend_deployment_result.stdout or 'configured' in frontend_deployment_result.stdout"
+      
+    - name: Apply Frontend Service
+      command: kubectl apply -f /tmp/ajasta-manifests/10-frontend-service.yml
+      register: frontend_service_result
+      changed_when: "'created' in frontend_service_result.stdout or 'configured' in frontend_service_result.stdout"
+      
+    - name: Wait for Frontend to be ready
+      shell: |
+        kubectl wait --namespace {{ app_namespace }} \
+          --for=condition=ready pod \
+          --selector=app=ajasta,component=frontend \
+          --timeout=300s
+      retries: 3
+      delay: 10
+      
+    - name: Apply Ingress
+      command: kubectl apply -f /tmp/ajasta-manifests/11-ingress.yml
+      register: ingress_result
+      changed_when: "'created' in ingress_result.stdout or 'configured' in ingress_result.stdout"
+      
+    - name: Wait for Ingress to get an external IP
+      shell: |
+        for i in {1..60}; do
+          IP=$(kubectl get ingress ajasta-ingress -n {{ app_namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+          if [ -n "$IP" ]; then
+            echo "Ingress IP: $IP"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "Timeout waiting for Ingress IP"
+        exit 1
+      register: ingress_ip
+      failed_when: false
+      
+    - name: Get deployment status
+      shell: kubectl get all -n {{ app_namespace }}
+      register: deployment_status
+      changed_when: false
+      
+    - name: Display deployment status
+      debug:
+        msg: "{{ deployment_status.stdout_lines }}"
+        
+    - name: Display Ingress information
+      shell: kubectl get ingress -n {{ app_namespace }}
+      register: ingress_info
+      changed_when: false
+      
+    - name: Show Ingress details
+      debug:
+        msg: "{{ ingress_info.stdout_lines }}"
+        
+    - name: Cleanup temporary manifests
+      file:
+        path: "/tmp/ajasta-manifests/"
+        state: absent

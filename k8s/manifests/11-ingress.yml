@@ -1,0 +1,30 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ajasta-ingress
+  namespace: ajasta
+  labels:
+    app: ajasta
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: ajasta-backend
+            port:
+              number: 8090
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ajasta-frontend
+            port:
+              number: 80

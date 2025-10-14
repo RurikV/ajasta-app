@@ -1,0 +1,15 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: ajasta
+  labels:
+    app: ajasta
+    component: backend
+data:
+  DB_URL: "jdbc:postgresql://ajasta-postgres:5432/ajastadb"
+  DB_USERNAME: "admin"
+  AWS_REGION: "us-east-1"
+  AWS_S3_BUCKET: ""
+  JAVA_OPTS: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
