@@ -1,0 +1,122 @@
+---
+- name: Get Ingress external address (IP or hostname) and provide fallback
+  hosts: k8s_master
+  gather_facts: false
+  become: true
+
+  vars:
+    app_namespace: "ajasta"            # Namespace where the Ingress lives
+    ingress_name: "ajasta-ingress"     # Ingress resource name
+    wait_for_ip: false                 # Default: do not wait; perform a single query
+    timeout_seconds: 90                # If waiting is enabled, cap at 90s by default
+    poll_interval: 5                   # Seconds between polls when waiting
+    show_fallback: true               # Show NodePort fallback URL if no LB address yet
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+    - name: Check kubectl availability
+      command: kubectl version --client
+      register: kubectl_check
+      changed_when: false
+
+    - name: Fail if kubectl is not available
+      fail:
+        msg: "kubectl is not available on the master node"
+      when: kubectl_check.rc != 0
+
+    - name: Fetch Ingress address (poll until IP/hostname available)
+      shell: |
+        set -e
+        ADDR=$(kubectl get ingress {{ ingress_name }} -n {{ app_namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null | tr -d '\n')
+        if [ -z "$ADDR" ]; then
+          ADDR=$(kubectl get ingress {{ ingress_name }} -n {{ app_namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null | tr -d '\n')
+        fi
+        echo -n "$ADDR"
+      register: ingress_addr_result
+      changed_when: false
+      until: (ingress_addr_result.stdout | default('') | trim) != '' or (wait_for_ip | bool) == false
+      retries: "{{ (timeout_seconds | int) // (poll_interval | int) if (wait_for_ip | bool) else 1 }}"
+      delay: "{{ poll_interval | int if (wait_for_ip | bool) else 0 }}"
+
+    - name: Set facts with Ingress address
+      set_fact:
+        ingress_address: "{{ ingress_addr_result.stdout | trim }}"
+
+    - name: Show Ingress external address
+      debug:
+        msg: "Ingress address: {{ ingress_address | default('') }}"
+
+    - name: Gather diagnostics when no Ingress address is available (will not fail yet)
+      block:
+        - name: Describe Ingress
+          shell: kubectl -n {{ app_namespace }} describe ingress {{ ingress_name }}
+          register: ingress_describe
+          changed_when: false
+          failed_when: false
+
+        - name: Get Ingress resource YAML
+          shell: kubectl -n {{ app_namespace }} get ingress {{ ingress_name }} -o yaml
+          register: ingress_yaml
+          changed_when: false
+          failed_when: false
+
+        - name: Get ingress-nginx controller Service YAML
+          shell: kubectl -n ingress-nginx get svc ingress-nginx-controller -o yaml
+          register: controller_svc_yaml
+          changed_when: false
+          failed_when: false
+
+        - name: Get events (ingress-nginx namespace)
+          shell: kubectl -n ingress-nginx get events --sort-by=.lastTimestamp | tail -n 50
+          register: ingress_nginx_events
+          changed_when: false
+          failed_when: false
+
+        - name: Get events (app namespace)
+          shell: kubectl -n {{ app_namespace }} get events --sort-by=.lastTimestamp | tail -n 50
+          register: app_ns_events
+          changed_when: false
+          failed_when: false
+
+        - name: Extract NodePort for HTTP(80) from controller Service
+          shell: |
+            kubectl -n ingress-nginx get svc ingress-nginx-controller \
+              -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}' 2>/dev/null | tr -d '\n'
+          register: controller_http_nodeport
+          changed_when: false
+          failed_when: false
+
+        - name: Determine master public IP from inventory (ansible_host)
+          set_fact:
+            master_public_ip: "{{ hostvars[inventory_hostname].ansible_host | default('') }}"
+
+        - name: Show diagnostics and fallback
+          debug:
+            msg:
+              - "No LoadBalancer address yet for Ingress {{ ingress_name }} in {{ app_namespace }}"
+              - "=== Ingress describe ==="
+              - "{{ ingress_describe.stdout_lines | default(['n/a']) }}"
+              - "=== ingress-nginx controller Service ==="
+              - "{{ controller_svc_yaml.stdout_lines | default(['n/a']) }}"
+              - "=== Recent events (ingress-nginx) ==="
+              - "{{ ingress_nginx_events.stdout_lines | default(['n/a']) }}"
+              - "=== Recent events ({{ app_namespace }}) ==="
+              - "{{ app_ns_events.stdout_lines | default(['n/a']) }}"
+              - "=== Fallback access (NodePort) ==="
+              - "If your nodes have public IPs, try: http://{{ master_public_ip | default('NODE_PUBLIC_IP') }}:{{ controller_http_nodeport.stdout | default('NODEPORT') }}/"
+      when: (ingress_address | default('') | trim) == ''
+
+    - name: Fail if no Ingress address was found
+      fail:
+        msg: |
+          Timeout waiting for Ingress external address (IP/hostname).
+          Ingress: {{ ingress_name }} (namespace: {{ app_namespace }})
+          If you are on bare metal or the cloud LB is not ready, use the NodePort fallback:
+            http://{{ hostvars[inventory_hostname].ansible_host | default('NODE_PUBLIC_IP') }}:{{ controller_http_nodeport.stdout | default('NODEPORT') }}/
+          Tips:
+            - Ensure ingress controller is running: kubectl -n ingress-nginx get pods
+            - Check Ingress status: kubectl -n {{ app_namespace }} describe ingress {{ ingress_name }}
+            - Check controller Service type (LoadBalancer vs NodePort) shown above
+      when: (ingress_address | default('') | trim) == '' and (wait_for_ip | bool)

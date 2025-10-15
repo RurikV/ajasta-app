@@ -274,3 +274,34 @@ Troubleshooting tips
   - `http://ajasta-backend.ajasta.svc.cluster.local:8090`
   - `http://ajasta-frontend.ajasta.svc.cluster.local`
 - If backend curls return 401, that’s expected for secured endpoints. Use authenticated requests or just verify connectivity (status code presence) as shown above.
+
+
+
+### Get Ingress external address via Ansible (IP or hostname)
+Use the lightweight playbook to print the external address of the Ingress. Depending on your environment, Kubernetes may set either an IP or a hostname on `.status.loadBalancer.ingress[]`. The playbook now reports whichever appears first and provides diagnostics and a NodePort fallback if no address is assigned yet.
+
+```bash
+ansible-playbook k8s/get-ingress-ip.yml -i k8s/inventory.ini -vv
+```
+
+Override variables as needed:
+
+```bash
+ansible-playbook k8s/get-ingress-ip.yml -i k8s/inventory.ini \
+  -e app_namespace=ajasta -e ingress_name=ajasta-ingress \
+  -e wait_for_ip=true -e timeout_seconds=300 -e poll_interval=5
+```
+
+If you only want to query once without waiting:
+
+```bash
+ansible-playbook k8s/get-ingress-ip.yml -i k8s/inventory.ini -e wait_for_ip=false
+```
+
+Notes
+- In managed clouds, LoadBalancer provisioning can take tens of seconds or more; the app being "Ready" does not guarantee the external address is instant.
+- If no address is available yet, the playbook prints:
+  - Ingress describe output and recent events
+  - The ingress-nginx controller Service YAML (type LoadBalancer/NodePort)
+  - A fallback URL using NodePort: `http://<master_public_ip>:<nodePort>/`
+- You can use the fallback to test from outside the cluster if your nodes have public IPs.
