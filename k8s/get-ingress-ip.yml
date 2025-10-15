@@ -29,9 +29,15 @@
     - name: Fetch Ingress address (poll until IP/hostname available)
       shell: |
         set -e
+        # Try LoadBalancer IP
         ADDR=$(kubectl get ingress {{ ingress_name }} -n {{ app_namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null | tr -d '\n')
+        # Try LoadBalancer hostname
         if [ -z "$ADDR" ]; then
           ADDR=$(kubectl get ingress {{ ingress_name }} -n {{ app_namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null | tr -d '\n')
+        fi
+        # Try ingress-nginx Service externalIPs[0]
+        if [ -z "$ADDR" ]; then
+          ADDR=$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.spec.externalIPs[0]}' 2>/dev/null | tr -d '\n')
         fi
         echo -n "$ADDR"
       register: ingress_addr_result

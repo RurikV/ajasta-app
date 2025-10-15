@@ -1,0 +1,13 @@
+---
+# Defaults for ingress_externalip_longhorn_check role
+ingress_namespace: "ingress-nginx"
+ingress_service_name: "ingress-nginx-controller"
+# If not provided, the role will try to derive it from the k8s_master host's ansible_host
+external_ip: ""
+# Whether to perform Longhorn namespace presence check
+ensure_longhorn_ns_check: true
+longhorn_namespace: "longhorn-system"
+# Kubernetes namespace where your application Ingress lives (for diagnostics only)
+app_namespace: "ajasta"
+# Kubeconfig path on the master
+kubeconfig_path: "/etc/kubernetes/admin.conf"

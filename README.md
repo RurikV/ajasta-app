@@ -300,8 +300,39 @@ ansible-playbook k8s/get-ingress-ip.yml -i k8s/inventory.ini -e wait_for_ip=fals
 
 Notes
 - In managed clouds, LoadBalancer provisioning can take tens of seconds or more; the app being "Ready" does not guarantee the external address is instant.
+- On bare-metal or VMs without a cloud LoadBalancer, the deploy playbook automatically patches the ingress-nginx controller Service with `externalIPs` (master public IP). This lets you access the app directly on port 80 via `http://<master_public_ip>/` even if `.status.loadBalancer` is empty.
 - If no address is available yet, the playbook prints:
   - Ingress describe output and recent events
   - The ingress-nginx controller Service YAML (type LoadBalancer/NodePort)
   - A fallback URL using NodePort: `http://<master_public_ip>:<nodePort>/`
 - You can use the fallback to test from outside the cluster if your nodes have public IPs.
+
+
+
+### Run networking role only (Ingress external IP patch + Longhorn check)
+This repository provides a reusable Ansible role to:
+- Patch the ingress-nginx controller Service with externalIPs using your master node public IP (to expose the app on port 80 without a cloud LoadBalancer)
+- Check whether the Longhorn installation namespace exists (for storage readiness)
+
+Use the dedicated playbook:
+
+```bash
+ansible-playbook k8s/patch-ingress-and-check-longhorn.yml -i k8s/inventory.ini -vv
+```
+
+Override variables as needed:
+
+```bash
+ansible-playbook k8s/patch-ingress-and-check-longhorn.yml -i k8s/inventory.ini \
+  -e ingress_namespace=ingress-nginx \
+  -e ingress_service_name=ingress-nginx-controller \
+  -e external_ip=158.160.2.48 \
+  -e ensure_longhorn_ns_check=true \
+  -e longhorn_namespace=longhorn-system
+```
+
+Notes
+- If `external_ip` is not provided, the role will use `ansible_host` from the first host in the `[k8s_master]` group in your inventory (the master public IP).
+- The role sets `externalIPs` on the Service in an idempotent way. Re-running is safe.
+- You can run this role independently before or after the full deployment to make the app reachable on `http://<master_public_ip>/` (port 80).
+- Role path (for reference): `k8s/roles/ingress_externalip_longhorn_check`.

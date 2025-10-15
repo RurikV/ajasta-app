@@ -86,6 +86,27 @@
       when: nginx_ingress_check.stdout == "not-found"
       retries: 3
       delay: 10
+
+    - name: Patch ingress-nginx controller Service with externalIPs (master public IP)
+      shell: |
+        MASTER_IP="{{ hostvars[groups['k8s_master'][0]].ansible_host | default('') }}"
+        if [ -n "$MASTER_IP" ]; then
+          kubectl -n ingress-nginx patch svc ingress-nginx-controller \
+            --type merge \
+            -p "{\"spec\":{\"externalIPs\":[\"$MASTER_IP\"]}}"
+          echo "Added externalIPs [$MASTER_IP] to ingress-nginx-controller Service"
+        else
+          echo "Master public IP not found in inventory; skipping externalIPs patch"
+        fi
+      register: ingress_svc_patch
+      changed_when: "Added externalIPs" in ingress_svc_patch.stdout
+      failed_when: false
+
+    - name: Show ingress-nginx controller Service summary
+      shell: kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide
+      register: ingress_svc_summary
+      changed_when: false
+      failed_when: false
       
     - name: Check if Longhorn is already installed
       shell: kubectl get namespace longhorn-system -o name 2>/dev/null || echo "not-found"
