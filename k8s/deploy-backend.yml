@@ -1,0 +1,144 @@
+---
+- name: Deploy Ajasta Backend, Frontend and Ingress to Kubernetes
+  hosts: k8s_master
+  gather_facts: false
+  become: true
+
+  vars:
+    manifests_dir: "manifests"
+    app_namespace: "ajasta"
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+    - name: Ensure manifests are available on master
+      copy:
+        src: "{{ manifests_dir }}/"
+        dest: "/tmp/ajasta-manifests/"
+        mode: '0644'
+
+    - name: Apply Backend secret
+      command: kubectl apply -f /tmp/ajasta-manifests/05-backend-secret.yml
+      register: backend_secret_result
+      changed_when: "'created' in backend_secret_result.stdout or 'configured' in backend_secret_result.stdout"
+
+    - name: Apply Backend ConfigMap
+      command: kubectl apply -f /tmp/ajasta-manifests/06-backend-configmap.yml
+      register: backend_config_result
+      changed_when: "'created' in backend_config_result.stdout or 'configured' in backend_config_result.stdout"
+
+    - name: Apply Backend Deployment
+      command: kubectl apply -f /tmp/ajasta-manifests/07-backend-deployment.yml
+      register: backend_deployment_result
+      changed_when: "'created' in backend_deployment_result.stdout or 'configured' in backend_deployment_result.stdout"
+
+    - name: Apply Backend Service
+      command: kubectl apply -f /tmp/ajasta-manifests/08-backend-service.yml
+      register: backend_service_result
+      changed_when: "'created' in backend_service_result.stdout or 'configured' in backend_service_result.stdout"
+
+    - name: Wait for Backend to be ready
+      block:
+        - name: Wait for Backend pod
+          shell: |
+            kubectl wait --namespace {{ app_namespace }} \
+              --for=condition=ready pod \
+              --selector=app=ajasta,component=backend \
+              --timeout=600s
+          retries: 2
+          delay: 15
+      rescue:
+        - name: Get Backend pod status on failure
+          shell: kubectl get pods -n {{ app_namespace }} -l component=backend
+          register: backend_pod_status
+          changed_when: false
+          failed_when: false
+
+        - name: Describe Backend pod on failure
+          shell: kubectl describe pod -n {{ app_namespace }} -l component=backend
+          register: backend_pod_describe
+          changed_when: false
+          failed_when: false
+
+        - name: Get Backend pod logs on failure
+          shell: kubectl logs -n {{ app_namespace }} -l component=backend --tail=100
+          register: backend_pod_logs
+          changed_when: false
+          failed_when: false
+
+        - name: Display Backend diagnostics
+          debug:
+            msg:
+              - "=== Backend Pod Status ==="
+              - "{{ backend_pod_status.stdout_lines | default(['No output']) }}"
+              - "=== Backend Pod Description ==="
+              - "{{ backend_pod_describe.stdout_lines | default(['No output']) }}"
+              - "=== Backend Pod Logs ==="
+              - "{{ backend_pod_logs.stdout_lines | default(['No logs available']) }}"
+
+        - name: Fail after diagnostics
+          fail:
+            msg: "Backend pod failed to become ready. See diagnostics above."
+
+    - name: Apply Frontend Deployment
+      command: kubectl apply -f /tmp/ajasta-manifests/09-frontend-deployment.yml
+      register: frontend_deployment_result
+      changed_when: "'created' in frontend_deployment_result.stdout or 'configured' in frontend_deployment_result.stdout"
+
+    - name: Apply Frontend Service
+      command: kubectl apply -f /tmp/ajasta-manifests/10-frontend-service.yml
+      register: frontend_service_result
+      changed_when: "'created' in frontend_service_result.stdout or 'configured' in frontend_service_result.stdout"
+
+    - name: Wait for Frontend to be ready
+      shell: |
+        kubectl wait --namespace {{ app_namespace }} \
+          --for=condition=ready pod \
+          --selector=app=ajasta,component=frontend \
+          --timeout=300s
+      retries: 3
+      delay: 10
+
+    - name: Apply Ingress
+      command: kubectl apply -f /tmp/ajasta-manifests/11-ingress.yml
+      register: ingress_result
+      changed_when: "'created' in ingress_result.stdout or 'configured' in ingress_result.stdout"
+
+    - name: Wait for Ingress to get an external IP
+      shell: |
+        for i in {1..60}; do
+          IP=$(kubectl get ingress ajasta-ingress -n {{ app_namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+          if [ -n "$IP" ]; then
+            echo "Ingress IP: $IP"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "Timeout waiting for Ingress IP"
+        exit 1
+      register: ingress_ip
+      failed_when: false
+
+    - name: Get deployment status
+      shell: kubectl get all -n {{ app_namespace }}
+      register: deployment_status
+      changed_when: false
+
+    - name: Display deployment status
+      debug:
+        msg: "{{ deployment_status.stdout_lines }}"
+
+    - name: Display Ingress information
+      shell: kubectl get ingress -n {{ app_namespace }}
+      register: ingress_info
+      changed_when: false
+
+    - name: Show Ingress details
+      debug:
+        msg: "{{ ingress_info.stdout_lines }}"
+
+    - name: Cleanup temporary manifests
+      file:
+        path: "/tmp/ajasta-manifests/"
+        state: absent

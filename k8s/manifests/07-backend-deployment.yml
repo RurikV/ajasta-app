@@ -99,17 +99,16 @@ spec:
             configMapKeyRef:
               name: backend-config
               key: JAVA_OPTS
+        # Use TCP probes to avoid 401 from secured actuator endpoints
         livenessProbe:
-          httpGet:
-            path: /actuator/health
+          tcpSocket:
             port: 8090
           initialDelaySeconds: 60
           periodSeconds: 30
           timeoutSeconds: 10
           failureThreshold: 3
         readinessProbe:
-          httpGet:
-            path: /actuator/health
+          tcpSocket:
             port: 8090
           initialDelaySeconds: 60
           periodSeconds: 10

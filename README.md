@@ -150,5 +150,55 @@ Planned evolutions typically include richer booking flows, payments, and product
 - Frontend README: ajasta-react/README.md
 
 
+## Kubernetes Deployment (Ansible + Longhorn)
+This repository includes an Ansible-based workflow to deploy Ajasta to a Kubernetes cluster with one master and three worker nodes, using Longhorn as the default StorageClass.
+
+Prerequisites
+- Ansible installed on your operator machine
+- A Kubernetes control plane node (k8s-master) with kubectl configured (KUBECONFIG=/etc/kubernetes/admin.conf)
+- SSH access to master and workers as defined in k8s/inventory.ini
+- Internet egress for the cluster nodes to pull images and Longhorn manifests
+
+Inventory
+- Edit k8s/inventory.ini to match your master and worker IPs and SSH user. Groups used by the playbooks:
+  - [k8s_master] — the control-plane node where kubectl runs
+  - [k8s_workers] — all worker nodes (Longhorn and workloads run here)
+
+Deploy full stack (ingress, Longhorn, PostgreSQL, backend, frontend)
+```
+ansible-playbook k8s/deploy-ajasta.yml -i k8s/inventory.ini -vv
+```
+
+Deploy only from Backend phase (Backend, Frontend, Ingress)
+- Useful when cluster and PostgreSQL are already in place, or for quick app updates.
+```
+ansible-playbook k8s/deploy-backend.yml -i k8s/inventory.ini -vv
+```
+
+Notes about workers and Ansible PLAY RECAP
+- The play targets the k8s_master host. Tasks that configure worker nodes (e.g., open-iscsi install, Longhorn checks) are executed via delegate_to to each worker.
+- Because of this delegation, Ansible’s PLAY RECAP lists k8s-master as the host for most tasks. Workers are still fully configured; they just don’t appear as separate recap hosts.
+
+Longhorn requirements and troubleshooting
+- The playbook installs Longhorn v1.5.x and sets StorageClass longhorn as default.
+- iSCSI initiator is required on workers. The playbook auto-installs it:
+  - CentOS/RHEL/Alma/Rocky: iscsi-initiator-utils
+  - Ubuntu/Debian: open-iscsi
+- If PostgreSQL PVC remains Pending, check Longhorn:
+  - kubectl -n longhorn-system get pods
+  - kubectl -n longhorn-system logs -l app=longhorn-manager --tail=100
+  - kubectl get storageclass
+- Common cause: missing iscsiadm on workers (manifests will log "Failed environment check ... iscsiadm: No such file or directory"). Ensure iscsid service is active on all workers.
+
+Backend readiness/liveness probes
+- The backend’s Spring Boot actuator endpoints are secured. Kubernetes HTTP probes to /actuator/health can return 401.
+- The deployment uses TCP probes on port 8090 to avoid false negatives.
+
+## Helpful Links
+- Deployment tooling and deep‑dive: scripts/README.md
+- VM container management: VM_CONTAINER_MANAGEMENT.md
+- GitLab CI variables: GITLAB_VARIABLES.md
+- Frontend README: ajasta-react/README.md
+
 ## License
 This repository may contain third‑party components with their own licenses. Unless stated otherwise, project code is provided as‑is for demonstration and development purposes.

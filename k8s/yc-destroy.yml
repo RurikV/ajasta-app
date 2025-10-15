@@ -50,19 +50,6 @@
           - yc_folder_id | length > 0
         fail_msg: "yc_cloud_id and yc_folder_id must be provided in group_vars/all.yml or via YC_CLOUD_ID/YC_FOLDER_ID env vars or yc CLI config (yc init)"
 
-    - name: Build list of static IP addresses to destroy
-      ansible.builtin.set_fact:
-        static_ip_addresses: "{{ ([master_address_name] + (workers | map(attribute='address_name') | list)) | select('defined') | select('string') | reject('equalto', '') | list }}"
-
-    - name: Destroy static IP addresses
-      ansible.builtin.shell: |
-        yc vpc address delete {{ item }} --folder-id {{ yc_folder_id }} 2>/dev/null || echo "Address {{ item }} not found or already deleted"
-      args:
-        chdir: "{{ playbook_dir }}/.."
-      environment: "{{ env_base }}"
-      loop: "{{ static_ip_addresses }}"
-      failed_when: false
-
     - name: Destroy all created YC resources (VMs, subnets, networks, SA)
       ansible.builtin.shell: |
         {{ scripts_dir }}/destroy-all.zsh
@@ -82,3 +69,16 @@
           'CLEAN_LOCAL_KEYS': 'false',
           'CLEAN_SA_KEY': 'true'
         }) }}"
+
+    - name: Build list of static IP addresses to destroy
+      ansible.builtin.set_fact:
+        static_ip_addresses: "{{ ([master_address_name] + (workers | map(attribute='address_name') | list)) | select('defined') | select('string') | reject('equalto', '') | list }}"
+
+    - name: Destroy static IP addresses
+      ansible.builtin.shell: |
+        yc vpc address delete {{ item }} --folder-id {{ yc_folder_id }} 2>/dev/null || echo "Address {{ item }} not found or already deleted"
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base }}"
+      loop: "{{ static_ip_addresses }}"
+      failed_when: false

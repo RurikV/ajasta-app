@@ -86,10 +86,10 @@ spec:
         component: database
     spec:
       accessModes: ["ReadWriteOnce"]
-      # Use local-path storage class for persistent storage
-      # The local-path-provisioner is automatically installed by deploy-ajasta.yml
-      # For production with dedicated storage, consider using a different storageClassName
-      storageClassName: "local-path"
+      # Use Longhorn storage class for persistent storage
+      # Longhorn is automatically installed by deploy-ajasta.yml
+      # Longhorn provides distributed block storage with replication across worker nodes
+      storageClassName: "longhorn"
       resources:
         requests:
           storage: 5Gi
