@@ -1,0 +1,159 @@
+---
+# Role: open_web_ports
+# Purpose: Ensure the master VM accepts inbound connections on TCP ports 80/443
+# Compatible with CentOS Stream 9 (nftables backend via firewalld) and generic iptables.
+
+- name: Detect OS facts
+  ansible.builtin.setup:
+    gather_subset:
+      - '!all'
+      - '!min'
+      - os_family
+      - distribution
+  register: _facts
+
+- name: Check if firewalld is installed
+  ansible.builtin.shell: rpm -q firewalld >/dev/null 2>&1 && echo present || echo absent
+  register: _firewalld_pkg
+  changed_when: false
+  failed_when: false
+
+- name: Check if firewalld is running
+  ansible.builtin.shell: systemctl is-active --quiet firewalld && echo active || echo inactive
+  register: _firewalld_active
+  changed_when: false
+  failed_when: false
+
+- name: Decide firewall backend
+  ansible.builtin.set_fact:
+    _fw_backend_effective: >-
+      {{
+        firewall_backend if firewall_backend != 'auto' else (
+          'firewalld' if _firewalld_pkg.stdout == 'present' else 'iptables'
+        )
+      }}
+
+- name: Open ports via firewalld (permanent)
+  when: _fw_backend_effective == 'firewalld'
+  block:
+    - name: Ensure firewalld is running
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Add ports to firewalld permanent config (idempotent)
+      ansible.builtin.shell: |
+        if ! firewall-cmd --permanent --query-port={{ item }}/tcp >/dev/null 2>&1; then
+          firewall-cmd --permanent --add-port={{ item }}/tcp
+          echo CHANGED
+        else
+          echo OK
+        fi
+      register: _fw_add_port
+      changed_when: "'CHANGED' in _fw_add_port.stdout"
+      loop: "{{ open_ports }}"
+
+    - name: Determine if any firewalld port changed
+      ansible.builtin.set_fact:
+        _fw_any_changed: "{{ _fw_add_port.results | selectattr('stdout','search','CHANGED') | list | length > 0 }}"
+
+    - name: Reload firewalld to apply changes
+      ansible.builtin.command: firewall-cmd --reload
+      when: _fw_any_changed | bool
+      changed_when: true
+
+    - name: Show active firewalld ports
+      ansible.builtin.command: firewall-cmd --list-ports
+      register: _fw_ports
+      changed_when: false
+
+- name: Open ports via iptables/nftables (fallback)
+  when: _fw_backend_effective != 'firewalld'
+  block:
+    - name: Ensure iptables-services package is present (if available)
+      ansible.builtin.shell: |
+        if command -v dnf >/dev/null 2>&1; then
+          dnf -y install iptables-services || true
+        elif command -v yum >/dev/null 2>&1; then
+          yum -y install iptables-services || true
+        fi
+        echo done
+      register: _iptables_pkg
+      changed_when: false
+      failed_when: false
+
+    - name: Create systemd unit to persist iptables rules
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/ajasta-iptables-ports.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Ajasta iptables rules for web ports
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/usr/sbin/iptables -I INPUT -p tcp --dport 80 -j ACCEPT
+          ExecStart=/usr/sbin/iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+          ExecStop=/usr/sbin/iptables -D INPUT -p tcp --dport 80 -j ACCEPT
+          ExecStop=/usr/sbin/iptables -D INPUT -p tcp --dport 443 -j ACCEPT
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start iptables ports service
+      ansible.builtin.systemd:
+        name: ajasta-iptables-ports.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Show iptables INPUT rules (grep 80/443)
+      ansible.builtin.shell: iptables -S INPUT | grep -E -- "--dport (80|443)" || true
+      register: _iptables_rules
+      changed_when: false
+      failed_when: false
+
+    - name: Show kube-proxy NAT rules related to external IP:80 (best-effort)
+      ansible.builtin.shell: |
+        iptables -t nat -S | grep -F "{{ hostvars[groups['k8s_master'][0]].ansible_host | default('') }}" | grep -F "dpt:80" || true
+      register: _nat_rules
+      changed_when: false
+      failed_when: false
+
+- name: Verify local connectivity to Ingress from master (localhost)
+  ansible.builtin.shell: |
+    set -e
+    # Try curl to localhost:80; return only HTTP status code or CURL error
+    curl -sS -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1/ || echo "curl_failed"
+  register: _curl_local
+  changed_when: false
+  failed_when: false
+
+- name: Verify external connectivity using master public IP
+  ansible.builtin.shell: |
+    set -e
+    MASTER_IP="{{ hostvars[groups['k8s_master'][0]].ansible_host | default('') }}"
+    if [ -n "$MASTER_IP" ]; then
+      curl -sS -o /dev/null -w "HTTP %{http_code}\n" http://$MASTER_IP/ || echo "curl_failed"
+    else
+      echo "no_master_ip"
+    fi
+  register: _curl_external
+  changed_when: false
+  failed_when: false
+
+- name: Summary of firewall configuration
+  ansible.builtin.debug:
+    msg:
+      - "Firewall backend used: {{ _fw_backend_effective }}"
+      - "firewalld installed: {{ _firewalld_pkg.stdout }} active: {{ _firewalld_active.stdout }}"
+      - "firewalld ports (if any): {{ _fw_ports.stdout | default('n/a') }}"
+      - "iptables rules (if any): {{ _iptables_rules.stdout | default('n/a') }}"
+      - "kube-proxy NAT rules (best-effort): {{ _nat_rules.stdout | default('n/a') }}"
+      - "curl localhost result: {{ _curl_local.stdout | default('n/a') }}"
+      - "curl external ({{ hostvars[groups['k8s_master'][0]].ansible_host | default('') }}) result: {{ _curl_external.stdout | default('n/a') }}"
+      - "Note: localhost:80 may be closed when using Service externalIPs; external IP curl is the canonical check."

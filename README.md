@@ -336,3 +336,28 @@ Notes
 - The role sets `externalIPs` on the Service in an idempotent way. Re-running is safe.
 - You can run this role independently before or after the full deployment to make the app reachable on `http://<master_public_ip>/` (port 80).
 - Role path (for reference): `k8s/roles/ingress_externalip_longhorn_check`.
+
+
+
+### Expose Ingress on port 80 (open VM firewall)
+If your environment has no cloud LoadBalancer, the playbooks expose the Ingress via the master VM public IP. Ensure the VM firewall allows inbound 80/443.
+
+Run the minimal role to open ports on the master:
+
+```bash
+ansible-playbook k8s/open-web-ports.yml -i k8s/inventory.ini -vv
+```
+
+- Defaults open TCP ports: 80 and 443
+- Backend auto-detects firewalld (preferred on CentOS Stream 9) and falls back to iptables if firewalld is not installed
+- Idempotent and safe to re-run
+
+Override variables (optional):
+
+```bash
+ansible-playbook k8s/open-web-ports.yml -i k8s/inventory.ini \
+  -e open_ports='[80,443]' \
+  -e firewall_backend=auto   # or firewalld | iptables
+```
+
+After running, the role prints a summary including current firewall rules and curl checks (localhost and master public IP). If you still cannot reach `http://<master_public_ip>/`, verify your cloud security group permits inbound TCP/80 and TCP/443 to the master VM.

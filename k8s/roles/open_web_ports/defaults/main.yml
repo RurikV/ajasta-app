@@ -1,0 +1,8 @@
+---
+# Defaults for open_web_ports role
+# Ports to open on the master VM to expose ingress-nginx externally
+open_ports: [80, 443]
+# Firewall backend preference: auto | firewalld | nftables | iptables
+firewall_backend: "auto"
+# Kubeconfig path (not strictly required here, but useful if future checks are added)
+kubeconfig_path: "/etc/kubernetes/admin.conf"
