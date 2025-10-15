@@ -202,3 +202,75 @@ Backend readiness/liveness probes
 
 ## License
 This repository may contain third‑party components with their own licenses. Unless stated otherwise, project code is provided as‑is for demonstration and development purposes.
+
+
+## Test the web app with curl (Kubernetes)
+This section shows quick ways to validate the deployment from both inside and outside the cluster using curl. It assumes you deployed to the `ajasta` namespace and applied the provided Ingress manifest.
+
+Resources created by the manifests:
+- Backend Service: `ajasta-backend` (ClusterIP, port 8090)
+- Frontend Service: `ajasta-frontend` (ClusterIP, port 80)
+- Ingress: `ajasta-ingress` (path-based rules: `/api` → backend, `/` → frontend)
+
+Important note about backend health endpoint
+- The backend secures Spring Boot Actuator endpoints, so HTTP GET /actuator/health without authentication will typically return 401. This is expected. For readiness, we use TCP probes.
+
+Inside the cluster (via a temporary curl pod)
+- Launch a throwaway curl pod in the `ajasta` namespace and test Services by their DNS names.
+
+```bash
+# Start a temporary curl pod (removed after exit)
+kubectl run -n ajasta -it curl --rm \
+  --image=curlimages/curl:8.10.1 --restart=Never -- sh
+
+# From the shell inside the pod:
+# 1) Frontend Service (should return 200 and some HTML)
+curl -sS -o /dev/null -w "HTTP %{http_code}\n" http://ajasta-frontend/
+
+# 2) Backend over Service DNS (connectivity check). Expect 401/404 for unauthenticated endpoints.
+curl -sS -D- http://ajasta-backend:8090/api -o /dev/null
+
+# 3) Optional: check only that the port is open (TCP-level)
+#    curl will return a non-empty response or an HTTP status; success indicates connectivity.
+curl -sS -o /dev/null -w "TCP OK to 8090 (HTTP %{http_code})\n" http://ajasta-backend:8090/
+```
+
+Alternative (inside cluster): port-forward to your laptop
+```bash
+# Backend
+kubectl -n ajasta port-forward svc/ajasta-backend 18090:8090 >/dev/null 2>&1 &
+# Frontend
+kubectl -n ajasta port-forward svc/ajasta-frontend 18080:80   >/dev/null 2>&1 &
+
+# Then on your machine:
+curl -I http://localhost:18080/
+# Backend will require auth for most endpoints; this just checks connectivity
+curl -sS -D- http://localhost:18090/api -o /dev/null
+```
+
+Outside the cluster (through Ingress)
+- The provided Ingress is path-based and does not require a hostname. Get the external IP and curl it directly.
+
+```bash
+# Get Ingress external IP
+INGRESS_IP=$(kubectl get ingress ajasta-ingress -n ajasta -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "Ingress IP: ${INGRESS_IP}"
+
+# Frontend root should return 200
+curl -sS -o /dev/null -w "HTTP %{http_code}\n" http://$INGRESS_IP/
+
+# Backend via path /api (expect 401 for protected endpoints without auth)
+curl -sS -D- http://$INGRESS_IP/api -o /dev/null
+
+# Example: check static asset is served (adjust path if your frontend uses a different index)
+curl -I http://$INGRESS_IP/
+```
+
+Troubleshooting tips
+- If the Ingress has no external IP yet, wait a bit or check controller status:
+  - `kubectl -n ingress-nginx get pods`
+  - `kubectl -n ajasta describe ingress ajasta-ingress`
+- If Services don’t resolve inside the cluster, confirm the pod is in the same namespace or use fully-qualified DNS:
+  - `http://ajasta-backend.ajasta.svc.cluster.local:8090`
+  - `http://ajasta-frontend.ajasta.svc.cluster.local`
+- If backend curls return 401, that’s expected for secured endpoints. Use authenticated requests or just verify connectivity (status code presence) as shown above.
