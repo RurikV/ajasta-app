@@ -4,5 +4,11 @@
 open_ports: [80, 443]
 # Firewall backend preference: auto | firewalld | nftables | iptables
 firewall_backend: "auto"
-# Kubeconfig path (not strictly required here, but useful if future checks are added)
+# Whether to run a localhost:80 curl test (can be misleading when using Service externalIPs)
+open_web_ports_check_local: false
+# Optionally bind a local listener on port 80 that forwards to ingress NodePort (via socat)
+# When true, the role will create and start a systemd service listening on 0.0.0.0:80
+# and proxying to 127.0.0.1:<ingress_nodeport>. Useful to make `curl http://127.0.0.1` work.
+enable_local_port80_proxy: false
+# Kubeconfig path (used for optional diagnostics that query Kubernetes)
 kubeconfig_path: "/etc/kubernetes/admin.conf"

@@ -33,6 +33,14 @@
         )
       }}
 
+- name: Normalize open_ports input (parse strings and coerce to list)
+  ansible.builtin.set_fact:
+    _open_ports_parsed: "{{ open_ports if (open_ports is sequence and open_ports is not string) else (open_ports | from_yaml) }}"
+
+- name: Ensure open_ports is a list
+  ansible.builtin.set_fact:
+    _open_ports_list: "{{ _open_ports_parsed if (_open_ports_parsed is sequence and _open_ports_parsed is not string) else [_open_ports_parsed] }}"
+
 - name: Open ports via firewalld (permanent)
   when: _fw_backend_effective == 'firewalld'
   block:
@@ -52,7 +60,7 @@
         fi
       register: _fw_add_port
       changed_when: "'CHANGED' in _fw_add_port.stdout"
-      loop: "{{ open_ports }}"
+      loop: "{{ _open_ports_list }}"
 
     - name: Determine if any firewalld port changed
       ansible.builtin.set_fact:
@@ -124,7 +132,61 @@
       changed_when: false
       failed_when: false
 
+- name: Set KUBECONFIG for optional Kubernetes diagnostics
+  ansible.builtin.set_fact:
+    _env_kube:
+      KUBECONFIG: "{{ kubeconfig_path }}"
+
+- name: Optionally fetch ingress-nginx NodePort for HTTP(80)
+  ansible.builtin.shell: |
+    kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}' 2>/dev/null | tr -d '\n'
+  environment: "{{ _env_kube }}"
+  register: _controller_http_nodeport
+  changed_when: false
+  failed_when: false
+
+- name: Ensure socat is installed when local port80 proxy is enabled
+  when: enable_local_port80_proxy | bool
+  ansible.builtin.shell: |
+    set -e
+    if command -v socat >/dev/null 2>&1; then echo ok; exit 0; fi
+    if command -v dnf >/dev/null 2>&1; then dnf -y install socat; echo installed; exit 0; fi
+    if command -v yum >/dev/null 2>&1; then yum -y install socat || yum -y install nmap-ncat; echo installed; exit 0; fi
+    if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get -y install socat; echo installed; exit 0; fi
+    echo "socat_not_installed" && exit 1
+  register: _socat_install
+  changed_when: '"installed" in _socat_install.stdout'
+
+- name: Create systemd unit to proxy 0.0.0.0:80 -> 127.0.0.1:NodePort (socat)
+  when: enable_local_port80_proxy | bool and (_controller_http_nodeport.stdout | length) > 0
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ajasta-port80-proxy.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Ajasta local port 80 proxy to ingress NodePort
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/bin/socat TCP-LISTEN:80,reuseaddr,fork TCP:127.0.0.1:{{ _controller_http_nodeport.stdout }}
+      Restart=always
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Enable and start ajasta-port80-proxy
+  when: enable_local_port80_proxy | bool and (_controller_http_nodeport.stdout | length) > 0
+  ansible.builtin.systemd:
+    name: ajasta-port80-proxy.service
+    enabled: true
+    state: restarted
+    daemon_reload: true
+
 - name: Verify local connectivity to Ingress from master (localhost)
+  when: open_web_ports_check_local | bool or (enable_local_port80_proxy | bool)
   ansible.builtin.shell: |
     set -e
     # Try curl to localhost:80; return only HTTP status code or CURL error
@@ -133,18 +195,43 @@
   changed_when: false
   failed_when: false
 
+- name: Capture listener on :80 (ss)
+  when: enable_local_port80_proxy | bool
+  ansible.builtin.shell: ss -tlnp | grep -E "\*:80 |127\.0\.0\.1:80 " || true
+  register: _ss_port80
+  changed_when: false
+  failed_when: false
+
 - name: Verify external connectivity using master public IP
   ansible.builtin.shell: |
     set -e
     MASTER_IP="{{ hostvars[groups['k8s_master'][0]].ansible_host | default('') }}"
     if [ -n "$MASTER_IP" ]; then
-      curl -sS -o /dev/null -w "HTTP %{http_code}\n" http://$MASTER_IP/ || echo "curl_failed"
+      curl --connect-timeout 3 --max-time 8 -sS -o /dev/null -w "HTTP %{http_code}\n" http://$MASTER_IP/ || echo "curl_failed"
     else
       echo "no_master_ip"
     fi
   register: _curl_external
   changed_when: false
   failed_when: false
+
+- name: Verify NodePort fallback using master public IP (best-effort)
+  ansible.builtin.shell: |
+    set -e
+    MASTER_IP="{{ hostvars[groups['k8s_master'][0]].ansible_host | default('') }}"
+    NP="{{ _controller_http_nodeport.stdout | default('') }}"
+    if [ -n "$MASTER_IP" ] && [ -n "$NP" ]; then
+      curl --connect-timeout 3 --max-time 8 -sS -o /dev/null -w "HTTP %{http_code}\n" http://$MASTER_IP:$NP/ || echo "curl_failed"
+    else
+      echo "nodeport_unavailable"
+    fi
+  register: _curl_nodeport
+  changed_when: false
+  failed_when: false
+
+- name: Compute external connectivity verdict
+  ansible.builtin.set_fact:
+    _external_pass: "{{ ((_curl_external.stdout | default('')) | regex_search('HTTP (2|3)')) is not none }}"
 
 - name: Summary of firewall configuration
   ansible.builtin.debug:
@@ -154,6 +241,9 @@
       - "firewalld ports (if any): {{ _fw_ports.stdout | default('n/a') }}"
       - "iptables rules (if any): {{ _iptables_rules.stdout | default('n/a') }}"
       - "kube-proxy NAT rules (best-effort): {{ _nat_rules.stdout | default('n/a') }}"
-      - "curl localhost result: {{ _curl_local.stdout | default('n/a') }}"
+      - "ss -tlnp port 80 (if proxy enabled): {{ _ss_port80.stdout | default('n/a') }}"
+      - "curl localhost result (optional): {{ _curl_local.stdout | default('skipped') }}"
       - "curl external ({{ hostvars[groups['k8s_master'][0]].ansible_host | default('') }}) result: {{ _curl_external.stdout | default('n/a') }}"
+      - "curl NodePort fallback (if available) result: {{ _curl_nodeport.stdout | default('n/a') }}"
+      - "External connectivity verdict: {{ 'PASS' if _external_pass else 'CHECK CLOUD SG/INGRESS' }}"
       - "Note: localhost:80 may be closed when using Service externalIPs; external IP curl is the canonical check."

@@ -1,0 +1,19 @@
+---
+- name: Open Yandex Cloud Security Group ports for HTTP/HTTPS (and optional NodePort)
+  hosts: local
+  gather_facts: false
+  become: false
+
+  vars:
+    # Override as needed
+    sg_ports: [80, 443]
+    sg_cidrs: ["0.0.0.0/0"]
+    sg_add_nodeport: false
+    sg_nodeport: ""
+    sg_id: ""
+    instance_name: "k8s-master"
+    master_public_ip: ""
+    kubeconfig_path: "/etc/kubernetes/admin.conf"
+
+  roles:
+    - role: roles/yc_open_sg_http

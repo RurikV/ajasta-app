@@ -99,7 +99,7 @@
           echo "Master public IP not found in inventory; skipping externalIPs patch"
         fi
       register: ingress_svc_patch
-      changed_when: "Added externalIPs" in ingress_svc_patch.stdout
+      changed_when: '"Added externalIPs" in ingress_svc_patch.stdout'
       failed_when: false
 
     - name: Show ingress-nginx controller Service summary

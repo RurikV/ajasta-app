@@ -1,0 +1,30 @@
+---
+# Defaults for yc_open_sg_http role
+# Open inbound ports in Yandex Cloud Security Group(s) attached to the master VM
+
+# TCP ports to open
+sg_ports: [80, 443]
+# CIDR blocks to allow
+sg_cidrs: ["0.0.0.0/0"]
+# Whether to also open the ingress-nginx HTTP NodePort (auto-detected)
+sg_add_nodeport: false
+# Optionally force a specific nodePort instead of auto-detection
+sg_nodeport: ""
+
+# Identify the master instance / security group
+# If sg_id is provided, the role will update only that SG.
+# Otherwise it will try to discover SGs from the master instance.
+sg_id: ""
+sg_name: ""         # Not used directly; prefer sg_id. Kept for future extension.
+instance_name: "k8s-master"
+# Public IP of the master host (from inventory by default)
+master_public_ip: ""
+
+# Kubernetes access (for NodePort auto-detection)
+kubeconfig_path: "/etc/kubernetes/admin.conf"
+
+# Behavior
+# When true, failure to detect SGs will produce a clear message but not stop the play
+fail_soft: true
+# When true and no SGs are attached to the master instance, create one and attach it automatically
+auto_create_sg: true

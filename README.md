@@ -361,3 +361,108 @@ ansible-playbook k8s/open-web-ports.yml -i k8s/inventory.ini \
 ```
 
 After running, the role prints a summary including current firewall rules and curl checks (localhost and master public IP). If you still cannot reach `http://<master_public_ip>/`, verify your cloud security group permits inbound TCP/80 and TCP/443 to the master VM.
+
+
+
+### Open Yandex Cloud Security Group ports (HTTP/HTTPS)
+If your cluster runs on Yandex Cloud, inbound traffic may still be blocked at the cloud Security Group level even when the VM firewall is open. Use the provided playbook to open TCP/80 and TCP/443 on the Security Group(s) attached to the master instance.
+
+Note: The playbook now auto-creates and attaches a Security Group to the master instance if none is attached (controlled by `auto_create_sg`, default: `true`). You can disable this behavior with `-e auto_create_sg=false`.
+
+Auto-discovery: the role first tries to find the master instance by matching the master public IP (NAT address) and extracts attached Security Group IDs; if that fails, it falls back to the instance name (k8s-master by default). You can always override with `-e sg_id=...`.
+
+Prerequisites
+- `yc` CLI installed and authenticated on your Ansible runner
+- Your inventory has a `[local]` group (already present in k8s/inventory.ini)
+
+Run (default opens 80/443):
+```bash
+ansible-playbook k8s/open-cloud-ports.yml -i k8s/inventory.ini -vv
+```
+
+Options:
+```bash
+# Explicitly set the SG ID (skips auto-discovery by instance name)
+ansible-playbook k8s/open-cloud-ports.yml -i k8s/inventory.ini \
+  -e sg_id=YOUR_SG_ID
+
+# Also open the ingress-nginx HTTP NodePort (auto-detected via KUBECONFIG)
+ansible-playbook k8s/open-cloud-ports.yml -i k8s/inventory.ini \
+  -e sg_add_nodeport=true
+
+# Override instance name used for SG discovery (default: k8s-master)
+ansible-playbook k8s/open-cloud-ports.yml -i k8s/inventory.ini \
+  -e instance_name=k8s-master
+```
+
+Notes
+- The role attempts to discover SG IDs from the compute instance named `k8s-master`. If discovery fails, pass `-e sg_id=...` explicitly.
+- The role adds rules idempotently; duplicate-add attempts are ignored safely.
+- Combine this with `k8s/open-web-ports.yml` (VM firewall) and the ingress controller externalIPs patch to expose your app at `http://<MASTER_PUBLIC_IP>/`.
+
+
+
+### Expose Ingress end-to-end (combined playbook)
+Use a single playbook to patch the ingress controller Service with the master public IP, open Yandex Cloud Security Group ports (80/443 and the HTTP NodePort), and verify external reachability.
+
+```bash
+ansible-playbook k8s/expose-ingress.yml -i k8s/inventory.ini -vv
+```
+
+What it does:
+- Patches `ingress-nginx/ingress-nginx-controller` Service with `externalIPs: [<MASTER_PUBLIC_IP>]`
+- Opens inbound TCP/80 and TCP/443 in the Yandex Cloud Security Group(s) attached to `k8s-master`
+- Also opens the ingress-nginx HTTP NodePort as a fallback path
+- Prints the effective external address and a quick curl result
+
+Notes:
+- Requires `yc` CLI installed and authenticated on the machine running Ansible (for SG updates)
+- You can still run the steps separately using:
+  - `k8s/patch-ingress-and-check-longhorn.yml`
+  - `k8s/open-cloud-ports.yml`
+  - `k8s/get-ingress-ip.yml`
+
+
+
+### Rancher access (NodePort) — diagnose and expose
+If you cannot access Rancher anymore at a URL like `https://<MASTER_PUBLIC_IP>:<NODEPORT>/` (example you used: `https://51.250.21.26:31318/`), the NodePort may have changed or cloud/VM firewalls may block the port.
+
+Use the combined playbook to detect Rancher’s current HTTPS NodePort, open it on the master VM firewall, open it in the Yandex Cloud Security Group(s), and print a ready-to-use URL:
+
+```bash
+ansible-playbook k8s/expose-rancher.yml -i k8s/inventory.ini -vv
+```
+
+What it does:
+- Detects the Rancher Service at `cattle-system/rancher` and reads the HTTPS NodePort
+- Opens that NodePort on the master VM firewall (firewalld/iptables)
+- Opens the same NodePort in your Yandex Cloud Security Group(s) (requires `yc` CLI on the operator machine)
+- Prints diagnostic curls and the final URL to try from your machine
+
+If the playbook reports a different NodePort than the one you used before (e.g. not `31318`), update your URL accordingly.
+
+Troubleshooting notes:
+- Curls from the master to its own public IP may fail due to hairpin NAT; the authoritative test is from your machine on the Internet.
+- If you prefer to only open the cloud Security Group rules and you already know the NodePort, you can run:
+  ```bash
+  ansible-playbook k8s/open-cloud-ports.yml -i k8s/inventory.ini \
+    -e sg_add_nodeport=true -e sg_nodeport=<RANCHER_NODEPORT> -vv
+  ```
+
+
+
+### Disable OS firewall on cluster nodes (quick workaround)
+If you prefer to completely disable the operating system firewall on all cluster nodes (master + workers), use the helper playbook below. This stops and disables firewalld, flushes nftables/iptables (best‑effort), and removes the custom iptables unit if it exists.
+
+Warning: Disabling the OS firewall is not recommended for production environments. Prefer configuring specific allowed ports instead (see open-web-ports.yml and open-cloud-ports.yml). Use this only for troubleshooting in a trusted network.
+
+```bash
+ansible-playbook k8s/disable-firewall.yml -i k8s/inventory.ini -vv
+```
+
+What it does:
+- Stops, disables, and masks firewalld (if installed)
+- Flushes nftables ruleset (if nft is available)
+- Flushes iptables filter rules and sets INPUT/FORWARD/OUTPUT policies to ACCEPT (if iptables is available)
+- Removes the ajasta-iptables-ports systemd unit if present
+- Prints a concise summary of actions taken

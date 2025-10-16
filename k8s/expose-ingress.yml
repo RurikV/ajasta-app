@@ -1,0 +1,154 @@
+---
+# Expose the web app externally on port 80 by:
+# 1) Patching ingress-nginx controller Service with externalIPs (master public IP)
+# 2) Opening Yandex Cloud Security Group ports (80/443, optionally NodePort)
+# 3) Verifying external reachability and printing the effective address
+
+- name: Patch ingress Service external IPs (runs on master)
+  hosts: k8s_master
+  gather_facts: false
+  become: true
+
+  vars:
+    ingress_namespace: "ingress-nginx"
+    ingress_service_name: "ingress-nginx-controller"
+    external_ip: ""                 # derived from [k8s_master].ansible_host if empty
+    ensure_longhorn_ns_check: false  # skip LH check here; can be run separately
+    kubeconfig_path: "/etc/kubernetes/admin.conf"
+
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+  roles:
+    - role: roles/ingress_externalip_longhorn_check
+
+- name: Ensure ingress controller Service externalTrafficPolicy is Cluster (runs on master)
+  hosts: k8s_master
+  gather_facts: false
+  become: true
+
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+  tasks:
+    - name: Patch externalTrafficPolicy to Cluster if needed
+      ansible.builtin.shell: |
+        set -e
+        CURRENT=$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.spec.externalTrafficPolicy}' 2>/dev/null | tr -d '\n')
+        if [ "$CURRENT" != "Cluster" ]; then
+          kubectl -n ingress-nginx patch svc ingress-nginx-controller --type merge -p '{"spec":{"externalTrafficPolicy":"Cluster"}}'
+          echo "Patched externalTrafficPolicy to Cluster"
+        else
+          echo "externalTrafficPolicy already Cluster"
+        fi
+      register: _policy_patch
+      changed_when: '"Patched externalTrafficPolicy to Cluster" in _policy_patch.stdout'
+      failed_when: false
+
+
+- name: Open Yandex Cloud Security Group for HTTP/HTTPS (runs locally)
+  hosts: local
+  gather_facts: false
+  become: false
+
+  vars:
+    sg_ports: [80, 443]
+    sg_cidrs: ["0.0.0.0/0"]
+    sg_add_nodeport: true      # also open the ingress-nginx HTTP NodePort for fallback
+    sg_nodeport: ""           # let the role auto-detect it
+    sg_id: ""                 # let the role auto-discover SG IDs from instance unless provided
+    instance_name: "k8s-master"
+    master_public_ip: ""       # derived from inventory if empty
+    kubeconfig_path: "/etc/kubernetes/admin.conf"
+
+  roles:
+    - role: roles/yc_open_sg_http
+
+
+- name: Verify external reachability and print address (runs on master)
+  hosts: k8s_master
+  gather_facts: false
+  become: true
+
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+  tasks:
+    - name: Controller Service summary
+      ansible.builtin.shell: kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide
+      register: _svc_summary
+      changed_when: false
+      failed_when: false
+
+    - name: Determine master public IP from inventory
+      ansible.builtin.set_fact:
+        _master_public_ip: "{{ hostvars[inventory_hostname].ansible_host | default('') }}"
+
+    - name: Fetch Ingress external address (IP/hostname/externalIPs)
+      ansible.builtin.shell: |
+        set -e
+        # Try LoadBalancer IP
+        ADDR=$(kubectl get ingress ajasta-ingress -n ajasta -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null | tr -d '\n')
+        # Try LoadBalancer hostname
+        if [ -z "$ADDR" ]; then
+          ADDR=$(kubectl get ingress ajasta-ingress -n ajasta -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null | tr -d '\n')
+        fi
+        # Try Service externalIPs[0]
+        if [ -z "$ADDR" ]; then
+          ADDR=$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.spec.externalIPs[0]}' 2>/dev/null | tr -d '\n')
+        fi
+        echo -n "$ADDR"
+      register: _ingress_addr
+      changed_when: false
+      failed_when: false
+
+    - name: Extract ingress-nginx HTTP NodePort
+      ansible.builtin.shell: |
+        kubectl -n ingress-nginx get svc ingress-nginx-controller \
+          -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}' 2>/dev/null | tr -d '\n'
+      register: _http_nodeport
+      changed_when: false
+      failed_when: false
+
+    - name: Try curl to external address (master public IP)
+      ansible.builtin.shell: |
+        set -e
+        if [ -n "{{ _master_public_ip }}" ]; then
+          curl --connect-timeout 3 --max-time 8 -sS -o /dev/null -w "HTTP %{http_code}\n" http://{{ _master_public_ip }}/ || echo "curl_failed"
+        else
+          echo "no_master_ip"
+        fi
+      register: _curl_external
+      changed_when: false
+      failed_when: false
+
+    - name: Try curl to NodePort fallback via master public IP (best-effort)
+      ansible.builtin.shell: |
+        set -e
+        if [ -n "{{ _master_public_ip }}" ] && [ -n "{{ _http_nodeport.stdout | default('') }}" ]; then
+          curl --connect-timeout 3 --max-time 8 -sS -o /dev/null -w "HTTP %{http_code}\n" http://{{ _master_public_ip }}:{{ _http_nodeport.stdout }}/ || echo "curl_failed"
+        else
+          echo "nodeport_unavailable"
+        fi
+      register: _curl_nodeport
+      changed_when: false
+      failed_when: false
+
+    - name: Check kube-proxy NAT rules for externalIP:80 (best-effort)
+      ansible.builtin.shell: |
+        iptables -t nat -S | grep -F "{{ _master_public_ip | default('') }}" | grep -F "dpt:80" || true
+      register: _nat_rules
+      changed_when: false
+      failed_when: false
+
+    - name: Output verification summary
+      ansible.builtin.debug:
+        msg:
+          - "=== ingress-nginx-controller Service ==="
+          - "{{ _svc_summary.stdout_lines | default(['n/a']) }}"
+          - "Effective Ingress address (IP/hostname/externalIP): {{ _ingress_addr.stdout | default('') }}"
+          - "Test from outside: http://{{ _master_public_ip | default('MASTER_PUBLIC_IP') }}/"
+          - "Master curl to public IP (hairpin may fail): {{ _curl_external.stdout | default('n/a') }}"
+          - "Curl NodePort fallback via public IP: {{ _curl_nodeport.stdout | default('n/a') }}"
+          - "NAT rules hint (externalIP:80): {{ _nat_rules.stdout | default('n/a') }}"
+          - "Note: Some clouds (incl. YC) do not support hairpin NAT; external test from your machine is authoritative."
