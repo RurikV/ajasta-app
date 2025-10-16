@@ -308,6 +308,58 @@ See `.env.example` for complete configuration options.
 
 ---
 
+## Kubernetes Management
+
+### 🔧 Configure Local kubectl Access
+
+If you have deployed the application to a Kubernetes cluster, you can configure your local `kubectl` to access the cluster:
+
+```bash
+# Fetch kubeconfig from K8s master and configure local access
+./scripts/fetch-kubeconfig.zsh
+```
+
+**What this script does:**
+1. Reads master node information from `ansible-k8s/inventory.ini`
+2. Connects to the K8s master node via SSH
+3. Fetches the kubeconfig file from the master
+4. Updates the server URL to use the external IP address
+5. Merges into `~/.kube/config` with context name `ajasta-cluster`
+6. Sets proper permissions (600)
+7. Tests the connection and displays cluster information
+
+**Prerequisites:**
+- K8s cluster deployed and running
+- SSH access to master node (uses `~/.ssh/id_rsa_k8s` or `~/.ssh/id_rsa`)
+- `kubectl` installed locally
+- `ansible-k8s/inventory.ini` file with master node information
+
+**After configuration:**
+```bash
+# View cluster info
+kubectl cluster-info
+
+# Get nodes
+kubectl get nodes
+
+# Get all resources in ajasta namespace
+kubectl get all -n ajasta
+
+# Switch between contexts
+kubectl config use-context ajasta-cluster
+```
+
+**Environment Variables:**
+- `KUBECONFIG_CONTEXT`: Custom name for kubectl context (default: `ajasta-cluster`)
+- `SSH_KEY`: SSH private key path (default: auto-detect `~/.ssh/id_rsa_k8s` or `~/.ssh/id_rsa`)
+
+**Example with custom context name:**
+```bash
+KUBECONFIG_CONTEXT=my-cluster ./scripts/fetch-kubeconfig.zsh
+```
+
+---
+
 ## Troubleshooting
 
 ### Common Issues

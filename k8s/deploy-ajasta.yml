@@ -798,11 +798,25 @@
       command: kubectl apply -f /tmp/ajasta-manifests/09-frontend-deployment.yml
       register: frontend_deployment_result
       changed_when: "'created' in frontend_deployment_result.stdout or 'configured' in frontend_deployment_result.stdout"
+
+    - name: Ensure frontend uses ClusterIP Service (or override)
+      shell: |
+        kubectl -n {{ app_namespace }} set env deploy/ajasta-frontend \
+          FRONTEND_API_BASE="{{ frontend_api_base | default('http://ajasta-backend:8090/api') }}"
+      register: frontend_env_result
+      changed_when: false
+      failed_when: false
       
     - name: Apply Frontend Service
       command: kubectl apply -f /tmp/ajasta-manifests/10-frontend-service.yml
       register: frontend_service_result
       changed_when: "'created' in frontend_service_result.stdout or 'configured' in frontend_service_result.stdout"
+      
+    - name: Force rollout restart of frontend (ensure initContainer rewrite runs)
+      shell: kubectl -n {{ app_namespace }} rollout restart deploy/ajasta-frontend
+      register: frontend_rollout_restart
+      changed_when: false
+      failed_when: false
       
     - name: Wait for Frontend to be ready
       shell: |
@@ -812,6 +826,26 @@
           --timeout=300s
       retries: 3
       delay: 10
+
+    - name: Guard check — ensure no leftover ${external_ip} in served assets
+      shell: |
+        set -e
+        POD=$(kubectl -n {{ app_namespace }} get pods -l app=ajasta,component=frontend -o name | head -n1)
+        if [ -z "$POD" ]; then echo "no_frontend_pod"; exit 1; fi
+        kubectl -n {{ app_namespace }} exec "$POD" -- sh -lc 'grep -R "external_ip" -n /usr/share/nginx/html || true'
+      register: frontend_external_ip_grep
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if ${external_ip} placeholder still present in frontend assets
+      fail:
+        msg: |
+          Detected leftover ${external_ip} references in frontend assets after rollout. This breaks API calls (ERR_NAME_NOT_RESOLVED).
+          Offending lines:\n{{ frontend_external_ip_grep.stdout }}
+          Remediation:
+          - Ensure FRONTEND_API_BASE is set to http://ajasta-backend:8090/api
+          - Re-apply 09-frontend-deployment.yml and rerun this play
+      when: frontend_external_ip_grep.stdout is defined and (frontend_external_ip_grep.stdout | trim) != ""
       
     - name: Apply Ingress
       command: kubectl apply -f /tmp/ajasta-manifests/11-ingress.yml

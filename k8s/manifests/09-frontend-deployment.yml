@@ -27,12 +27,49 @@ spec:
             - matchExpressions:
               - key: node-role.kubernetes.io/control-plane
                 operator: DoesNotExist
+      volumes:
+      - name: webroot
+        emptyDir: {}
+      initContainers:
+      - name: fix-api-base-url
+        image: vladimirryrik/ajasta-frontend:alpine
+        env:
+        - name: FRONTEND_API_BASE
+          value: "http://ajasta-backend:8090/api"
+        command: ["/bin/sh","-c"]
+        args:
+          - |
+            set -e
+            rm -rf /work && mkdir -p /work
+            cp -r /usr/share/nginx/html/* /work/
+            # Prefer Kubernetes Service ClusterIP if available, else Service DNS
+            BACKEND_HOST="${AJASTA_BACKEND_SERVICE_HOST:-ajasta-backend}"
+            # Build full API base and host-only base
+            BASE="${FRONTEND_API_BASE:-http://${BACKEND_HOST}:8090/api}"
+            BASE_HOST="${BASE%/api}"
+            # Rewrite legacy placeholders and hard-coded URLs to use ClusterIP/DNS
+            find /work -type f \( -name "*.js" -o -name "*.html" -o -name "*.map" -o -name "*.css" \) -exec sed -i \
+              -e "s#http://\${external_ip}:8090/api#${BASE}#gI" \
+              -e "s#https://\${external_ip}:8090/api#${BASE}#gI" \
+              -e "s#http://\${external_ip}:8090#${BASE_HOST}#gI" \
+              -e "s#https://\${external_ip}:8090#${BASE_HOST}#gI" \
+              -e "s#http://localhost:8090/api#${BASE}#gI" \
+              -e "s#https://localhost:8090/api#${BASE}#gI" \
+              -e "s#http://localhost:8090#${BASE_HOST}#gI" \
+              -e "s#https://localhost:8090#${BASE_HOST}#gI" \
+              -e "s#\${external_ip}#${BACKEND_HOST}#gI" {} + || true
+        volumeMounts:
+        - name: webroot
+          mountPath: /work
       containers:
       - name: frontend
         image: vladimirryrik/ajasta-frontend:alpine
         ports:
         - containerPort: 80
           name: http
+        volumeMounts:
+        - name: webroot
+          mountPath: /usr/share/nginx/html
         livenessProbe:
           httpGet:
             path: /

@@ -4,12 +4,12 @@ FROM node:20-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 # Allow overriding API base URL for different environments (local, cloud)
-ARG API_BASE_URL="http://localhost:8090/api"
+ARG API_BASE_URL="/api"
 ENV API_BASE_URL=${API_BASE_URL}
 COPY . .
-# Rewrite ApiService BASE_URL at build time to avoid changing source manually
+# Build frontend; ApiService resolves base at runtime, but allow override via API_BASE_URL
 RUN npm ci --no-audit --no-fund && \
-  sed -i "s#static BASE_URL = \"http://localhost:8090/api\";#static BASE_URL = \"${API_BASE_URL}\";#" src/services/ApiService.js && \
+  sed -i "s#static BASE_URL = \"http://localhost:8090/api\";#static BASE_URL = \"${API_BASE_URL}\";#" src/services/ApiService.js || true && \
   npm run build
 
 # Runtime stage (nginx)

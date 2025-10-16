@@ -1,10 +1,28 @@
 import axios from "axios";
 axios.defaults.withCredentials = true;
 
+// Determine API base URL at runtime. Prefer explicit env/config, fall back to Ingress path.
+const __RUNTIME_API_BASE__ = (() => {
+    try {
+        // 1) React env vars at build time or injected globals at runtime
+        const envUrl = (typeof process !== 'undefined' && process.env && (process.env.REACT_APP_API_BASE_URL || process.env.API_BASE_URL))
+            || (typeof window !== 'undefined' && (window.__API_BASE_URL || window.API_BASE_URL));
+        if (envUrl && typeof envUrl === 'string') {
+            return envUrl.replace(/\/$/, '');
+        }
+        // 2) If running in browser, use current origin + /api routed by Ingress
+        if (typeof window !== 'undefined' && window.location && window.location.origin) {
+            return `${window.location.origin}/api`;
+        }
+    } catch (_) {}
+    // 3) Safe default: relative path via Ingress
+    return '/api';
+})();
+
 export default class ApiService {
 
 
-    static BASE_URL = "http://localhost:8090/api";
+    static BASE_URL = __RUNTIME_API_BASE__;
     // static BASE_URL = "http://18.221.120.102:8090/api"; //production base url
 
     // In-memory cache for roles (never persisted to localStorage)
