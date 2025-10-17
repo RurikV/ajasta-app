@@ -1,8 +1,7 @@
 # Ajasta App
 
-Modern appointment booking and resource scheduling platform. This monorepo contains the backend API (Spring Boot), the frontend (React served by Nginx), and all infrastructure needed to run locally with Docker Compose or on a cloud VM.
-
-The goal is to provide an end‑to‑end setup: from development and testing on your laptop to one‑command provisioning and deployment to a virtual machine.
+Ajasta App is a modern appointment booking and resource scheduling platform.
+This monorepo includes a Spring Boot backend, a React frontend served by Nginx, and infrastructure to run locally with Docker Compose or deploy to a cloud VM in one command.
 
 
 ## Why Ajasta?
