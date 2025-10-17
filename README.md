@@ -465,3 +465,96 @@ What it does:
 - Flushes iptables filter rules and sets INPUT/FORWARD/OUTPUT policies to ACCEPT (if iptables is available)
 - Removes the ajasta-iptables-ports systemd unit if present
 - Prints a concise summary of actions taken
+
+
+---
+
+# Homework: Project Kickoff Preparation
+
+Below are the required artifacts for the assignment: project description, target audience and personas, MVP, a frontend wireframe, application entities with their REST methods, and an architecture diagram in draw.io format. Additionally, docker-compose includes authorization (Keycloak) and monitoring (OpenSearch + OpenSearch Dashboards) components.
+
+## Project Name and Short Description
+Ajasta is a platform for online booking and resource scheduling (professionals, meeting rooms, services). End users can see available time slots and create bookings; businesses manage resources, schedules, and notifications.
+
+## Target Audience and Client Personas
+- Micro and small businesses in services:
+  - Salons, studios, clinics, individual professionals (doctors, trainers, tutors).
+  - Needs: online schedule, reminders, low total cost of ownership.
+- SMB/teams inside companies:
+  - Booking of meeting rooms, equipment, internal services.
+  - Needs: role-based authorization, integrations, reporting.
+- End users:
+  - Convenient mobile booking, quick cancel/reschedule, notifications.
+
+## MVP
+- Sign up and login (JWT; optionally Keycloak as an auth provider).
+- Resource CRUD (services/professionals/rooms).
+- Availability view and booking creation.
+- Email notifications (Mailhog in dev).
+- Simple admin panel: bookings list, resource management.
+
+## Frontend Wireframe (ASCII)
+```
++------------------------------------------------------+
+| Header: Logo | [Resources] [Bookings] [Profile]      |
++------------------------------------------------------+
+| Left: Filters/Resources list                          |
+|  - Search                                            |
+|  - Resource types                                    |
+|                                                      |
+| Main: Calendar / Slots                               |
+|  [Mon][Tue][Wed][Thu][Fri]                           |
+|   09:00  [Book]  [Book]  [—]   [Book]                |
+|   10:00  [—]     [Book]  [Book] [Book]               |
+|   ...                                                |
+|                                                      |
+| Booking form (modal):                                |
+|  Resource ▼ | Date/Time | Customer info | [Confirm]  |
++------------------------------------------------------+
+```
+
+## Application Entities and Methods
+- User
+  - Fields: id, email, name, roles, createdAt
+  - Methods (REST):
+    - POST /api/auth/register — register
+    - POST /api/auth/login — login, returns JWT
+    - GET /api/users/me — current user profile
+- Resource (entity: professional/room/service)
+  - Fields: id, name, type, metadata, active
+  - Methods: GET /api/resources, POST /api/resources, GET /api/resources/{id}, PUT/PATCH /api/resources/{id}, DELETE /api/resources/{id}
+- Availability (availability slots)
+  - Fields: id, resourceId, start, end, capacity
+  - Methods: GET /api/resources/{id}/availability, POST /api/resources/{id}/availability
+- Booking
+  - Fields: id, resourceId, userId, start, end, status
+  - Methods: GET /api/bookings?resourceId=..., POST /api/bookings, GET /api/bookings/{id}, PATCH /api/bookings/{id}/cancel
+- Notification
+  - Fields: id, bookingId, type, status, createdAt
+  - Methods: (internal) POST /internal/notifications/email
+
+## Architecture (draw.io)
+Diagram file: diagrams/ajasta-architecture.drawio
+- Open at https://app.diagrams.net (File → Open From → Device) and select the file.
+- The diagram shows: Browser → Nginx (React) → Spring Boot → PostgreSQL, plus Mailhog, Adminer, Keycloak, and OpenSearch.
+
+## Infrastructure: Docker Compose (auth and monitoring)
+docker-compose.yml includes:
+- Keycloak (host port 8081) — admin console: http://localhost:8081
+  - Variables: KEYCLOAK_ADMIN=admin, KEYCLOAK_ADMIN_PASSWORD=admin (for DEV)
+- OpenSearch (port 9200) and OpenSearch Dashboards (port 5601)
+  - Dashboards: http://localhost:5601
+  - OpenSearch runs without the security plugin in DEV, single-node.
+
+How to run:
+- Standard: docker compose up -d
+- Local access:
+  - Frontend: http://localhost:3000
+  - Backend: http://localhost:8090
+  - Keycloak: http://localhost:8081
+  - OpenSearch: http://localhost:9200
+  - Dashboards: http://localhost:5601
+
+Notes:
+- For production, enable security in OpenSearch/Elasticsearch and use an external Postgres for Keycloak.
+- In local development the backend uses JWT; Keycloak integration can be enabled via Spring Security OAuth2 if needed.
