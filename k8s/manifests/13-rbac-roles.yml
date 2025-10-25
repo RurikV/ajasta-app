@@ -1,0 +1,78 @@
+---
+# Role for read-only access to ajasta namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: reader-role
+  namespace: ajasta
+rules:
+  - apiGroups: ["", "apps", "batch", "extensions"]
+    resources:
+      - configmaps
+      - endpoints
+      - persistentvolumeclaims
+      - pods
+      - pods/log
+      - pods/status
+      - replicationcontrollers
+      - replicationcontrollers/scale
+      - serviceaccounts
+      - services
+      - daemonsets
+      - deployments
+      - deployments/scale
+      - replicasets
+      - replicasets/scale
+      - statefulsets
+      - statefulsets/scale
+      - cronjobs
+      - jobs
+      - ingresses
+    verbs: ["get", "list", "watch"]
+---
+# Role for read-write access to ajasta namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: writer-role
+  namespace: ajasta
+rules:
+  - apiGroups: ["", "apps", "batch", "extensions"]
+    resources:
+      - configmaps
+      - endpoints
+      - persistentvolumeclaims
+      - pods
+      - pods/log
+      - pods/status
+      - pods/exec
+      - replicationcontrollers
+      - replicationcontrollers/scale
+      - services
+      - daemonsets
+      - deployments
+      - deployments/scale
+      - replicasets
+      - replicasets/scale
+      - statefulsets
+      - statefulsets/scale
+      - cronjobs
+      - jobs
+      - ingresses
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources:
+      - serviceaccounts
+    verbs: ["get", "list", "watch"]
+---
+# ClusterRole for admin access (full cluster control)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: admin-role
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+  - nonResourceURLs: ["*"]
+    verbs: ["*"]
