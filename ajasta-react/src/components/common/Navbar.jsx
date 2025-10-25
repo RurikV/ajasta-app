@@ -60,6 +60,7 @@ const Navbar = () => {
             <div className="desktop-nav">
                 <Link to="/" className="nav-link">{t('home')}</Link>
                 <Link to="/resources" className="nav-link">{t('resources')}</Link>
+                <Link to="/cms" className="nav-link">CMS</Link>
 
                 {/* Language Dropdown */}
                 <div className="language-dropdown" style={{ position: 'relative', display: 'inline-block' }}>

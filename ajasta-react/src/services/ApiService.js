@@ -1,28 +1,73 @@
 import axios from "axios";
 axios.defaults.withCredentials = true;
 
-// Determine API base URL at runtime. Prefer explicit env/config, fall back to Ingress path.
+// Determine API base URL at runtime. Prefer explicit env/config, with smart localhost defaults.
 const __RUNTIME_API_BASE__ = (() => {
     try {
-        // 1) React env vars at build time or injected globals at runtime
+        // 1) Build-time env or runtime globals take precedence
         const envUrl = (typeof process !== 'undefined' && process.env && (process.env.REACT_APP_API_BASE_URL || process.env.API_BASE_URL))
             || (typeof window !== 'undefined' && (window.__API_BASE_URL || window.API_BASE_URL));
         if (envUrl && typeof envUrl === 'string') {
             return envUrl.replace(/\/$/, '');
         }
-        // 2) If running in browser, use current origin + /api routed by Ingress
+
+        // 2) Smart defaults depending on environment
         if (typeof window !== 'undefined' && window.location && window.location.origin) {
-            return `${window.location.origin}/api`;
+            const origin = window.location.origin;
+            const port = window.location.port;
+            const hostname = window.location.hostname;
+            const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+
+            // CRA dev server: rely on dev proxy to avoid CORS
+            if (isLocalhost && typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development') {
+                return `${origin}/api`;
+            }
+
+            // Static/production build served at localhost:3000 (e.g., docker-compose nginx)
+            // There is no CRA proxy in this case; direct to backend port 8090 by default.
+            if (isLocalhost && port === '3000' && (typeof process === 'undefined' || !process.env || process.env.NODE_ENV === 'production')) {
+                return 'http://localhost:8090/api';
+            }
+
+            // Generic default: same-origin /api (assumes reverse proxy/Ingress present)
+            return `${origin}/api`;
         }
     } catch (_) {}
     // 3) Safe default: relative path via Ingress
     return '/api';
 })();
 
+// Dedicated CMS base URL with per-service override support
+const __RUNTIME_CMS_API_BASE__ = (() => {
+    try {
+        const envUrl = (typeof process !== 'undefined' && process.env && (process.env.REACT_APP_CMS_API_BASE_URL || process.env.CMS_API_BASE_URL))
+            || (typeof window !== 'undefined' && (window.__CMS_API_BASE_URL || window.CMS_API_BASE_URL));
+        if (envUrl && typeof envUrl === 'string') {
+            return envUrl.replace(/\/$/, '');
+        }
+
+        // Localhost static build at port 3000 (no dev proxy) -> default to CMS on 8091
+        if (typeof window !== 'undefined' && window.location) {
+            const port = window.location.port;
+            const hostname = window.location.hostname;
+            const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+            if (isLocalhost && port === '3000' && (typeof process === 'undefined' || !process.env || process.env.NODE_ENV === 'production')) {
+                return 'http://localhost:8091/api/cms';
+            }
+        }
+
+        // Fallback to primary API base + '/cms'
+        const base = (__RUNTIME_API_BASE__ || '').replace(/\/$/, '');
+        if (base) return `${base}/cms`;
+    } catch (_) {}
+    return '/api/cms';
+})();
+
 export default class ApiService {
 
 
     static BASE_URL = __RUNTIME_API_BASE__;
+    static CMS_BASE_URL = __RUNTIME_CMS_API_BASE__;
     // static BASE_URL = "http://18.221.120.102:8090/api"; //production base url
 
     // In-memory cache for roles (never persisted to localStorage)

@@ -23,6 +23,7 @@ import AdminResourceFormPage from "./components/admin/AdminResourceFormPage";
 import ResourceBookingPage from "./components/resources/ResourceBookingPage";
 import HomePage from "./components/home/HomePage";
 import AdminUsersPage from "./components/admin/AdminUsersPage";
+import CmsPage from "./components/cms/CmsPage";
 
 function App() {
   return (
@@ -40,6 +41,7 @@ function App() {
           <Route path="/resources" element={<ResourcesPage />} />
           <Route path="/resources/:id" element={<ResourceDetailsPage />} />
           <Route path="/resources/:id/book" element={<ResourceBookingPage />} />
+          <Route path="/cms" element={<CmsPage />} />
 
           <Route path="/profile" element={<ProtectedRoute element={<ProfilePage />} />} />
 

@@ -200,3 +200,11 @@ kubectl delete pods -n ajasta -l component=frontend
 **Fix Status**: ✅ **COMPLETE**
 
 The frontend now correctly uses relative API paths that are routed through Kubernetes Ingress, eliminating browser DNS resolution errors.
+
+
+## New localhost defaults (React)
+
+- In production/static builds served on localhost:3000 without an Ingress/proxy for /api, the frontend now automatically targets:
+  - http://localhost:8090/api for the main backend
+  - http://localhost:8091/api/cms for the CMS service
+- This applies only when the app is served on localhost:3000 in production mode. During development (`npm start`), the CRA dev proxy remains in effect and relative URLs `/api/*` are used.

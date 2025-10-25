@@ -25,7 +25,8 @@
   },
   "devDependencies": {
     "eslint": "^8.57.1",
-    "eslint-config-react-app": "^7.0.1"
+    "eslint-config-react-app": "^7.0.1",
+    "http-proxy-middleware": "^3.0.0"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -35,6 +36,7 @@
     "lint": "eslint \"src/**/*.{js,jsx,ts,tsx}\"",
     "lint:fix": "eslint \"src/**/*.{js,jsx,ts,tsx}\" --fix"
   },
+  "proxy": "http://localhost:8090",
   "eslintConfig": {
     "extends": [
       "react-app",
