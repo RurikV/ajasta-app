@@ -11,6 +11,35 @@
 set -e
 
 NAMESPACE="ajasta"
+
+# Check if KUBECONFIG is set to a service account config
+if [ -n "$KUBECONFIG" ]; then
+    echo "WARNING: KUBECONFIG environment variable is set to: $KUBECONFIG"
+    echo "This script requires cluster-admin access. If you're using a service account kubeconfig,"
+    echo "please unset KUBECONFIG first: unset KUBECONFIG"
+    echo ""
+    read -p "Continue anyway? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 1
+    fi
+fi
+
+# Verify we have admin access by checking if we can list secrets in the namespace
+if ! kubectl auth can-i get secrets -n "$NAMESPACE" >/dev/null 2>&1; then
+    echo "ERROR: Current kubectl context does not have permission to read secrets in namespace '$NAMESPACE'"
+    echo "This script requires cluster-admin access."
+    echo ""
+    echo "Current context: $(kubectl config current-context 2>/dev/null || echo 'unknown')"
+    echo ""
+    echo "If KUBECONFIG is set to a service account config, unset it:"
+    echo "  unset KUBECONFIG"
+    echo ""
+    echo "Then ensure your default kubeconfig has admin access."
+    exit 1
+fi
+
 CLUSTER_NAME=$(kubectl config view --minify -o jsonpath='{.clusters[0].name}')
 CLUSTER_SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
 OUTPUT_DIR="./kubeconfigs"
@@ -29,8 +58,10 @@ create_token() {
     local sa_name=$1
     local token_name="${sa_name}-token"
     
-    # Create a Secret with token for the service account (K8s 1.24+)
-    kubectl apply -f - <<EOF
+    # Check if secret already exists
+    if ! kubectl get secret "$token_name" -n "$NAMESPACE" >/dev/null 2>&1; then
+        # Create a Secret with token for the service account (K8s 1.24+)
+        kubectl apply -f - >/dev/null 2>&1 <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
@@ -40,9 +71,12 @@ metadata:
     kubernetes.io/service-account.name: $sa_name
 type: kubernetes.io/service-account-token
 EOF
+        echo "Waiting for token to be created for $sa_name..." >&2
+    else
+        echo "Token secret already exists for $sa_name, reusing..." >&2
+    fi
     
     # Wait for token to be populated
-    echo "Waiting for token to be created for $sa_name..."
     for i in {1..30}; do
         TOKEN=$(kubectl get secret "$token_name" -n "$NAMESPACE" -o jsonpath='{.data.token}' 2>/dev/null || echo "")
         if [ -n "$TOKEN" ]; then
@@ -69,6 +103,10 @@ generate_kubeconfig() {
     local token_base64=$(create_token "$sa_name")
     local token=$(echo "$token_base64" | base64 -d)
     
+    # Note: The token in kubeconfig should be the plain text token (base64-decoded from secret),
+    # NOT base64-encoded. However, we need to ensure it's valid UTF-8 text.
+    # Kubernetes service account tokens are JWT tokens which are valid ASCII/UTF-8.
+    
     # Get CA certificate
     local ca_cert=$(kubectl get secret "$token_name" -n "$NAMESPACE" -o jsonpath='{.data.ca\.crt}')
     
@@ -79,8 +117,8 @@ kind: Config
 clusters:
 - name: $CLUSTER_NAME
   cluster:
-    certificate-authority-data: $ca_cert
     server: $CLUSTER_SERVER
+    insecure-skip-tls-verify: true
 contexts:
 - name: ${sa_name}@${CLUSTER_NAME}
   context:

@@ -116,12 +116,28 @@ kubectl get clusterrolebindings | grep admin-binding
 
 ### Step 3: Generate Kubeconfig Files
 
+**IMPORTANT:** Before running the script, ensure your kubectl context has cluster-admin access:
+
+```bash
+# Check your current context
+kubectl config current-context
+
+# If KUBECONFIG is set to a service account config, unset it first
+unset KUBECONFIG
+
+# Verify you have admin access
+kubectl auth can-i get secrets -n ajasta
+# Should return "yes"
+```
+
 Run the generation script to create kubeconfig files for each service account:
 
 ```bash
 # From the k8s directory
 ./generate-kubeconfigs.sh
 ```
+
+The script will automatically check for proper permissions and warn you if `KUBECONFIG` is set to a non-admin configuration.
 
 This will create three kubeconfig files in the `k8s/kubeconfigs/` directory:
 - `kubeconfig-read.yaml` - For reader-user
@@ -248,6 +264,34 @@ kubectl delete secret admin-user-token -n ajasta
 ```
 
 ## Troubleshooting
+
+### "Token creation timeout" or "Forbidden: cannot get resource secrets"
+
+**Error message:**
+```
+ERROR: Token creation timeout for reader-user
+Error from server (Forbidden): secrets "reader-user-token" is forbidden: 
+User "system:serviceaccount:ajasta:reader-user" cannot get resource "secrets" in API group "" in the namespace "ajasta"
+```
+
+**Cause:** The `generate-kubeconfigs.sh` script is being run with a service account kubeconfig instead of cluster-admin credentials.
+
+**Solution:**
+1. Unset the KUBECONFIG environment variable:
+   ```bash
+   unset KUBECONFIG
+   ```
+2. Verify your default kubectl context has admin access:
+   ```bash
+   kubectl config current-context
+   kubectl auth can-i get secrets -n ajasta
+   ```
+3. Run the script again:
+   ```bash
+   ./generate-kubeconfigs.sh
+   ```
+
+The script now includes automatic validation to detect this issue and provide guidance.
 
 ### "Error from server (Forbidden)" Messages
 
