@@ -7,6 +7,8 @@
   vars:
     manifests_dir: "manifests"
     app_namespace: "ajasta"
+    # Storage backend to use: "longhorn" or "rook"
+    storage_backend: "rook"
     
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
@@ -108,465 +110,32 @@
       changed_when: false
       failed_when: false
       
-    - name: Check if Longhorn is already installed
-      shell: kubectl get namespace longhorn-system -o name 2>/dev/null || echo "not-found"
-      register: longhorn_ns_check
-      changed_when: false
-      
-    - name: Check if Longhorn StorageClass exists
-      shell: kubectl get storageclass longhorn -o name 2>/dev/null || echo "not-found"
-      register: longhorn_sc_check
-      changed_when: false
-      
-    - name: Display Longhorn installation status
+    - name: Display selected storage backend
       debug:
-        msg:
-          - "Longhorn namespace: {{ longhorn_ns_check.stdout }}"
-          - "Longhorn StorageClass: {{ longhorn_sc_check.stdout }}"
+        msg: 
+          - "=== Storage Backend Selection ==="
+          - "Selected storage backend: {{ storage_backend }}"
+          - "{% if storage_backend == 'longhorn' %}Installing Longhorn distributed block storage{% elif storage_backend == 'rook' %}Installing Rook-Ceph distributed storage{% else %}Unknown storage backend!{% endif %}"
       
-    - name: Determine if Longhorn needs setup or recovery
-      set_fact:
-        longhorn_needs_setup: "{{ longhorn_ns_check.stdout == 'not-found' or longhorn_sc_check.stdout == 'not-found' }}"
-      
-    - name: Display Longhorn setup requirement
-      debug:
-        msg: "Longhorn needs setup/recovery: {{ longhorn_needs_setup }}"
-      
-    - name: Delete failed Longhorn installation if namespace exists but StorageClass missing
-      shell: |
-        echo "Longhorn namespace exists but StorageClass is missing - cleaning up failed installation..."
-        kubectl delete namespace longhorn-system --timeout=300s || true
-        echo "Waiting for namespace deletion to complete..."
-        sleep 10
-      when: longhorn_ns_check.stdout != "not-found" and longhorn_sc_check.stdout == "not-found"
-      register: longhorn_cleanup
-      
-    - name: Display Longhorn cleanup result
-      debug:
-        msg: "{{ longhorn_cleanup.stdout_lines }}"
-      when: longhorn_cleanup is defined and longhorn_cleanup.stdout_lines is defined
-      
-    - name: Update namespace check after cleanup
-      shell: kubectl get namespace longhorn-system -o name 2>/dev/null || echo "not-found"
-      register: longhorn_ns_check
-      changed_when: false
-      when: longhorn_cleanup is defined and longhorn_cleanup.changed
-      
-    - name: Get worker nodes for Longhorn
-      shell: |
-        kubectl get nodes -o json | \
-        jq -r '.items[] | select(.spec.taints == null or (.spec.taints | map(select(.key == "node-role.kubernetes.io/control-plane")) | length == 0)) | .metadata.name'
-      register: worker_nodes
-      changed_when: false
-      when: longhorn_needs_setup | bool
-      
-    - name: Display worker nodes for Longhorn
-      debug:
-        msg: "Worker nodes that will use Longhorn: {{ worker_nodes.stdout_lines }}"
-      when: longhorn_needs_setup | bool and worker_nodes.stdout_lines is defined
-      
-    - name: Check and install open-iscsi on worker nodes
-      shell: |
-        # Detect OS type
-        if [ -f /etc/os-release ]; then
-          . /etc/os-release
-          OS_TYPE="$ID"
-        else
-          echo "ERROR: Cannot detect OS type"
-          exit 1
-        fi
-        
-        echo "=== Installing iSCSI initiator on $OS_TYPE ==="
-        
-        # Check if iscsiadm is already available
-        if command -v iscsiadm >/dev/null 2>&1; then
-          echo "✓ iscsiadm is already installed: $(iscsiadm --version 2>&1 | head -1)"
-          # Ensure iscsid service is running
-          systemctl start iscsid 2>/dev/null || true
-          systemctl enable iscsid 2>/dev/null || true
-          systemctl status iscsid --no-pager || echo "⚠ iscsid service status check failed"
-          exit 0
-        fi
-        
-        # Install based on OS type
-        case "$OS_TYPE" in
-          centos|rhel|rocky|almalinux|fedora)
-            echo "Installing iscsi-initiator-utils for RHEL/CentOS-based system..."
-            # Use dnf (preferred) or fall back to yum
-            if command -v dnf >/dev/null 2>&1; then
-              dnf install -y iscsi-initiator-utils
-            else
-              yum install -y iscsi-initiator-utils
-            fi
-            ;;
-          ubuntu|debian)
-            echo "Installing open-iscsi for Debian/Ubuntu-based system..."
-            apt-get update && apt-get install -y open-iscsi
-            ;;
-          *)
-            echo "ERROR: Unsupported OS type: $OS_TYPE"
-            exit 1
-            ;;
-        esac
-        
-        # Verify installation
-        if command -v iscsiadm >/dev/null 2>&1; then
-          echo "✓ iscsiadm installed successfully: $(iscsiadm --version 2>&1 | head -1)"
-        else
-          echo "✗ ERROR: iscsiadm not found after installation!"
-          exit 1
-        fi
-        
-        # Enable and start iscsid service
-        systemctl enable iscsid
-        systemctl start iscsid
-        
-        # Verify service is running
-        if systemctl is-active --quiet iscsid; then
-          echo "✓ iscsid service is active and running"
-        else
-          echo "⚠ WARNING: iscsid service failed to start"
-          systemctl status iscsid --no-pager
-        fi
-      delegate_to: "{{ item }}"
-      loop: "{{ groups['k8s_workers'] }}"
-      when: longhorn_needs_setup | bool
-      register: iscsi_install
-      become: true
-      
-    - name: Display open-iscsi installation results
-      debug:
-        msg: "{{ item.stdout_lines }}"
-      loop: "{{ iscsi_install.results }}"
-      when: longhorn_needs_setup | bool and iscsi_install is defined and iscsi_install.results is defined
-      loop_control:
-        label: "{{ item.item }}"
-      
-    - name: Check Longhorn prerequisites on worker nodes
-      shell: |
-        echo "=== Checking Longhorn Prerequisites ==="
-        
-        # Check iscsi_tcp kernel module
-        if lsmod | grep -q iscsi_tcp; then
-          echo "✓ iscsi_tcp module is loaded"
-        else
-          echo "✗ iscsi_tcp module is NOT loaded"
-          echo "  Attempting to load iscsi_tcp module..."
-          modprobe iscsi_tcp
-          if lsmod | grep -q iscsi_tcp; then
-            echo "✓ iscsi_tcp module loaded successfully"
-          else
-            echo "✗ FAILED to load iscsi_tcp module"
-          fi
-        fi
-        
-        # Check and create Longhorn directory
-        if [ -d /var/lib/longhorn ]; then
-          echo "✓ /var/lib/longhorn directory exists"
-        else
-          echo "  Creating /var/lib/longhorn directory..."
-          mkdir -p /var/lib/longhorn
-          echo "✓ /var/lib/longhorn directory created"
-        fi
-        
-        # Set proper permissions
-        chmod 755 /var/lib/longhorn
-        echo "✓ /var/lib/longhorn permissions set to 755"
-        
-        # Check disk space
-        df -h /var/lib/longhorn | tail -1
-        
-        # Check if multipathd is running (can cause conflicts)
-        if systemctl is-active --quiet multipathd; then
-          echo "⚠ multipathd is running (may cause conflicts with Longhorn)"
-        else
-          echo "✓ multipathd is not running"
-        fi
-        
-        # Verify iscsid is running
-        if systemctl is-active --quiet iscsid; then
-          echo "✓ iscsid service is active"
-        else
-          echo "✗ iscsid service is NOT active"
-        fi
-        
-        echo "=== Prerequisites check complete ==="
-      delegate_to: "{{ item }}"
-      loop: "{{ groups['k8s_workers'] }}"
-      when: longhorn_needs_setup | bool
-      register: longhorn_prereq_check
-      become: true
-      
-    - name: Display Longhorn prerequisites check results
-      debug:
-        msg: "{{ item.stdout_lines }}"
-      loop: "{{ longhorn_prereq_check.results }}"
-      when: longhorn_needs_setup | bool and longhorn_prereq_check is defined and longhorn_prereq_check.results is defined
-      loop_control:
-        label: "{{ item.item }}"
-      
-    - name: Install Longhorn
-      shell: |
-        kubectl apply -f https://raw.githubusercontent.com/longhorn/longhorn/v1.5.3/deploy/longhorn.yaml
-      when: longhorn_needs_setup | bool
-      register: longhorn_install
-      
-    - name: Wait for Longhorn namespace to be created
-      shell: kubectl get namespace longhorn-system -o name
-      register: ns_created
-      until: ns_created.rc == 0
-      retries: 10
-      delay: 5
-      when: longhorn_needs_setup | bool
-      
-    - name: Wait for Longhorn DaemonSet to be created
-      shell: kubectl get daemonset -n longhorn-system longhorn-manager -o name 2>/dev/null || echo "not-found"
-      register: longhorn_ds_check
-      until: longhorn_ds_check.stdout != "not-found"
-      retries: 12
-      delay: 5
-      when: longhorn_needs_setup | bool
-      changed_when: false
-      
-    - name: Get initial Longhorn manager pod status
-      shell: kubectl get pods -n longhorn-system -l app=longhorn-manager -o wide
-      register: initial_longhorn_status
-      when: longhorn_needs_setup | bool
-      changed_when: false
-      failed_when: false
-      
-    - name: Display initial Longhorn manager pod status
-      debug:
-        msg: "{{ initial_longhorn_status.stdout_lines | default(['No pods found yet']) }}"
-      when: longhorn_needs_setup | bool
-      
-    - name: Wait for Longhorn components to be ready
-      block:
-        - name: Check for early CrashLoopBackOff detection
-          shell: |
-            # Check if any pods are in CrashLoopBackOff state
-            kubectl get pods -n longhorn-system -l app=longhorn-manager -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}' | grep -q "CrashLoopBackOff"
-          register: crashloop_check
-          retries: 12
-          delay: 10
-          until: crashloop_check.rc != 0
-          changed_when: false
-          failed_when: false
-          
-        - name: Fail fast if CrashLoopBackOff detected
-          fail:
-            msg: "Longhorn manager pods are in CrashLoopBackOff state. Triggering diagnostics..."
-          when: crashloop_check.rc == 0
-          
-        - name: Wait for Longhorn manager pods to be ready
-          shell: |
-            kubectl wait --namespace longhorn-system \
-              --for=condition=ready pod \
-              --selector=app=longhorn-manager \
-              --timeout=600s
-          retries: 2
-          delay: 10
-          
-        - name: Wait for Longhorn driver deployer to be ready
-          shell: |
-            kubectl wait --namespace longhorn-system \
-              --for=condition=ready pod \
-              --selector=app=longhorn-driver-deployer \
-              --timeout=300s
-          retries: 2
-          delay: 10
-          
-        - name: Wait for Longhorn StorageClass to be created
-          shell: kubectl get storageclass longhorn -o name 2>/dev/null || echo "not-found"
-          register: longhorn_sc_wait
-          until: longhorn_sc_wait.stdout != "not-found"
-          retries: 30
-          delay: 10
-          changed_when: false
-          
-        - name: Verify Longhorn StorageClass was created
-          shell: kubectl get storageclass longhorn -o yaml
-          register: longhorn_sc_details
-          changed_when: false
-          
-        - name: Display Longhorn StorageClass details
-          debug:
-            msg: "{{ longhorn_sc_details.stdout_lines }}"
-      when: longhorn_needs_setup | bool
-      rescue:
-        - name: Get Longhorn pods status on failure
-          shell: kubectl get pods -n longhorn-system -o wide
-          register: longhorn_pods_status
-          changed_when: false
-          failed_when: false
-          
-        - name: Describe Longhorn manager pods on failure
-          shell: kubectl describe pod -n longhorn-system -l app=longhorn-manager
-          register: longhorn_manager_describe
-          changed_when: false
-          failed_when: false
-          
-        - name: Get Longhorn manager logs on failure
-          shell: |
-            for pod in $(kubectl get pods -n longhorn-system -l app=longhorn-manager -o name); do
-              echo "=== Current logs from $pod ==="
-              kubectl logs -n longhorn-system $pod --tail=100 2>&1 || echo "Failed to get current logs"
-              echo ""
-              echo "=== Previous logs from $pod (if crashed) ==="
-              kubectl logs -n longhorn-system $pod --previous --tail=100 2>&1 || echo "No previous logs (pod may not have crashed yet)"
-              echo ""
-            done
-          register: longhorn_manager_logs
-          changed_when: false
-          failed_when: false
-          
-        - name: Check kernel modules on worker nodes
-          shell: |
-            echo "=== Kernel Modules Check ==="
-            lsmod | grep -E "iscsi|nbd|dm_" || echo "No relevant modules found"
-          delegate_to: "{{ item }}"
-          loop: "{{ groups['k8s_workers'] }}"
-          register: kernel_modules_check
-          changed_when: false
-          failed_when: false
-          become: true
-          
-        - name: Get Longhorn events on failure
-          shell: kubectl get events -n longhorn-system --sort-by='.lastTimestamp'
-          register: longhorn_events
-          changed_when: false
-          failed_when: false
-          
-        - name: Check worker nodes status on failure
-          shell: kubectl get nodes -o wide
-          register: nodes_status
-          changed_when: false
-          failed_when: false
-          
-        - name: Check if open-iscsi is running on worker nodes
-          shell: systemctl status iscsid --no-pager || echo "iscsid not running"
-          delegate_to: "{{ item }}"
-          loop: "{{ groups['k8s_workers'] }}"
-          register: iscsi_status_check
-          changed_when: false
-          failed_when: false
-          become: true
-          
-        - name: Check StorageClass status on failure
-          shell: kubectl get storageclass -o wide
-          register: storageclass_status_failure
-          changed_when: false
-          failed_when: false
-          
-        - name: Display Longhorn installation diagnostics
-          debug:
-            msg:
-              - "=== Longhorn Pods Status ==="
-              - "{{ longhorn_pods_status.stdout_lines | default(['No output']) }}"
-              - ""
-              - "=== Longhorn Manager Pod Description ==="
-              - "{{ longhorn_manager_describe.stdout_lines | default(['No output']) }}"
-              - ""
-              - "=== Longhorn Manager Logs (Current + Previous) ==="
-              - "{{ longhorn_manager_logs.stdout_lines | default(['No logs available']) }}"
-              - ""
-              - "=== Longhorn Events ==="
-              - "{{ longhorn_events.stdout_lines | default(['No events']) }}"
-              - ""
-              - "=== Worker Nodes Status ==="
-              - "{{ nodes_status.stdout_lines | default(['No output']) }}"
-              - ""
-              - "=== Kernel Modules on Workers ==="
-              - "{% for result in kernel_modules_check.results %}{{ result.item }}: {{ result.stdout_lines | default(['Failed to check']) | join(' ') }}{% if not loop.last %}\n{% endif %}{% endfor %}"
-              - ""
-              - "=== open-iscsi Status on Workers ==="
-              - "{% for result in iscsi_status_check.results %}{{ result.item }}: {{ result.stdout_lines | default(['Failed to check']) | join(' ') }}{% if not loop.last %}\n{% endif %}{% endfor %}"
-              - ""
-              - "=== StorageClass Status ==="
-              - "{{ storageclass_status_failure.stdout_lines | default(['No StorageClass found']) }}"
-              
-        - name: Fail after Longhorn diagnostics
-          fail:
-            msg: |
-              Longhorn manager pods failed to become ready. See diagnostics above.
-              
-              Common causes:
-              1. open-iscsi not installed/running: Ensure iscsid service is active on all worker nodes
-              2. Insufficient resources: Worker nodes may not have enough CPU/memory
-              3. Disk issues: Check if worker nodes have available disk space
-              4. Network issues: Longhorn requires network connectivity between nodes
-              5. Missing kernel modules: iscsi_tcp module may not be loaded
-              
-              To fix:
-              - Verify open-iscsi on workers: ssh to each worker and run 'systemctl status iscsid'
-              - Check worker resources: kubectl describe nodes
-              - Check Longhorn manager logs above for specific errors
-              - Ensure iscsi_tcp kernel module is loaded: lsmod | grep iscsi_tcp
-              - Check Longhorn system requirements: https://longhorn.io/docs/1.5.3/deploy/install/#installation-requirements
-      
-    - name: Check if Longhorn StorageClass exists (final verification)
-      shell: kubectl get storageclass longhorn -o name 2>/dev/null || echo "not-found"
-      register: longhorn_sc_final_check
-      changed_when: false
-      
-    - name: Set Longhorn as default StorageClass
-      shell: |
-        kubectl patch storageclass longhorn -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
-      when: longhorn_sc_final_check.stdout != "not-found"
-      register: longhorn_default_set
-      changed_when: longhorn_default_set.rc == 0
-      
-    - name: Display StorageClass default setting result
-      debug:
-        msg: "Longhorn StorageClass set as default"
-      when: longhorn_sc_final_check.stdout != "not-found"
-      
-    - name: Warn if StorageClass was not found
-      debug:
-        msg: "WARNING: Longhorn StorageClass not found! PostgreSQL deployment may fail."
-      when: longhorn_sc_final_check.stdout == "not-found"
-      
-    - name: Verify Longhorn installation
-      shell: |
-        kubectl get pods -n longhorn-system
-      register: longhorn_status
-      changed_when: false
-      failed_when: false
-      
-    - name: Display Longhorn pod status
-      debug:
-        msg: "{{ longhorn_status.stdout_lines }}"
-      
-    - name: Verify StorageClass availability before PostgreSQL deployment
-      shell: kubectl get storageclass longhorn -o jsonpath='{.provisioner}'
-      register: storageclass_provisioner
-      changed_when: false
-      failed_when: false
-      
-    - name: Fail if StorageClass is not available
+    - name: Validate storage backend parameter
       fail:
-        msg: |
-          CRITICAL: Longhorn StorageClass does not exist!
-          PostgreSQL requires a StorageClass to provision persistent volumes.
-          
-          The StorageClass should have been created by Longhorn manager pods.
-          Check Longhorn installation logs above for errors.
-          
-          Common causes:
-          1. Longhorn manager pods are not running or in CrashLoopBackOff state
-          2. open-iscsi not properly installed on worker nodes
-          3. Insufficient resources on worker nodes
-          
-          To fix:
-          - Check Longhorn pods: kubectl get pods -n longhorn-system
-          - Check Longhorn manager logs: kubectl logs -n longhorn-system -l app=longhorn-manager
-          - Verify open-iscsi on all workers: systemctl status iscsid
-      when: storageclass_provisioner.rc != 0 or storageclass_provisioner.stdout == ""
+        msg: "Invalid storage_backend value: '{{ storage_backend }}'. Must be 'longhorn' or 'rook'."
+      when: storage_backend not in ['longhorn', 'rook']
       
-    - name: Display StorageClass verification result
-      debug:
-        msg: "✓ Longhorn StorageClass is available (provisioner: {{ storageclass_provisioner.stdout }})"
-      when: storageclass_provisioner.rc == 0 and storageclass_provisioner.stdout != ""
+    - name: Install Longhorn storage backend
+      include_role:
+        name: storage_longhorn
+      when: storage_backend == 'longhorn'
+      
+    - name: Ensure Longhorn is installed (required for Rook OSD PVCs)
+      include_role:
+        name: storage_longhorn
+      when: storage_backend == 'rook'
+
+    - name: Install Rook storage backend
+      include_role:
+        name: storage_rook
+      when: storage_backend == 'rook'
       
     - name: Copy manifests directory to master node
       copy:
@@ -670,17 +239,40 @@
           changed_when: false
           failed_when: false
           
-        - name: Get Longhorn manager status on failure
+        - name: Get storage provisioner status on failure (Longhorn)
           shell: kubectl get pods -n longhorn-system -l app=longhorn-manager
           register: postgres_provisioner_status
           changed_when: false
           failed_when: false
+          when: storage_backend == 'longhorn'
           
-        - name: Describe Longhorn manager on failure
+        - name: Describe storage provisioner on failure (Longhorn)
           shell: kubectl describe pod -n longhorn-system -l app=longhorn-manager
           register: postgres_provisioner_describe
           changed_when: false
           failed_when: false
+          when: storage_backend == 'longhorn'
+          
+        - name: Get storage provisioner status on failure (Rook)
+          shell: kubectl get pods -n rook-ceph -l app=rook-ceph-operator
+          register: postgres_provisioner_status
+          changed_when: false
+          failed_when: false
+          when: storage_backend == 'rook'
+          
+        - name: Get Rook CSI provisioner status on failure (Rook)
+          shell: kubectl get pods -n rook-ceph -l app=csi-rbdplugin-provisioner
+          register: postgres_csi_provisioner_status
+          changed_when: false
+          failed_when: false
+          when: storage_backend == 'rook'
+          
+        - name: Describe storage provisioner on failure (Rook)
+          shell: kubectl describe pod -n rook-ceph -l app=csi-rbdplugin-provisioner
+          register: postgres_provisioner_describe
+          changed_when: false
+          failed_when: false
+          when: storage_backend == 'rook'
           
         - name: Display PostgreSQL diagnostics
           debug:
@@ -700,11 +292,8 @@
               - "=== StorageClasses ==="
               - "{{ postgres_sc_status.stdout_lines | default(['No StorageClasses found']) }}"
               - ""
-              - "=== Longhorn Manager Status ==="
-              - "{{ postgres_provisioner_status.stdout_lines | default(['Longhorn manager not found']) }}"
-              - ""
-              - "=== Longhorn Manager Details ==="
-              - "{{ postgres_provisioner_describe.stdout_lines | default(['No Longhorn manager details']) }}"
+              - "=== Storage Backend: {{ storage_backend | upper }} ==="
+              - "{% if storage_backend == 'longhorn' %}=== Longhorn Manager Status ==={{ '\n' }}{{ postgres_provisioner_status.stdout_lines | default(['Longhorn manager not found']) | join('\n') }}{{ '\n' }}{{ '\n' }}=== Longhorn Manager Details ==={{ '\n' }}{{ postgres_provisioner_describe.stdout_lines | default(['No Longhorn manager details']) | join('\n') }}{% elif storage_backend == 'rook' %}=== Rook Operator Status ==={{ '\n' }}{{ postgres_provisioner_status.stdout_lines | default(['Rook operator not found']) | join('\n') }}{{ '\n' }}{{ '\n' }}=== Rook CSI Provisioner Status ==={{ '\n' }}{{ postgres_csi_provisioner_status.stdout_lines | default(['Rook CSI provisioner not found']) | join('\n') }}{{ '\n' }}{{ '\n' }}=== Rook CSI Provisioner Details ==={{ '\n' }}{{ postgres_provisioner_describe.stdout_lines | default(['No Rook CSI provisioner details']) | join('\n') }}{% endif %}"
               - ""
               - "=== PostgreSQL Pod Description ==="
               - "{{ postgres_pod_describe.stdout_lines | default(['No output']) }}"
@@ -717,19 +306,30 @@
             msg: |
               PostgreSQL pod failed to become ready. See diagnostics above.
               
+              Storage Backend: {{ storage_backend | upper }}
+              
               Common causes:
-              1. PVC not bound: Check if Longhorn manager pods are running
-              2. No PersistentVolume: Longhorn may not be creating PVs
+              1. PVC not bound: Check if storage provisioner pods are running
+              2. No PersistentVolume: Storage backend may not be creating PVs
               3. StorageClass missing: Ensure 'longhorn' StorageClass exists
               4. Insufficient disk space: Check worker node disk usage
-              5. Missing dependencies: Ensure open-iscsi is installed on worker nodes
+              {% if storage_backend == 'longhorn' %}5. Missing dependencies: Ensure open-iscsi is installed on worker nodes{% elif storage_backend == 'rook' %}5. CSI driver not ready: Rook CSI provisioner may not be operational{% endif %}
               
-              To fix:
+              {% if storage_backend == 'longhorn' %}To fix (Longhorn):
               - Ensure Longhorn is running: kubectl get pods -n longhorn-system
               - Check Longhorn manager logs: kubectl logs -n longhorn-system -l app=longhorn-manager
               - Verify StorageClass: kubectl get storageclass longhorn -o yaml
               - Check node disk space: kubectl describe nodes
               - Verify open-iscsi: SSH to worker nodes and check 'systemctl status iscsid'
+              {% elif storage_backend == 'rook' %}To fix (Rook):
+              - Ensure Rook operator is running: kubectl get pods -n rook-ceph -l app=rook-ceph-operator
+              - Check Rook CSI provisioner: kubectl get pods -n rook-ceph -l app=csi-rbdplugin-provisioner
+              - Check Ceph cluster health: kubectl get cephcluster -n rook-ceph
+              - Check CSI provisioner logs: kubectl logs -n rook-ceph -l app=csi-rbdplugin-provisioner
+              - Verify StorageClass: kubectl get storageclass longhorn -o yaml
+              - Check Ceph OSD pods: kubectl get pods -n rook-ceph -l app=rook-ceph-osd
+              - Check node disk space: kubectl describe nodes
+              {% endif %}
       
     - name: Apply Backend secret
       command: kubectl apply -f /tmp/ajasta-manifests/05-backend-secret.yml

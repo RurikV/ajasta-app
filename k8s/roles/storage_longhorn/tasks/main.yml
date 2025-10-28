@@ -1,0 +1,492 @@
+---
+# Role: storage_longhorn
+# Purpose: Install and configure Longhorn distributed storage system
+
+- name: Set KUBECONFIG environment for subsequent tasks
+  ansible.builtin.set_fact:
+    _env_kube:
+      KUBECONFIG: "{{ kubeconfig_path }}"
+
+- name: Check if Longhorn is already installed
+  ansible.builtin.shell: kubectl get namespace {{ longhorn_namespace }} -o name 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: longhorn_ns_check
+  changed_when: false
+
+- name: Check if Longhorn StorageClass exists
+  ansible.builtin.shell: kubectl get storageclass {{ storage_class_name }} -o name 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: longhorn_sc_check
+  changed_when: false
+
+- name: Display Longhorn installation status
+  ansible.builtin.debug:
+    msg:
+      - "Longhorn namespace: {{ longhorn_ns_check.stdout }}"
+      - "Longhorn StorageClass: {{ longhorn_sc_check.stdout }}"
+
+- name: Determine if Longhorn needs setup or recovery
+  ansible.builtin.set_fact:
+    longhorn_needs_setup: "{{ longhorn_ns_check.stdout == 'not-found' or longhorn_sc_check.stdout == 'not-found' }}"
+
+- name: Display Longhorn setup requirement
+  ansible.builtin.debug:
+    msg: "Longhorn needs setup/recovery: {{ longhorn_needs_setup }}"
+
+- name: Delete failed Longhorn installation if namespace exists but StorageClass missing
+  ansible.builtin.shell: |
+    echo "Longhorn namespace exists but StorageClass is missing - cleaning up failed installation..."
+    kubectl delete namespace {{ longhorn_namespace }} --timeout=300s || true
+    echo "Waiting for namespace deletion to complete..."
+    sleep 10
+  environment: "{{ _env_kube }}"
+  when: longhorn_ns_check.stdout != "not-found" and longhorn_sc_check.stdout == "not-found"
+  register: longhorn_cleanup
+
+- name: Display Longhorn cleanup result
+  ansible.builtin.debug:
+    msg: "{{ longhorn_cleanup.stdout_lines }}"
+  when: longhorn_cleanup is defined and longhorn_cleanup.stdout_lines is defined
+
+- name: Update namespace check after cleanup
+  ansible.builtin.shell: kubectl get namespace {{ longhorn_namespace }} -o name 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: longhorn_ns_check
+  changed_when: false
+  when: longhorn_cleanup is defined and longhorn_cleanup.changed
+
+- name: Get worker nodes for Longhorn
+  ansible.builtin.shell: |
+    kubectl get nodes -o json | \
+    jq -r '.items[] | select(.spec.taints == null or (.spec.taints | map(select(.key == "node-role.kubernetes.io/control-plane")) | length == 0)) | .metadata.name'
+  environment: "{{ _env_kube }}"
+  register: worker_nodes
+  changed_when: false
+  when: longhorn_needs_setup | bool
+
+- name: Display worker nodes for Longhorn
+  ansible.builtin.debug:
+    msg: "Worker nodes that will use Longhorn: {{ worker_nodes.stdout_lines }}"
+  when: longhorn_needs_setup | bool and worker_nodes.stdout_lines is defined
+
+- name: Check and install open-iscsi on worker nodes
+  ansible.builtin.shell: |
+    # Detect OS type
+    if [ -f /etc/os-release ]; then
+      . /etc/os-release
+      OS_TYPE="$ID"
+    else
+      echo "ERROR: Cannot detect OS type"
+      exit 1
+    fi
+    
+    echo "=== Installing iSCSI initiator on $OS_TYPE ==="
+    
+    # Check if iscsiadm is already available
+    if command -v iscsiadm >/dev/null 2>&1; then
+      echo "✓ iscsiadm is already installed: $(iscsiadm --version 2>&1 | head -1)"
+      # Ensure iscsid service is running
+      systemctl start iscsid 2>/dev/null || true
+      systemctl enable iscsid 2>/dev/null || true
+      systemctl status iscsid --no-pager || echo "⚠ iscsid service status check failed"
+      exit 0
+    fi
+    
+    # Install based on OS type
+    case "$OS_TYPE" in
+      centos|rhel|rocky|almalinux|fedora)
+        echo "Installing iscsi-initiator-utils for RHEL/CentOS-based system..."
+        # Use dnf (preferred) or fall back to yum
+        if command -v dnf >/dev/null 2>&1; then
+          dnf install -y iscsi-initiator-utils
+        else
+          yum install -y iscsi-initiator-utils
+        fi
+        ;;
+      ubuntu|debian)
+        echo "Installing open-iscsi for Debian/Ubuntu-based system..."
+        apt-get update && apt-get install -y open-iscsi
+        ;;
+      *)
+        echo "ERROR: Unsupported OS type: $OS_TYPE"
+        exit 1
+        ;;
+    esac
+    
+    # Verify installation
+    if command -v iscsiadm >/dev/null 2>&1; then
+      echo "✓ iscsiadm installed successfully: $(iscsiadm --version 2>&1 | head -1)"
+    else
+      echo "✗ ERROR: iscsiadm not found after installation!"
+      exit 1
+    fi
+    
+    # Enable and start iscsid service
+    systemctl enable iscsid
+    systemctl start iscsid
+    
+    # Verify service is running
+    if systemctl is-active --quiet iscsid; then
+      echo "✓ iscsid service is active and running"
+    else
+      echo "⚠ WARNING: iscsid service failed to start"
+      systemctl status iscsid --no-pager
+    fi
+  delegate_to: "{{ item }}"
+  loop: "{{ groups[worker_node_groups] }}"
+  when: longhorn_needs_setup | bool
+  register: iscsi_install
+  become: true
+
+- name: Display open-iscsi installation results
+  ansible.builtin.debug:
+    msg: "{{ item.stdout_lines }}"
+  loop: "{{ iscsi_install.results }}"
+  when: longhorn_needs_setup | bool and iscsi_install is defined and iscsi_install.results is defined
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Check Longhorn prerequisites on worker nodes
+  ansible.builtin.shell: |
+    echo "=== Checking Longhorn Prerequisites ==="
+    
+    # Check iscsi_tcp kernel module
+    if lsmod | grep -q iscsi_tcp; then
+      echo "✓ iscsi_tcp module is loaded"
+    else
+      echo "✗ iscsi_tcp module is NOT loaded"
+      echo "  Attempting to load iscsi_tcp module..."
+      modprobe iscsi_tcp
+      if lsmod | grep -q iscsi_tcp; then
+        echo "✓ iscsi_tcp module loaded successfully"
+      else
+        echo "✗ FAILED to load iscsi_tcp module"
+      fi
+    fi
+    
+    # Check and create Longhorn directory
+    if [ -d /var/lib/longhorn ]; then
+      echo "✓ /var/lib/longhorn directory exists"
+    else
+      echo "  Creating /var/lib/longhorn directory..."
+      mkdir -p /var/lib/longhorn
+      echo "✓ /var/lib/longhorn directory created"
+    fi
+    
+    # Set proper permissions
+    chmod 755 /var/lib/longhorn
+    echo "✓ /var/lib/longhorn permissions set to 755"
+    
+    # Check disk space
+    df -h /var/lib/longhorn | tail -1
+    
+    # Check if multipathd is running (can cause conflicts)
+    if systemctl is-active --quiet multipathd; then
+      echo "⚠ multipathd is running (may cause conflicts with Longhorn)"
+    else
+      echo "✓ multipathd is not running"
+    fi
+    
+    # Verify iscsid is running
+    if systemctl is-active --quiet iscsid; then
+      echo "✓ iscsid service is active"
+    else
+      echo "✗ iscsid service is NOT active"
+    fi
+    
+    echo "=== Prerequisites check complete ==="
+  delegate_to: "{{ item }}"
+  loop: "{{ groups[worker_node_groups] }}"
+  when: longhorn_needs_setup | bool
+  register: longhorn_prereq_check
+  become: true
+
+- name: Display Longhorn prerequisites check results
+  ansible.builtin.debug:
+    msg: "{{ item.stdout_lines }}"
+  loop: "{{ longhorn_prereq_check.results }}"
+  when: longhorn_needs_setup | bool and longhorn_prereq_check is defined and longhorn_prereq_check.results is defined
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Install Longhorn
+  ansible.builtin.shell: |
+    kubectl apply -f https://raw.githubusercontent.com/longhorn/longhorn/{{ longhorn_version }}/deploy/longhorn.yaml
+  environment: "{{ _env_kube }}"
+  when: longhorn_needs_setup | bool
+  register: longhorn_install
+
+- name: Wait for Longhorn namespace to be created
+  ansible.builtin.shell: kubectl get namespace {{ longhorn_namespace }} -o name
+  environment: "{{ _env_kube }}"
+  register: ns_created
+  until: ns_created.rc == 0
+  retries: 10
+  delay: 5
+  when: longhorn_needs_setup | bool
+
+- name: Wait for Longhorn DaemonSet to be created
+  ansible.builtin.shell: kubectl get daemonset -n {{ longhorn_namespace }} longhorn-manager -o name 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: longhorn_ds_check
+  until: longhorn_ds_check.stdout != "not-found"
+  retries: 12
+  delay: 5
+  when: longhorn_needs_setup | bool
+  changed_when: false
+
+- name: Get initial Longhorn manager pod status
+  ansible.builtin.shell: kubectl get pods -n {{ longhorn_namespace }} -l app=longhorn-manager -o wide
+  environment: "{{ _env_kube }}"
+  register: initial_longhorn_status
+  when: longhorn_needs_setup | bool
+  changed_when: false
+  failed_when: false
+
+- name: Display initial Longhorn manager pod status
+  ansible.builtin.debug:
+    msg: "{{ initial_longhorn_status.stdout_lines | default(['No pods found yet']) }}"
+  when: longhorn_needs_setup | bool
+
+- name: Wait for Longhorn components to be ready
+  when: longhorn_needs_setup | bool
+  block:
+    - name: Check for early CrashLoopBackOff detection
+      ansible.builtin.shell: |
+        # Check if any pods are in CrashLoopBackOff state
+        kubectl get pods -n {{ longhorn_namespace }} -l app=longhorn-manager -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}' | grep -q "CrashLoopBackOff"
+      environment: "{{ _env_kube }}"
+      register: crashloop_check
+      retries: 12
+      delay: 10
+      until: crashloop_check.rc != 0
+      changed_when: false
+      failed_when: false
+
+    - name: Fail fast if CrashLoopBackOff detected
+      ansible.builtin.fail:
+        msg: "Longhorn manager pods are in CrashLoopBackOff state. Triggering diagnostics..."
+      when: crashloop_check.rc == 0
+
+    - name: Wait for Longhorn manager pods to be ready
+      ansible.builtin.shell: |
+        kubectl wait --namespace {{ longhorn_namespace }} \
+          --for=condition=ready pod \
+          --selector=app=longhorn-manager \
+          --timeout=600s
+      environment: "{{ _env_kube }}"
+      retries: 2
+      delay: 10
+
+    - name: Wait for Longhorn driver deployer to be ready
+      ansible.builtin.shell: |
+        kubectl wait --namespace {{ longhorn_namespace }} \
+          --for=condition=ready pod \
+          --selector=app=longhorn-driver-deployer \
+          --timeout=300s
+      environment: "{{ _env_kube }}"
+      retries: 2
+      delay: 10
+
+    - name: Wait for Longhorn StorageClass to be created
+      ansible.builtin.shell: kubectl get storageclass {{ storage_class_name }} -o name 2>/dev/null || echo "not-found"
+      environment: "{{ _env_kube }}"
+      register: longhorn_sc_wait
+      until: longhorn_sc_wait.stdout != "not-found"
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Verify Longhorn StorageClass was created
+      ansible.builtin.shell: kubectl get storageclass {{ storage_class_name }} -o yaml
+      environment: "{{ _env_kube }}"
+      register: longhorn_sc_details
+      changed_when: false
+
+    - name: Display Longhorn StorageClass details
+      ansible.builtin.debug:
+        msg: "{{ longhorn_sc_details.stdout_lines }}"
+
+  rescue:
+    - name: Get Longhorn pods status on failure
+      ansible.builtin.shell: kubectl get pods -n {{ longhorn_namespace }} -o wide
+      environment: "{{ _env_kube }}"
+      register: longhorn_pods_status
+      changed_when: false
+      failed_when: false
+
+    - name: Describe Longhorn manager pods on failure
+      ansible.builtin.shell: kubectl describe pod -n {{ longhorn_namespace }} -l app=longhorn-manager
+      environment: "{{ _env_kube }}"
+      register: longhorn_manager_describe
+      changed_when: false
+      failed_when: false
+
+    - name: Get Longhorn manager logs on failure
+      ansible.builtin.shell: |
+        for pod in $(kubectl get pods -n {{ longhorn_namespace }} -l app=longhorn-manager -o name); do
+          echo "=== Current logs from $pod ==="
+          kubectl logs -n {{ longhorn_namespace }} $pod --tail=100 2>&1 || echo "Failed to get current logs"
+          echo ""
+          echo "=== Previous logs from $pod (if crashed) ==="
+          kubectl logs -n {{ longhorn_namespace }} $pod --previous --tail=100 2>&1 || echo "No previous logs (pod may not have crashed yet)"
+          echo ""
+        done
+      environment: "{{ _env_kube }}"
+      register: longhorn_manager_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Check kernel modules on worker nodes
+      ansible.builtin.shell: |
+        echo "=== Kernel Modules Check ==="
+        lsmod | grep -E "iscsi|nbd|dm_" || echo "No relevant modules found"
+      delegate_to: "{{ item }}"
+      loop: "{{ groups[worker_node_groups] }}"
+      register: kernel_modules_check
+      changed_when: false
+      failed_when: false
+      become: true
+
+    - name: Get Longhorn events on failure
+      ansible.builtin.shell: kubectl get events -n {{ longhorn_namespace }} --sort-by='.lastTimestamp'
+      environment: "{{ _env_kube }}"
+      register: longhorn_events
+      changed_when: false
+      failed_when: false
+
+    - name: Check worker nodes status on failure
+      ansible.builtin.shell: kubectl get nodes -o wide
+      environment: "{{ _env_kube }}"
+      register: nodes_status
+      changed_when: false
+      failed_when: false
+
+    - name: Check if open-iscsi is running on worker nodes
+      ansible.builtin.shell: systemctl status iscsid --no-pager || echo "iscsid not running"
+      delegate_to: "{{ item }}"
+      loop: "{{ groups[worker_node_groups] }}"
+      register: iscsi_status_check
+      changed_when: false
+      failed_when: false
+      become: true
+
+    - name: Check StorageClass status on failure
+      ansible.builtin.shell: kubectl get storageclass -o wide
+      environment: "{{ _env_kube }}"
+      register: storageclass_status_failure
+      changed_when: false
+      failed_when: false
+
+    - name: Display Longhorn installation diagnostics
+      ansible.builtin.debug:
+        msg:
+          - "=== Longhorn Pods Status ==="
+          - "{{ longhorn_pods_status.stdout_lines | default(['No output']) }}"
+          - ""
+          - "=== Longhorn Manager Pod Description ==="
+          - "{{ longhorn_manager_describe.stdout_lines | default(['No output']) }}"
+          - ""
+          - "=== Longhorn Manager Logs (Current + Previous) ==="
+          - "{{ longhorn_manager_logs.stdout_lines | default(['No logs available']) }}"
+          - ""
+          - "=== Longhorn Events ==="
+          - "{{ longhorn_events.stdout_lines | default(['No events']) }}"
+          - ""
+          - "=== Worker Nodes Status ==="
+          - "{{ nodes_status.stdout_lines | default(['No output']) }}"
+          - ""
+          - "=== Kernel Modules on Workers ==="
+          - "{% for result in kernel_modules_check.results %}{{ result.item }}: {{ result.stdout_lines | default(['Failed to check']) | join(' ') }}{% if not loop.last %}\n{% endif %}{% endfor %}"
+          - ""
+          - "=== open-iscsi Status on Workers ==="
+          - "{% for result in iscsi_status_check.results %}{{ result.item }}: {{ result.stdout_lines | default(['Failed to check']) | join(' ') }}{% if not loop.last %}\n{% endif %}{% endfor %}"
+          - ""
+          - "=== StorageClass Status ==="
+          - "{{ storageclass_status_failure.stdout_lines | default(['No StorageClass found']) }}"
+
+    - name: Fail after Longhorn diagnostics
+      ansible.builtin.fail:
+        msg: |
+          Longhorn manager pods failed to become ready. See diagnostics above.
+          
+          Common causes:
+          1. open-iscsi not installed/running: Ensure iscsid service is active on all worker nodes
+          2. Insufficient resources: Worker nodes may not have enough CPU/memory
+          3. Disk issues: Check if worker nodes have available disk space
+          4. Network issues: Longhorn requires network connectivity between nodes
+          5. Missing kernel modules: iscsi_tcp module may not be loaded
+          
+          To fix:
+          - Verify open-iscsi on workers: ssh to each worker and run 'systemctl status iscsid'
+          - Check worker resources: kubectl describe nodes
+          - Check Longhorn manager logs above for specific errors
+          - Ensure iscsi_tcp kernel module is loaded: lsmod | grep iscsi_tcp
+          - Check Longhorn system requirements: https://longhorn.io/docs/1.5.3/deploy/install/#installation-requirements
+
+- name: Check if Longhorn StorageClass exists (final verification)
+  ansible.builtin.shell: kubectl get storageclass {{ storage_class_name }} -o name 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: longhorn_sc_final_check
+  changed_when: false
+
+- name: Set Longhorn as default StorageClass
+  ansible.builtin.shell: |
+    kubectl patch storageclass {{ storage_class_name }} -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+  environment: "{{ _env_kube }}"
+  when: longhorn_sc_final_check.stdout != "not-found" and set_as_default | bool
+  register: longhorn_default_set
+  changed_when: longhorn_default_set.rc == 0
+
+- name: Display StorageClass default setting result
+  ansible.builtin.debug:
+    msg: "Longhorn StorageClass set as default"
+  when: longhorn_sc_final_check.stdout != "not-found" and set_as_default | bool
+
+- name: Warn if StorageClass was not found
+  ansible.builtin.debug:
+    msg: "WARNING: Longhorn StorageClass not found! PostgreSQL deployment may fail."
+  when: longhorn_sc_final_check.stdout == "not-found"
+
+- name: Verify Longhorn installation
+  ansible.builtin.shell: kubectl get pods -n {{ longhorn_namespace }}
+  environment: "{{ _env_kube }}"
+  register: longhorn_status
+  changed_when: false
+  failed_when: false
+
+- name: Display Longhorn pod status
+  ansible.builtin.debug:
+    msg: "{{ longhorn_status.stdout_lines }}"
+
+- name: Verify StorageClass availability
+  ansible.builtin.shell: kubectl get storageclass {{ storage_class_name }} -o jsonpath='{.provisioner}'
+  environment: "{{ _env_kube }}"
+  register: storageclass_provisioner
+  changed_when: false
+  failed_when: false
+
+- name: Fail if StorageClass is not available
+  ansible.builtin.fail:
+    msg: |
+      CRITICAL: Longhorn StorageClass does not exist!
+      PostgreSQL requires a StorageClass to provision persistent volumes.
+      
+      The StorageClass should have been created by Longhorn manager pods.
+      Check Longhorn installation logs above for errors.
+      
+      Common causes:
+      1. Longhorn manager pods are not running or in CrashLoopBackOff state
+      2. open-iscsi not properly installed on worker nodes
+      3. Insufficient resources on worker nodes
+      
+      To fix:
+      - Check Longhorn pods: kubectl get pods -n {{ longhorn_namespace }}
+      - Check Longhorn manager logs: kubectl logs -n {{ longhorn_namespace }} -l app=longhorn-manager
+      - Verify open-iscsi on all workers: systemctl status iscsid
+  when: storageclass_provisioner.rc != 0 or storageclass_provisioner.stdout == ""
+
+- name: Display StorageClass verification result
+  ansible.builtin.debug:
+    msg: "✓ Longhorn StorageClass is available (provisioner: {{ storageclass_provisioner.stdout }})"
+  when: storageclass_provisioner.rc == 0 and storageclass_provisioner.stdout != ""

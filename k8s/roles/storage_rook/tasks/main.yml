@@ -1,0 +1,1153 @@
+---
+# Role: storage_rook
+# Purpose: Install and configure Rook-Ceph distributed storage system
+
+- name: Set KUBECONFIG environment for subsequent tasks
+  ansible.builtin.set_fact:
+    _env_kube:
+      KUBECONFIG: "{{ kubeconfig_path }}"
+
+- name: Check if Rook namespace is already installed
+  ansible.builtin.shell: kubectl get namespace {{ rook_namespace }} -o name 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: rook_ns_check
+  changed_when: false
+
+- name: Check if Rook StorageClass exists
+  ansible.builtin.shell: kubectl get storageclass {{ storage_class_name }} -o name 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: rook_sc_check
+  changed_when: false
+
+- name: Display Rook installation status
+  ansible.builtin.debug:
+    msg:
+      - "Rook namespace: {{ rook_ns_check.stdout }}"
+      - "Rook StorageClass: {{ rook_sc_check.stdout }}"
+
+- name: Determine if Rook needs setup or recovery
+  ansible.builtin.set_fact:
+    rook_needs_setup: "{{ rook_ns_check.stdout == 'not-found' }}"
+
+- name: Display Rook setup requirement
+  ansible.builtin.debug:
+    msg: "Rook needs setup/recovery: {{ rook_needs_setup }}"
+
+- name: Get worker nodes for Rook
+  ansible.builtin.shell: |
+    kubectl get nodes -o json | \
+    jq -r '.items[] | select(.spec.taints == null or (.spec.taints | map(select(.key == "node-role.kubernetes.io/control-plane")) | length == 0)) | .metadata.name'
+  environment: "{{ _env_kube }}"
+  register: worker_nodes
+  changed_when: false
+  when: rook_needs_setup | bool
+
+- name: Display worker nodes for Rook
+  ansible.builtin.debug:
+    msg: "Worker nodes that will use Rook-Ceph: {{ worker_nodes.stdout_lines }}"
+  when: rook_needs_setup | bool and worker_nodes.stdout_lines is defined
+
+- name: Check Rook prerequisites on worker nodes
+  ansible.builtin.shell: |
+    echo "=== Checking Rook Prerequisites ==="
+    
+    # Check if lvm2 is installed (required for Ceph)
+    if command -v lvm >/dev/null 2>&1; then
+      echo "✓ lvm2 is installed"
+    else
+      echo "⚠ lvm2 is NOT installed (may be needed for some configurations)"
+    fi
+    
+    # Check available block devices
+    echo "Available block devices:"
+    lsblk -d -o NAME,SIZE,TYPE | grep disk || echo "No additional disks found"
+    
+    # Check disk space on root
+    df -h / | tail -1
+    
+    # Verify kernel modules for RBD
+    if lsmod | grep -q rbd; then
+      echo "✓ rbd kernel module is loaded"
+    else
+      echo "  Attempting to load rbd module..."
+      modprobe rbd 2>/dev/null || echo "⚠ Could not load rbd module (will be loaded by Rook if needed)"
+    fi
+    
+    echo "=== Prerequisites check complete ==="
+  delegate_to: "{{ item }}"
+  loop: "{{ groups[worker_node_groups] }}"
+  when: rook_needs_setup | bool
+  register: rook_prereq_check
+  become: true
+  failed_when: false
+
+- name: Display Rook prerequisites check results
+  ansible.builtin.debug:
+    msg: "{{ item.stdout_lines }}"
+  loop: "{{ rook_prereq_check.results }}"
+  when: rook_needs_setup | bool and rook_prereq_check is defined and rook_prereq_check.results is defined
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Install Rook operator
+  ansible.builtin.shell: |
+    kubectl apply -f https://raw.githubusercontent.com/rook/rook/{{ rook_version }}/deploy/examples/crds.yaml
+    kubectl apply -f https://raw.githubusercontent.com/rook/rook/{{ rook_version }}/deploy/examples/common.yaml
+    kubectl apply -f https://raw.githubusercontent.com/rook/rook/{{ rook_version }}/deploy/examples/operator.yaml
+  environment: "{{ _env_kube }}"
+  when: rook_needs_setup | bool
+  register: rook_operator_install
+
+- name: Wait for Rook namespace to be created
+  ansible.builtin.shell: kubectl get namespace {{ rook_namespace }} -o name
+  environment: "{{ _env_kube }}"
+  register: ns_created
+  until: ns_created.rc == 0
+  retries: 10
+  delay: 5
+  when: rook_needs_setup | bool
+
+- name: Wait for Rook operator deployment to be created
+  ansible.builtin.shell: kubectl get deployment -n {{ rook_namespace }} rook-ceph-operator -o name 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: rook_operator_check
+  until: rook_operator_check.stdout != "not-found"
+  retries: 12
+  delay: 5
+  when: rook_needs_setup | bool
+  changed_when: false
+
+- name: Wait for Rook operator to be ready
+  ansible.builtin.shell: |
+    kubectl wait --namespace {{ rook_namespace }} \
+      --for=condition=available deployment/rook-ceph-operator \
+      --timeout=300s
+  environment: "{{ _env_kube }}"
+  when: rook_needs_setup | bool
+  retries: 2
+  delay: 10
+
+- name: Get Rook operator pod status
+  ansible.builtin.shell: kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-operator -o wide
+  environment: "{{ _env_kube }}"
+  register: rook_operator_status
+  when: rook_needs_setup | bool
+  changed_when: false
+  failed_when: false
+
+- name: Display Rook operator pod status
+  ansible.builtin.debug:
+    msg: "{{ rook_operator_status.stdout_lines | default(['No pods found']) }}"
+  when: rook_needs_setup | bool
+
+- name: Create DaemonSet to prepare storage directories on worker nodes
+  ansible.builtin.shell: |
+    cat <<EOF | kubectl apply -f -
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: rook-storage-dir-init
+      namespace: {{ rook_namespace }}
+    spec:
+      selector:
+        matchLabels:
+          app: rook-storage-dir-init
+      template:
+        metadata:
+          labels:
+            app: rook-storage-dir-init
+        spec:
+          hostNetwork: true
+          hostPID: true
+          nodeSelector:
+            kubernetes.io/os: linux
+          tolerations:
+          - operator: Exists
+          containers:
+          - name: init
+            image: busybox:latest
+            command:
+            - sh
+            - -c
+            - |
+              echo "Creating storage directory {{ ceph_storage_directory }} on node \$(hostname)"
+              echo "Host root is mounted at /host"
+              mkdir -p /host{{ ceph_storage_directory }}
+              chmod 755 /host{{ ceph_storage_directory }}
+              echo "Verifying directory on host filesystem:"
+              ls -ld /host{{ ceph_storage_directory }}
+              echo "Storage directory created successfully on host"
+              # Keep running so DaemonSet stays active
+              sleep infinity
+            volumeMounts:
+            - name: host-root
+              mountPath: /host
+              mountPropagation: Bidirectional
+            securityContext:
+              privileged: true
+          volumes:
+          - name: host-root
+            hostPath:
+              path: /
+    EOF
+  environment: "{{ _env_kube }}"
+  when: rook_needs_setup | bool and ceph_storage_type == "directories"
+  register: storage_dir_daemonset
+  changed_when: false
+
+- name: Wait for storage directory initialization to complete
+  ansible.builtin.shell: |
+    kubectl rollout status daemonset/rook-storage-dir-init -n {{ rook_namespace }} --timeout=120s
+  environment: "{{ _env_kube }}"
+  when: rook_needs_setup | bool and ceph_storage_type == "directories"
+  register: storage_dir_init_wait
+  changed_when: false
+  failed_when: false
+
+- name: Display storage directory initialization status
+  ansible.builtin.debug:
+    msg: 
+      - "Storage directory initialization completed on all worker nodes"
+      - "Directory: {{ ceph_storage_directory }}"
+  when: rook_needs_setup | bool and ceph_storage_type == "directories"
+
+- name: Ensure storage directories exist and are empty on all worker nodes
+  block:
+    - name: Create storage directory on worker nodes
+      ansible.builtin.file:
+        path: "{{ ceph_storage_directory }}"
+        state: directory
+        mode: '0755'
+      delegate_to: "{{ item }}"
+      loop: "{{ groups[worker_node_groups] }}"
+      when: groups[worker_node_groups] is defined
+
+    - name: Check if storage directory has any content
+      ansible.builtin.find:
+        paths: "{{ ceph_storage_directory }}"
+        file_type: any
+        hidden: yes
+      delegate_to: "{{ item }}"
+      loop: "{{ groups[worker_node_groups] }}"
+      register: storage_dir_content
+      when: groups[worker_node_groups] is defined
+
+    - name: Remove all content from storage directories (Ceph requires empty directories)
+      ansible.builtin.shell: |
+        rm -rf {{ ceph_storage_directory }}/*
+        rm -rf {{ ceph_storage_directory }}/.[!.]*
+      delegate_to: "{{ item.item }}"
+      loop: "{{ storage_dir_content.results }}"
+      when: 
+        - storage_dir_content is defined
+        - item.matched is defined
+        - item.matched > 0
+      changed_when: true
+
+    - name: Verify storage directories are empty and accessible
+      ansible.builtin.shell: |
+        ls -la {{ ceph_storage_directory }} && [ $(ls -A {{ ceph_storage_directory }} | wc -l) -eq 0 ]
+      delegate_to: "{{ item }}"
+      loop: "{{ groups[worker_node_groups] }}"
+      register: storage_dir_verification
+      changed_when: false
+      when: groups[worker_node_groups] is defined
+
+    - name: Display storage directory verification results
+      ansible.builtin.debug:
+        msg: 
+          - "Storage directories verified on all worker nodes:"
+          - "Path: {{ ceph_storage_directory }}"
+          - "Status: Empty and accessible with permissions 755"
+
+    - name: Sync filesystems on worker nodes
+      ansible.builtin.command: sync
+      delegate_to: "{{ item }}"
+      loop: "{{ groups[worker_node_groups] }}"
+      changed_when: false
+      when: groups[worker_node_groups] is defined
+
+    - name: Wait for filesystem operations to complete
+      ansible.builtin.pause:
+        seconds: 5
+        prompt: "Waiting for filesystem sync to complete on all worker nodes"
+  when: rook_needs_setup | bool and ceph_storage_type == "directories"
+
+- name: Delete storage directory initialization DaemonSet
+  ansible.builtin.shell: |
+    kubectl delete daemonset rook-storage-dir-init -n {{ rook_namespace }} --ignore-not-found=true
+  environment: "{{ _env_kube }}"
+  when: rook_needs_setup | bool and ceph_storage_type == "directories"
+  register: storage_dir_cleanup
+  changed_when: false
+  failed_when: false
+
+- name: Create CephCluster configuration (directory-based storage)
+  ansible.builtin.shell: |
+    cat <<EOF | kubectl apply -f -
+    apiVersion: ceph.rook.io/v1
+    kind: CephCluster
+    metadata:
+      name: {{ ceph_cluster_name }}
+      namespace: {{ rook_namespace }}
+    spec:
+      cephVersion:
+        image: quay.io/ceph/ceph:v17.2.6
+        allowUnsupported: false
+      dataDirHostPath: /var/lib/rook
+      skipUpgradeChecks: false
+      continueUpgradeAfterChecksEvenIfNotHealthy: false
+      mon:
+        count: {{ ceph_mon_count }}
+        allowMultiplePerNode: false
+      mgr:
+        count: {{ ceph_mgr_count }}
+        allowMultiplePerNode: false
+      dashboard:
+        enabled: true
+        ssl: false
+      crashCollector:
+        disable: false
+      storage:
+        useAllNodes: true
+        useAllDevices: false
+        storageClassDeviceSets:
+        - name: set1
+          count: 1
+          portable: false
+          placement:
+            tolerations:
+            - operator: Exists
+          preparePlacement:
+            tolerations:
+            - operator: Exists
+          volumeClaimTemplates:
+          - metadata:
+              name: data
+            spec:
+              storageClassName: {{ ceph_osd_storage_class_name }}
+              volumeMode: {{ ceph_osd_volume_mode }}
+              accessModes:
+              - ReadWriteOnce
+              resources:
+                requests:
+                  storage: {{ ceph_osd_pvc_size }}
+        config:
+          osdsPerDevice: "1"
+      priorityClassNames:
+        mon: system-node-critical
+        osd: system-node-critical
+        mgr: system-cluster-critical
+      resources:
+        mon:
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+        osd:
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+          requests:
+            cpu: "500m"
+            memory: "2Gi"
+        mgr:
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+    EOF
+  environment: "{{ _env_kube }}"
+  when: rook_needs_setup | bool and ceph_storage_type == "directories"
+  register: ceph_cluster_create_dirs
+
+- name: Create CephCluster configuration (device-based storage)
+  ansible.builtin.shell: |
+    cat <<EOF | kubectl apply -f -
+    apiVersion: ceph.rook.io/v1
+    kind: CephCluster
+    metadata:
+      name: {{ ceph_cluster_name }}
+      namespace: {{ rook_namespace }}
+    spec:
+      cephVersion:
+        image: quay.io/ceph/ceph:v17.2.6
+        allowUnsupported: false
+      dataDirHostPath: /var/lib/rook
+      skipUpgradeChecks: false
+      continueUpgradeAfterChecksEvenIfNotHealthy: false
+      mon:
+        count: {{ ceph_mon_count }}
+        allowMultiplePerNode: false
+      mgr:
+        count: {{ ceph_mgr_count }}
+        allowMultiplePerNode: false
+      dashboard:
+        enabled: true
+        ssl: false
+      crashCollector:
+        disable: false
+      storage:
+        useAllNodes: {{ ceph_use_all_nodes | lower }}
+        useAllDevices: {{ 'true' if ceph_storage_devices == 'all' else 'false' }}
+        config:
+          osdsPerDevice: "1"
+      priorityClassNames:
+        mon: system-node-critical
+        osd: system-node-critical
+        mgr: system-cluster-critical
+      resources:
+        mon:
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+        osd:
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+          requests:
+            cpu: "500m"
+            memory: "2Gi"
+        mgr:
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+    EOF
+  environment: "{{ _env_kube }}"
+  when: rook_needs_setup | bool and ceph_storage_type == "devices"
+  register: ceph_cluster_create_devs
+
+- name: Wait for Ceph cluster to initialize
+  ansible.builtin.debug:
+    msg: "Waiting for Ceph cluster to initialize (this may take several minutes)..."
+  when: rook_needs_setup | bool
+
+- name: Wait for Ceph monitors to be ready
+  ansible.builtin.shell: kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-mon -o jsonpath='{.items[*].status.phase}' | grep -q Running
+  environment: "{{ _env_kube }}"
+  register: ceph_mon_check
+  until: ceph_mon_check.rc == 0
+  retries: 30
+  delay: 10
+  when: rook_needs_setup | bool
+  changed_when: false
+  failed_when: false
+
+- name: Wait for Ceph OSDs to be ready (with retries)
+  ansible.builtin.shell: kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-osd -o jsonpath='{.items[*].status.phase}' 2>/dev/null | grep -q Running
+  environment: "{{ _env_kube }}"
+  register: ceph_osd_check
+  until: ceph_osd_check.rc == 0
+  retries: 60
+  delay: 10
+  when: rook_needs_setup | bool
+  changed_when: false
+  failed_when: false
+
+- name: Get OSD count
+  ansible.builtin.shell: kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-osd --no-headers 2>/dev/null | wc -l
+  environment: "{{ _env_kube }}"
+  register: ceph_osd_count
+  when: rook_needs_setup | bool
+  changed_when: false
+  failed_when: false
+
+- name: Get Ceph cluster status
+  ansible.builtin.shell: kubectl get pods -n {{ rook_namespace }} -o wide
+  environment: "{{ _env_kube }}"
+  register: ceph_cluster_status
+  when: rook_needs_setup | bool
+  changed_when: false
+  failed_when: false
+
+- name: Display Ceph cluster status
+  ansible.builtin.debug:
+    msg: "{{ ceph_cluster_status.stdout_lines | default(['No pods found']) }}"
+  when: rook_needs_setup | bool
+
+- name: Get Rook operator logs if OSDs failed
+  ansible.builtin.shell: kubectl logs -n {{ rook_namespace }} -l app=rook-ceph-operator --tail=50
+  environment: "{{ _env_kube }}"
+  register: rook_operator_logs
+  when: rook_needs_setup | bool and (ceph_osd_count.stdout | int) == 0
+  changed_when: false
+  failed_when: false
+
+- name: Get CephCluster status details if OSDs failed
+  ansible.builtin.shell: kubectl get cephcluster -n {{ rook_namespace }} {{ ceph_cluster_name }} -o yaml
+  environment: "{{ _env_kube }}"
+  register: ceph_cluster_details
+  when: rook_needs_setup | bool and (ceph_osd_count.stdout | int) == 0
+  changed_when: false
+  failed_when: false
+
+- name: Get OSD prepare pod logs if OSDs failed
+  ansible.builtin.shell: |
+    echo "=== OSD Prepare Jobs Status ==="
+    kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-osd-prepare --no-headers 2>/dev/null || echo "No OSD prepare pods found"
+    echo ""
+    echo "=== OSD Prepare Logs (last 100 lines from each pod) ==="
+    for pod in $(kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-osd-prepare -o name 2>/dev/null); do
+      echo "--- Logs from $pod ---"
+      kubectl logs -n {{ rook_namespace }} $pod --tail=100 2>&1 || echo "Failed to get logs"
+      echo ""
+    done
+  environment: "{{ _env_kube }}"
+  register: osd_prepare_logs
+  when: rook_needs_setup | bool and (ceph_osd_count.stdout | int) == 0
+  changed_when: false
+  failed_when: false
+
+- name: Fail if no OSDs were created
+  ansible.builtin.fail:
+    msg: |
+      CRITICAL: No Ceph OSD daemon pods are running after waiting 10 minutes!
+      
+      OSD Count: {{ ceph_osd_count.stdout | default('0') }}
+      Storage Type: {{ ceph_storage_type }}
+      Storage Directory: {{ ceph_storage_directory if ceph_storage_type == 'directories' else 'N/A (using devices)' }}
+      
+      === Ceph Cluster Status ===
+      {{ ceph_cluster_status.stdout_lines | default(['No output']) | join('\n') }}
+      
+      === OSD Prepare Logs ===
+      {{ osd_prepare_logs.stdout_lines | default(['No OSD prepare logs available']) | join('\n') }}
+      
+      === Rook Operator Logs (last 50 lines) ===
+      {{ rook_operator_logs.stdout_lines | default(['No logs available']) | join('\n') }}
+      
+      === Understanding the Issue ===
+      
+      {% if 'no devices matched the storage settings' in (osd_prepare_logs.stdout | default('')) %}
+      **DETECTED: "no devices matched the storage settings" in OSD prepare logs**
+      
+      This means Rook-Ceph could NOT find the configured storage (directories or devices).
+      For directory-based storage (current type: {{ ceph_storage_type }}), this happens when:
+      1. **Storage directories don't exist on worker nodes** (most common)
+      2. **Directories exist but are not empty** (Ceph requires empty directories)
+      3. **Directory permissions are incorrect** (must be readable/writable)
+      4. **Wrong storage type configured** (directories configured but devices expected, or vice versa)
+      
+      {% endif %}
+      If you see OSD prepare pods in "Completed" status above:
+      - OSD preparation succeeded (storage detected and metadata created)
+      - BUT OSD daemon pods failed to start
+      - Check OSD prepare logs above for warnings/errors
+      - Most common cause: Insufficient resources (CPU/Memory) on worker nodes
+      
+      If you see no OSD prepare pods or they failed:
+      - Storage not detected or OSD preparation failed
+      - Check if storage directories/devices are available
+      
+      === Common Causes ===
+      1. **Insufficient resources**: Worker nodes need at least 2GB RAM + 500m CPU per OSD
+      2. **Directory permissions**: {{ ceph_storage_directory }} must be readable/writable
+      3. **Directory not empty**: Ceph requires empty directories for OSDs
+      4. **Resource limits too low**: OSD requests 2Gi memory, 500m CPU (check node capacity)
+      5. **Device-based storage**: No suitable raw block devices found on worker nodes
+      
+      === Troubleshooting Steps ===
+      
+      {% if 'no devices matched the storage settings' in (osd_prepare_logs.stdout | default('')) %}
+      **PRIORITY FIX for "no devices matched storage settings":**
+      
+      1. Verify storage directories exist on ALL worker nodes:
+         # SSH to EACH worker node (k8s-worker-1, k8s-worker-2, k8s-worker-3, etc.) and run:
+         sudo ls -ld {{ ceph_storage_directory }}
+         
+         # If directory doesn't exist, create it:
+         sudo mkdir -p {{ ceph_storage_directory }}
+         sudo chmod 755 {{ ceph_storage_directory }}
+      
+      2. Ensure directories are COMPLETELY EMPTY:
+         # On each worker node:
+         sudo ls -la {{ ceph_storage_directory }}
+         
+         # If any files exist, remove them:
+         sudo rm -rf {{ ceph_storage_directory }}/*
+      
+      3. After fixing directories, delete the CephCluster and redeploy:
+         kubectl delete cephcluster -n {{ rook_namespace }} {{ ceph_cluster_name }}
+         # Wait 1 minute for cleanup
+         # Re-run deployment playbook
+      
+      {% endif %}
+      1. Check worker node resources:
+         kubectl describe nodes | grep -A 5 "Allocated resources"
+         # Ensure sufficient CPU and memory available
+      
+      2. For directory-based storage (current: {{ ceph_storage_type }}):
+         # SSH to each worker node
+         sudo ls -la {{ ceph_storage_directory }}
+         # Directory should exist, be empty, and have 755 permissions
+         
+         # If directory has files, it won't work:
+         sudo rm -rf {{ ceph_storage_directory }}/*
+         # Or use a different empty directory
+      
+      3. Check OSD resource requirements vs node capacity:
+         # Each OSD needs: 2Gi memory (limit), 500m CPU
+         # If nodes don't have enough, reduce in CephCluster spec
+      
+      4. For device-based storage:
+         # Set ceph_storage_type: "devices" in defaults/main.yml
+         # Ensure worker nodes have unused raw block devices
+         lsblk  # Devices must be completely empty (no partitions)
+         sudo wipefs -a /dev/sdX  # Clean device if needed
+      
+      === Check CephCluster Details ===
+      {{ ceph_cluster_details.stdout_lines | default(['No details available']) | join('\n') }}
+  when: rook_needs_setup | bool and (ceph_osd_count.stdout | int) == 0
+
+- name: Create CephBlockPool
+  ansible.builtin.shell: |
+    cat <<EOF | kubectl apply -f -
+    apiVersion: ceph.rook.io/v1
+    kind: CephBlockPool
+    metadata:
+      name: replicapool
+      namespace: {{ rook_namespace }}
+    spec:
+      failureDomain: host
+      replicated:
+        size: 1
+        requireSafeReplicaSize: false
+    EOF
+  environment: "{{ _env_kube }}"
+  register: ceph_blockpool_create
+
+- name: Wait for CephBlockPool to be ready
+  ansible.builtin.shell: |
+    kubectl get cephblockpool -n {{ rook_namespace }} replicapool -o json 2>/dev/null |
+    jq -r 'if .status.phase then .status.phase else ( .status.conditions[]? | select(.type=="Ready") | .status ) // "Unknown" end'
+  environment: "{{ _env_kube }}"
+  register: ceph_blockpool_status
+  until: ceph_blockpool_status.stdout in ["Ready", "Created", "True"]
+  retries: 30
+  delay: 10
+  when: rook_needs_setup | bool
+  changed_when: false
+  failed_when: false
+
+- name: Get CephBlockPool details if not ready
+  ansible.builtin.shell: kubectl get cephblockpool -n {{ rook_namespace }} replicapool -o yaml 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: ceph_blockpool_details
+  when: rook_needs_setup | bool and ceph_blockpool_status.stdout not in ["Ready", "Created"]
+  changed_when: false
+  failed_when: false
+
+- name: Get Ceph cluster health if BlockPool not ready
+  ansible.builtin.shell: kubectl get cephcluster -n {{ rook_namespace }} {{ ceph_cluster_name }} -o jsonpath='{.status.ceph.health}' 2>/dev/null || echo "unknown"
+  environment: "{{ _env_kube }}"
+  register: ceph_health_status
+  when: rook_needs_setup | bool and ceph_blockpool_status.stdout not in ["Ready", "Created"]
+  changed_when: false
+  failed_when: false
+
+- name: Fail if CephBlockPool is not ready
+  ansible.builtin.fail:
+    msg: |
+      CRITICAL: CephBlockPool 'replicapool' failed to become ready after 5 minutes!
+      
+      BlockPool Status: {{ ceph_blockpool_status.stdout | default('unknown') }}
+      Ceph Cluster Health: {{ ceph_health_status.stdout | default('unknown') }}
+      
+      === CephBlockPool Details ===
+      {{ ceph_blockpool_details.stdout_lines | default(['No details available']) | join('\n') }}
+      
+      === Ceph Cluster Pods ===
+      {{ ceph_cluster_status.stdout_lines | default(['No output']) | join('\n') }}
+      
+      === Common Causes ===
+      1. OSDs not healthy: Check if all OSD pods are Running
+      2. Insufficient OSDs: Need at least 1 OSD for replication
+      3. Ceph cluster not healthy: Check Ceph cluster status
+      4. Network issues: Check pod-to-pod connectivity
+      
+      === Troubleshooting Steps ===
+      1. Check OSD status:
+         kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-osd
+      
+      2. Check Ceph cluster health:
+         kubectl get cephcluster -n {{ rook_namespace }} {{ ceph_cluster_name }} -o jsonpath='{.status.ceph.health}'
+      
+      3. Check Rook operator logs:
+         kubectl logs -n {{ rook_namespace }} -l app=rook-ceph-operator --tail=100
+      
+      4. Check Ceph manager logs:
+         kubectl logs -n {{ rook_namespace }} -l app=rook-ceph-mgr --tail=50
+      
+      5. If OSDs are missing, see the OSD troubleshooting steps above
+  when: ceph_require_healthy | bool and (ceph_blockpool_status.stdout not in ["Ready", "Created", "True"]) 
+
+- name: Create StorageClass (Rook RBD) if not exists
+  ansible.builtin.shell: |
+    cat <<EOF | kubectl apply -f -
+    apiVersion: storage.k8s.io/v1
+    kind: StorageClass
+    metadata:
+      name: {{ storage_class_name }}
+    provisioner: rook-ceph.rbd.csi.ceph.com
+    parameters:
+      clusterID: {{ rook_namespace }}
+      pool: replicapool
+      imageFormat: "2"
+      imageFeatures: layering
+      csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
+      csi.storage.k8s.io/provisioner-secret-namespace: {{ rook_namespace }}
+      csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
+      csi.storage.k8s.io/controller-expand-secret-namespace: {{ rook_namespace }}
+      csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
+      csi.storage.k8s.io/node-stage-secret-namespace: {{ rook_namespace }}
+      csi.storage.k8s.io/fstype: ext4
+    allowVolumeExpansion: true
+    reclaimPolicy: Delete
+    volumeBindingMode: Immediate
+    EOF
+  environment: "{{ _env_kube }}"
+  when: rook_sc_check.stdout == 'not-found'
+  register: storageclass_create
+
+- name: Wait for StorageClass to be created
+  ansible.builtin.shell: kubectl get storageclass {{ storage_class_name }} -o name 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: rook_sc_wait
+  until: rook_sc_wait.stdout != "not-found"
+  retries: 10
+  delay: 5
+  when: rook_needs_setup | bool
+  changed_when: false
+
+- name: Verify StorageClass was created
+  ansible.builtin.shell: kubectl get storageclass {{ storage_class_name }} -o yaml
+  environment: "{{ _env_kube }}"
+  register: rook_sc_details
+  when: rook_needs_setup | bool
+  changed_when: false
+
+- name: Display StorageClass details
+  ansible.builtin.debug:
+    msg: "{{ rook_sc_details.stdout_lines }}"
+  when: rook_needs_setup | bool
+
+- name: Wait for Rook CSI RBD provisioner deployment to be created
+  ansible.builtin.shell: kubectl get deployment -n {{ rook_namespace }} csi-rbdplugin-provisioner -o name 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: csi_provisioner_check
+  until: csi_provisioner_check.stdout != "not-found"
+  retries: 20
+  delay: 10
+  when: rook_needs_setup | bool
+  changed_when: false
+
+- name: Wait for Rook CSI RBD provisioner to be ready
+  ansible.builtin.shell: |
+    kubectl wait --namespace {{ rook_namespace }} \
+      --for=condition=available deployment/csi-rbdplugin-provisioner \
+      --timeout=300s
+  environment: "{{ _env_kube }}"
+  when: rook_needs_setup | bool
+  retries: 2
+  delay: 10
+
+- name: Wait for Rook CSI RBD plugin DaemonSet to be created
+  ansible.builtin.shell: kubectl get daemonset -n {{ rook_namespace }} csi-rbdplugin -o name 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: csi_plugin_ds_check
+  until: csi_plugin_ds_check.stdout != "not-found"
+  retries: 20
+  delay: 10
+  when: rook_needs_setup | bool
+  changed_when: false
+
+- name: Wait for Rook CSI RBD plugin DaemonSet to be ready
+  ansible.builtin.shell: |
+    kubectl rollout status daemonset/csi-rbdplugin -n {{ rook_namespace }} --timeout=300s
+  environment: "{{ _env_kube }}"
+  when: rook_needs_setup | bool
+  register: csi_plugin_rollout
+  changed_when: false
+
+- name: Verify CSI secrets exist
+  ansible.builtin.shell: |
+    echo "Checking CSI secrets..."
+    kubectl get secret -n {{ rook_namespace }} rook-csi-rbd-provisioner -o name 2>/dev/null || echo "rook-csi-rbd-provisioner: MISSING"
+    kubectl get secret -n {{ rook_namespace }} rook-csi-rbd-node -o name 2>/dev/null || echo "rook-csi-rbd-node: MISSING"
+  environment: "{{ _env_kube }}"
+  register: csi_secrets_check
+  when: rook_needs_setup | bool
+  changed_when: false
+  failed_when: "'MISSING' in csi_secrets_check.stdout"
+
+- name: Display CSI components status
+  ansible.builtin.debug:
+    msg:
+      - "✓ Rook CSI RBD provisioner is ready"
+      - "✓ Rook CSI RBD plugin DaemonSet is ready on all nodes"
+      - "✓ CSI secrets are available"
+  when: rook_needs_setup | bool
+
+- name: Check if StorageClass exists (final verification)
+  ansible.builtin.shell: kubectl get storageclass {{ storage_class_name }} -o name 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: rook_sc_final_check
+  changed_when: false
+
+- name: Set Rook StorageClass as default
+  ansible.builtin.shell: |
+    kubectl patch storageclass {{ storage_class_name }} -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+  environment: "{{ _env_kube }}"
+  when: rook_sc_final_check.stdout != "not-found" and set_as_default | bool
+  register: rook_default_set
+  changed_when: rook_default_set.rc == 0
+
+- name: Display StorageClass default setting result
+  ansible.builtin.debug:
+    msg: "Rook StorageClass set as default"
+  when: rook_sc_final_check.stdout != "not-found" and set_as_default | bool
+
+- name: Warn if StorageClass was not found
+  ansible.builtin.debug:
+    msg: "WARNING: Rook StorageClass not found! PostgreSQL deployment may fail."
+  when: rook_sc_final_check.stdout == "not-found"
+
+- name: Verify Rook-Ceph installation
+  ansible.builtin.shell: kubectl get pods -n {{ rook_namespace }}
+  environment: "{{ _env_kube }}"
+  register: rook_final_status
+  changed_when: false
+  failed_when: false
+
+- name: Display Rook-Ceph pod status
+  ansible.builtin.debug:
+    msg: "{{ rook_final_status.stdout_lines }}"
+
+- name: Check Ceph cluster health
+  ansible.builtin.shell: |
+    kubectl -n {{ rook_namespace }} exec -it $(kubectl -n {{ rook_namespace }} get pod -l app=rook-ceph-tools -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "no-tools") -- ceph status 2>/dev/null || echo "Ceph tools not available. Install CephToolbox for detailed cluster status."
+  environment: "{{ _env_kube }}"
+  register: ceph_health
+  changed_when: false
+  failed_when: false
+
+- name: Display Ceph health status
+  ansible.builtin.debug:
+    msg: "{{ ceph_health.stdout_lines | default(['Ceph health check skipped']) }}"
+
+- name: Verify StorageClass availability
+  ansible.builtin.shell: kubectl get storageclass {{ storage_class_name }} -o jsonpath='{.provisioner}'
+  environment: "{{ _env_kube }}"
+  register: storageclass_provisioner
+  changed_when: false
+  failed_when: false
+
+- name: Fail if StorageClass is not available
+  ansible.builtin.fail:
+    msg: |
+      CRITICAL: Rook StorageClass does not exist!
+      PostgreSQL requires a StorageClass to provision persistent volumes.
+      
+      The StorageClass should have been created after Rook-Ceph cluster initialization.
+      Check Rook installation logs above for errors.
+      
+      Common causes:
+      1. Ceph cluster not fully initialized (monitors/OSDs not running)
+      2. No available storage devices on worker nodes
+      3. Insufficient resources on worker nodes
+      
+      To fix:
+      - Check Rook pods: kubectl get pods -n {{ rook_namespace }}
+      - Check Ceph cluster: kubectl -n {{ rook_namespace }} get cephcluster
+      - Verify worker nodes have available disks: lsblk
+      - Check Rook operator logs: kubectl logs -n {{ rook_namespace }} -l app=rook-ceph-operator
+  when: storageclass_provisioner.rc != 0 or storageclass_provisioner.stdout == ""
+
+- name: Verify Ceph cluster health (always run)
+  ansible.builtin.shell: kubectl get cephcluster -n {{ rook_namespace }} {{ ceph_cluster_name }} -o jsonpath='{.status.ceph.health}' 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: ceph_cluster_health_check
+  changed_when: false
+  failed_when: false
+
+- name: Verify CephBlockPool status (always run)
+  ansible.builtin.shell: |
+    kubectl get cephblockpool -n {{ rook_namespace }} replicapool -o json 2>/dev/null | \
+    jq -r 'if .status.phase then .status.phase else ( .status.conditions[]? | select(.type=="Ready") | .status ) // "not-found" end'
+  environment: "{{ _env_kube }}"
+  register: ceph_blockpool_health_check
+  changed_when: false
+  failed_when: false
+
+- name: Count running OSD pods (always run)
+  ansible.builtin.shell: kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-osd --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l
+  environment: "{{ _env_kube }}"
+  register: running_osd_count_check
+  changed_when: false
+  failed_when: false
+
+- name: Get all Ceph component pods status (always run)
+  ansible.builtin.shell: kubectl get pods -n {{ rook_namespace }} -o wide
+  environment: "{{ _env_kube }}"
+  register: all_ceph_pods_status
+  changed_when: false
+  failed_when: false
+
+- name: Get OSD prepare logs for health check (when no OSDs running)
+  ansible.builtin.shell: |
+    echo "=== OSD Prepare Jobs Status ==="
+    kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-osd-prepare --no-headers 2>/dev/null || echo "No OSD prepare pods found"
+    echo ""
+    echo "=== OSD Prepare Logs (last 100 lines from each pod) ==="
+    for pod in $(kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-osd-prepare -o name 2>/dev/null); do
+      echo "--- Logs from $pod ---"
+      kubectl logs -n {{ rook_namespace }} $pod --tail=100 2>&1 || echo "Failed to get logs"
+      echo ""
+    done
+  environment: "{{ _env_kube }}"
+  register: osd_prepare_logs_health_check
+  when: (running_osd_count_check.stdout | default('0') | int) == 0
+  changed_when: false
+  failed_when: false
+
+- name: Detect if any OSD prepare pods are in progress (Pending/Running)
+  ansible.builtin.shell: |
+    PHASES=$(kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-osd-prepare -o jsonpath='{range .items[*]}{.status.phase}{" "}{end}' 2>/dev/null || echo "");
+    echo "$PHASES" | grep -Eq '(Pending|Running)' && echo in-progress || echo none
+  environment: "{{ _env_kube }}"
+  register: osd_prepare_progress
+  changed_when: false
+  failed_when: false
+
+- name: Extra wait for OSDs to come up if OSD prepare is in progress
+  ansible.builtin.shell: |
+    kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-osd --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l
+  environment: "{{ _env_kube }}"
+  register: extra_osd_wait
+  until: (extra_osd_wait.stdout | int) >= 1
+  retries: 30
+  delay: 20
+  when: (running_osd_count_check.stdout | default('0') | int) < 1 and (osd_prepare_progress.stdout | default('none')) == 'in-progress'
+  changed_when: false
+  failed_when: false
+
+- name: Refresh running OSD count after extra wait
+  ansible.builtin.shell: kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-osd --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l
+  environment: "{{ _env_kube }}"
+  register: running_osd_count_check
+  changed_when: false
+  failed_when: false
+
+- name: Ensure CephBlockPool becomes ready (on-demand retry)
+  ansible.builtin.shell: |
+    kubectl get cephblockpool -n {{ rook_namespace }} replicapool -o json 2>/dev/null | \
+    jq -r 'if .status.phase then .status.phase else ( .status.conditions[]? | select(.type=="Ready") | .status ) // "Unknown" end'
+  environment: "{{ _env_kube }}"
+  register: ceph_blockpool_health_retry
+  until: ceph_blockpool_health_retry.stdout in ['Ready','Created','True']
+  retries: 30
+  delay: 10
+  when: ceph_require_healthy | bool and ceph_blockpool_health_check.stdout not in ['Ready','Created','True']
+  changed_when: false
+  failed_when: false
+
+- name: Refresh CephBlockPool status after retry
+  ansible.builtin.shell: |
+    kubectl get cephblockpool -n {{ rook_namespace }} replicapool -o json 2>/dev/null | \
+    jq -r 'if .status.phase then .status.phase else ( .status.conditions[]? | select(.type=="Ready") | .status ) // "not-found" end'
+  environment: "{{ _env_kube }}"
+  register: ceph_blockpool_health_check
+  changed_when: false
+  failed_when: false
+
+- name: Refresh Ceph cluster health before final decision
+  ansible.builtin.shell: kubectl get cephcluster -n {{ rook_namespace }} {{ ceph_cluster_name }} -o jsonpath='{.status.ceph.health}' 2>/dev/null || echo "not-found"
+  environment: "{{ _env_kube }}"
+  register: ceph_cluster_health_check
+  changed_when: false
+  failed_when: false
+
+- name: Get Rook operator logs for health check (when cluster unhealthy)
+  ansible.builtin.shell: kubectl logs -n {{ rook_namespace }} -l app=rook-ceph-operator --tail=100
+  environment: "{{ _env_kube }}"
+  register: rook_operator_logs_health_check
+  when: >
+    ceph_cluster_health_check.stdout not in ['HEALTH_OK', 'HEALTH_WARN'] or
+    ceph_blockpool_health_check.stdout not in ['Ready', 'Created'] or
+    (running_osd_count_check.stdout | default('0') | int) < 1
+  changed_when: false
+  failed_when: false
+
+- name: Display comprehensive Rook-Ceph health status
+  ansible.builtin.debug:
+    msg:
+      - "=== Rook-Ceph Health Status ==="
+      - "Ceph Cluster Health: {{ ceph_cluster_health_check.stdout | default('unknown') }}"
+      - "CephBlockPool Status: {{ ceph_blockpool_health_check.stdout | default('unknown') }}"
+      - "Running OSD Pods: {{ running_osd_count_check.stdout | default('0') }}"
+      - "StorageClass: {{ 'Available' if (storageclass_provisioner.rc == 0 and storageclass_provisioner.stdout != '') else 'Not Available' }}"
+
+- name: Warn and continue when Ceph is unhealthy but enforcement is disabled
+  ansible.builtin.debug:
+    msg:
+      - "WARNING: Rook-Ceph is not fully healthy, but ceph_require_healthy=false. Continuing."
+      - "Ceph Cluster Health: {{ ceph_cluster_health_check.stdout | default('not-found') }}"
+      - "CephBlockPool Status: {{ ceph_blockpool_health_check.stdout | default('not-found') }}"
+      - "Running OSD Pods: {{ running_osd_count_check.stdout | default('0') }}"
+  when: >
+    (not ceph_require_healthy | bool) and (
+      ceph_cluster_health_check.stdout not in ['HEALTH_OK', 'HEALTH_WARN'] or
+      ceph_blockpool_health_check.stdout not in ['Ready', 'Created', 'True'] or
+      (running_osd_count_check.stdout | default('0') | int) < 1
+    )
+
+- name: Fail if Ceph cluster is not healthy
+  ansible.builtin.fail:
+    msg: |
+      CRITICAL: Rook-Ceph cluster is not healthy and cannot provision volumes!
+      
+      Ceph Cluster Health: {{ ceph_cluster_health_check.stdout | default('not-found') }}
+      CephBlockPool Status: {{ ceph_blockpool_health_check.stdout | default('not-found') }}
+      Running OSD Pods: {{ running_osd_count_check.stdout | default('0') }}
+      
+      === All Ceph Pods ===
+      {{ all_ceph_pods_status.stdout_lines | default(['No output']) | join('\n') }}
+      
+      {% if (running_osd_count_check.stdout | default('0') | int) == 0 and osd_prepare_logs_health_check is defined %}
+      === OSD Prepare Logs ===
+      {{ osd_prepare_logs_health_check.stdout_lines | default(['No OSD prepare logs available']) | join('\n') }}
+      
+      {% endif %}
+      {% if rook_operator_logs_health_check is defined %}
+      === Rook Operator Logs (last 100 lines) ===
+      {{ rook_operator_logs_health_check.stdout_lines | default(['No operator logs available']) | join('\n') }}
+      
+      {% endif %}
+      === Understanding the Issue ===
+      
+      {% if (running_osd_count_check.stdout | default('0') | int) == 0 %}
+      {% if osd_prepare_logs_health_check is defined and 'no devices matched the storage settings' in (osd_prepare_logs_health_check.stdout | default('')) %}
+      **DETECTED: "no devices matched the storage settings" in OSD prepare logs**
+      
+      This means Rook-Ceph could NOT find the configured storage (directories or devices).
+      For directory-based storage (current type: {{ ceph_storage_type }}), this happens when:
+      1. **Storage directories don't exist on worker nodes** (most common)
+      2. **Directories exist but are not empty** (Ceph requires empty directories)
+      3. **Directory permissions are incorrect** (must be readable/writable)
+      4. **Wrong storage type configured** (directories configured but devices expected, or vice versa)
+      
+      {% endif %}
+      If you see OSD prepare pods in "Completed" status above:
+      - OSD preparation succeeded (storage detected and metadata created)
+      - BUT OSD daemon pods failed to start
+      - Check OSD prepare logs above for warnings/errors
+      - Most common cause: Insufficient resources (CPU/Memory) on worker nodes
+      
+      If you see no OSD prepare pods or they failed:
+      - Storage not detected or OSD preparation failed
+      - Check if storage directories/devices are available
+      {% endif %}
+      
+      === Common Causes ===
+      1. **No running OSDs**: Storage backend has no operational storage daemons (currently {{ running_osd_count_check.stdout | default('0') }})
+      2. **Insufficient resources**: Worker nodes need at least 2GB RAM + 500m CPU per OSD
+      3. **Directory issues**: {{ ceph_storage_directory if ceph_storage_type == 'directories' else '/var/lib/rook' }} must exist, be empty, and writable
+      4. **CephBlockPool not ready**: Pool cannot be used for provisioning (status: {{ ceph_blockpool_health_check.stdout | default('unknown') }})
+      5. **Previous failed installation**: Rook installed but cluster never became healthy
+      
+      === Required Conditions for Volume Provisioning ===
+      - Ceph Cluster Health must be: HEALTH_OK or HEALTH_WARN (not HEALTH_ERR or not-found)
+      - CephBlockPool Status must be: Ready or Created (not not-found or other states)
+      - Running OSD Pods must be: At least 1 (currently {{ running_osd_count_check.stdout | default('0') }})
+      
+      === Troubleshooting Steps ===
+      
+      {% if (running_osd_count_check.stdout | default('0') | int) == 0 and osd_prepare_logs_health_check is defined and 'no devices matched the storage settings' in (osd_prepare_logs_health_check.stdout | default('')) %}
+      **PRIORITY FIX for "no devices matched storage settings":**
+      
+      1. Verify storage directories exist on ALL worker nodes:
+         # SSH to EACH worker node (k8s-worker-1, k8s-worker-2, k8s-worker-3, etc.) and run:
+         sudo ls -ld {{ ceph_storage_directory if ceph_storage_type == 'directories' else '/var/lib/rook/storage' }}
+         
+         # If directory doesn't exist, create it:
+         sudo mkdir -p {{ ceph_storage_directory if ceph_storage_type == 'directories' else '/var/lib/rook/storage' }}
+         sudo chmod 755 {{ ceph_storage_directory if ceph_storage_type == 'directories' else '/var/lib/rook/storage' }}
+      
+      2. Ensure directories are COMPLETELY EMPTY:
+         # On each worker node:
+         sudo ls -la {{ ceph_storage_directory if ceph_storage_type == 'directories' else '/var/lib/rook/storage' }}
+         
+         # If any files exist, remove them:
+         sudo rm -rf {{ ceph_storage_directory if ceph_storage_type == 'directories' else '/var/lib/rook/storage' }}/*
+      
+      3. After fixing directories, delete the CephCluster and redeploy:
+         kubectl delete cephcluster -n {{ rook_namespace }} {{ ceph_cluster_name }}
+         # Wait 1 minute for cleanup
+         # Re-run deployment playbook
+      
+      {% endif %}
+      1. Check worker node resources (most common issue):
+         kubectl describe nodes | grep -A 5 "Allocated resources"
+         # Ensure sufficient CPU and memory available for OSDs
+         # Each OSD needs: 2Gi memory (limit), 500m CPU
+      
+      2. For directory-based storage (current: {{ ceph_storage_type }}):
+         # SSH to each worker node
+         sudo ls -la {{ ceph_storage_directory if ceph_storage_type == 'directories' else '/var/lib/rook' }}
+         # Directory should exist, be empty, and have 755 permissions
+         
+         # If directory has files, clean it:
+         sudo rm -rf {{ ceph_storage_directory if ceph_storage_type == 'directories' else '/var/lib/rook' }}/*
+      
+      3. Check CephCluster resource:
+         kubectl get cephcluster -n {{ rook_namespace }} {{ ceph_cluster_name }} -o yaml
+      
+      4. Check OSD pods (should have at least 1 Running):
+         kubectl get pods -n {{ rook_namespace }} -l app=rook-ceph-osd
+      
+      5. If CephCluster is not-found, Rook needs complete reinstallation:
+         kubectl delete namespace {{ rook_namespace }}
+         # Re-run deployment playbook
+      
+      6. Check CephBlockPool details:
+         kubectl get cephblockpool -n {{ rook_namespace }} replicapool -o yaml
+      
+      === Recovery Steps ===
+      
+      If Ceph cluster exists but is unhealthy:
+      1. Delete stuck PVCs: kubectl delete pvc -n ajasta --all
+      2. Restart Rook operator: kubectl rollout restart deployment/rook-ceph-operator -n {{ rook_namespace }}
+      3. Wait 5 minutes for cluster to stabilize
+      4. Re-check cluster health: kubectl get cephcluster -n {{ rook_namespace }}
+      
+      If OSD pods are missing (most common):
+      1. Verify worker node resources are sufficient (see step 1 above)
+      2. Check storage directories are empty and writable (see step 2 above)
+      3. If resource constraints, consider reducing OSD resource limits in CephCluster
+      4. Review OSD prepare logs above for specific errors
+  when: >
+    ceph_require_healthy | bool and (
+      ceph_cluster_health_check.stdout not in ['HEALTH_OK', 'HEALTH_WARN'] or
+      ceph_blockpool_health_check.stdout not in ['Ready', 'Created', 'True'] or
+      (running_osd_count_check.stdout | default('0') | int) < 1
+    )
+
+- name: Display StorageClass verification result
+  ansible.builtin.debug:
+    msg: 
+      - "✓ Rook StorageClass is available (provisioner: {{ storageclass_provisioner.stdout }})"
+      - "✓ Ceph cluster is healthy ({{ ceph_cluster_health_check.stdout }})"
+      - "✓ CephBlockPool is ready ({{ ceph_blockpool_health_check.stdout }})"
+      - "✓ {{ running_osd_count_check.stdout }} OSD pod(s) running"
+      - "✓ Rook-Ceph is ready to provision volumes"
+  when: storageclass_provisioner.rc == 0 and storageclass_provisioner.stdout != ""

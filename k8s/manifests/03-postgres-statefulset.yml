@@ -86,9 +86,9 @@ spec:
         component: database
     spec:
       accessModes: ["ReadWriteOnce"]
-      # Use Longhorn storage class for persistent storage
-      # Longhorn is automatically installed by deploy-ajasta.yml
-      # Longhorn provides distributed block storage with replication across worker nodes
+      # Storage backend (Longhorn or Rook-Ceph) is automatically installed by deploy-ajasta.yml
+      # Both backends use "longhorn" as StorageClass name for compatibility
+      # Provides distributed block storage with replication across worker nodes
       storageClassName: "longhorn"
       resources:
         requests:

@@ -1,0 +1,54 @@
+---
+# Defaults for storage_rook role
+# Rook namespace where Rook operator and Ceph components will be deployed
+rook_namespace: "rook-ceph"
+
+# Rook version to install
+rook_version: "v1.12.9"
+
+# Rook StorageClass name (using "longhorn" for compatibility with existing manifests)
+storage_class_name: "longhorn"
+
+# Set as default StorageClass
+set_as_default: true
+
+# Kubeconfig path on the master
+kubeconfig_path: "/etc/kubernetes/admin.conf"
+
+# CephCluster configuration
+ceph_cluster_name: "rook-ceph"
+ceph_mon_count: 1
+ceph_mgr_count: 1
+
+# Storage configuration for Ceph OSDs
+# Storage type: "directories" (for VMs/cloud) or "devices" (for bare metal with dedicated disks)
+# Default to "directories" for broader compatibility
+ceph_storage_type: "directories"
+
+# Directory path for OSD storage (used when ceph_storage_type is "directories")
+ceph_storage_directory: "/var/lib/rook/storage"
+
+# Device configuration (used when ceph_storage_type is "devices")
+# Set to "all" to use all available devices on worker nodes
+# Or specify device names like: /dev/sdb,/dev/sdc
+ceph_storage_devices: "all"
+
+# Size for each OSD PVC when using storageClassDeviceSets (directory-based mode)
+ceph_osd_pvc_size: "10Gi"
+
+# StorageClass used specifically for Ceph OSD PVCs (must be external to Ceph, e.g., Longhorn)
+ceph_osd_storage_class_name: "longhorn"
+
+# Volume mode for OSD PVCs (use "Block" for Rook-Ceph OSDs on PVCs)
+ceph_osd_volume_mode: "Block"
+
+# Use all available nodes for Ceph storage
+ceph_use_all_nodes: true
+
+# Worker node groups for Rook/Ceph
+worker_node_groups: "k8s_workers"
+
+# Whether to enforce Ceph health readiness strictly.
+# If false, the role will not fail the deployment when the Ceph cluster is unhealthy,
+# as long as a working StorageClass (e.g., Longhorn) is available for application PVCs.
+ceph_require_healthy: false

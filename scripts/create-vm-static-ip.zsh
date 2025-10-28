@@ -8,7 +8,7 @@
 #   METADATA_YAML (default: ./metadata.yaml)
 #   SSH_USERNAME (optional; if set with a pubkey, authorizes this user; default: ubuntu)
 #   SSH_PUBKEY_FILE or SSH_PUBKEY (optional; path or content of public key)
-#   VM_MEMORY (default: 4) - Memory in GB for the VM
+#   VM_MEMORY (default: 6) - Memory in GB for the VM
 #   VM_CORES (default: 2) - CPU cores for the VM
 #   VM_DISK_SIZE (default: 30) - Boot disk size in GB for the VM
 
@@ -27,7 +27,7 @@ YC_SUBNET_NAME=${YC_SUBNET_NAME:-ajasta-external-segment}
 YC_ADDRESS_NAME=${YC_ADDRESS_NAME:-ajasta-static-ip}
 METADATA_YAML=${METADATA_YAML:-./metadata.yaml}
 SSH_USERNAME=${SSH_USERNAME:-ajasta}
-VM_MEMORY=${VM_MEMORY:-4}
+VM_MEMORY=${VM_MEMORY:-6}
 VM_CORES=${VM_CORES:-2}
 VM_DISK_SIZE=${VM_DISK_SIZE:-30}
 

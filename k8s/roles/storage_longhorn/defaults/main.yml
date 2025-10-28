@@ -1,0 +1,19 @@
+---
+# Defaults for storage_longhorn role
+# Longhorn namespace where Longhorn components will be deployed
+longhorn_namespace: "longhorn-system"
+
+# Longhorn version to install
+longhorn_version: "v1.5.3"
+
+# Longhorn StorageClass name
+storage_class_name: "longhorn"
+
+# Set as default StorageClass
+set_as_default: true
+
+# Kubeconfig path on the master
+kubeconfig_path: "/etc/kubernetes/admin.conf"
+
+# Worker node groups for iSCSI installation
+worker_node_groups: "k8s_workers"
