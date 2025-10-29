@@ -57,6 +57,51 @@
           else (rancher_nodeport_by_port.stdout | default('') | trim)
         }}"
 
+    - name: Detect ingress-nginx HTTPS NodePort (port 443)
+      shell: |
+        kubectl -n ingress-nginx get svc ingress-nginx-controller \
+          -o jsonpath='{.spec.ports[?(@.port==443)].nodePort}' 2>/dev/null | tr -d '\n'
+      register: ingress_https_nodeport
+      changed_when: false
+      failed_when: false
+
+    - name: Compute effective HTTPS NodePort for proxying
+      set_fact:
+        https_nodeport_effective: "{{ (rancher_nodeport | default('') | trim) if ((rancher_nodeport | default('') | trim) | length) > 0 else (ingress_https_nodeport.stdout | default('') | trim) }}"
+
+    - name: Publish effective HTTPS NodePort for other plays
+      set_fact:
+        rancher_https_nodeport_effective: "{{ https_nodeport_effective }}"
+
+    - name: Early detect master private IP via routing table (for proxy backend)
+      ansible.builtin.shell: |
+        ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
+      register: _privip_rt_early
+      changed_when: false
+      failed_when: false
+
+    - name: Set early master IP facts for proxy backend
+      set_fact:
+        _master_private_ip: "{{ (_privip_rt_early.stdout | default('') | trim) }}"
+        _master_public_ip: "{{ hostvars[inventory_hostname].ansible_host | default('') }}"
+
+    - name: Test HTTPS NodePort reachability on private IP (fast probe)
+      when: (https_nodeport_effective | default('') | trim | length) > 0 and (_master_private_ip | default('') | length) > 0
+      ansible.builtin.shell: |
+        curl -sk --connect-timeout 2 --max-time 5 -o /dev/null https://{{ _master_private_ip }}:{{ https_nodeport_effective }}/
+      register: _np_reach
+      changed_when: false
+      failed_when: false
+
+    - name: Decide proxy backend (need _use_pf_backend first)
+      set_fact:
+        _use_pf_backend: "{{ (https_nodeport_effective | default('') | trim | length) == 0 or ((_np_reach.rc | default(1)) != 0) }}"
+
+    - name: Set proxy backend host/port
+      set_fact:
+        proxy_backend_host: "{{ '127.0.0.1' if (_use_pf_backend | bool) else _master_private_ip }}"
+        proxy_backend_port: "{{ 8443 if (_use_pf_backend | bool) else https_nodeport_effective }}"
+
     - name: Show Rancher Service summary
       debug:
         msg:
@@ -65,17 +110,18 @@
           - "Detected HTTPS NodePort: {{ rancher_nodeport | default('') }}"
           - "If empty, Rancher may not be exposed via NodePort. Check the Service type."
 
-    - name: Fail if Rancher NodePort not detected
-      fail:
+    - name: Rancher NodePort not detected — will try ingress-nginx HTTPS NodePort if available
+      debug:
         msg: |
-          Could not detect Rancher HTTPS NodePort.
+          Could not detect Rancher HTTPS NodePort on Service cattle-system/rancher.
+          We will try ingress-nginx Service port 443 NodePort as a fallback for the :443 proxy.
           Service output:
-          {{ rancher_svc_wide.stdout }}
-      when: (rancher_nodeport | default('') | length) == 0
+          {{ rancher_svc_wide.stdout | default('n/a') }}
+      when: (rancher_nodeport | default('') | trim | length) == 0
 
-    - name: Open Rancher NodePort on VM firewall (firewalld/iptables)
+    - name: Open HTTPS access on VM firewall (NodePort if any, plus 443)
       vars:
-        open_ports: ["{{ rancher_nodeport | int }}"]
+        open_ports: "{{ (([ (https_nodeport_effective | int) ] if (https_nodeport_effective | default('') | trim | length) > 0 else []) + [443]) }}"
         firewall_backend: "auto"
         # Do a local curl check to 127.0.0.1:<nodeport> after opening
         open_web_ports_check_local: true
@@ -92,10 +138,24 @@
         ansible_python_interpreter: /usr/bin/python3
       failed_when: false
 
-    - name: Best-effort curl tests to Rancher (local/private/public)
+    - name: Fallback detect master private IP via routing table (if facts unavailable)
+      when: (_master_private_ip | default('') | length) == 0
+      ansible.builtin.shell: |
+        ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
+      register: _privip_rt
+      changed_when: false
+      failed_when: false
+
+    - name: Set private IP from routing table detection (if found)
+      when: (_master_private_ip | default('') | length) == 0 and (_privip_rt.stdout | default('') | trim | length) > 0
+      set_fact:
+        _master_private_ip: "{{ _privip_rt.stdout | trim }}"
+
+    - name: Best-effort curl tests to HTTPS NodePort (local/private/public)
+      when: (https_nodeport_effective | default('') | trim | length) > 0
       shell: |
         set -e
-        NP={{ rancher_nodeport }}
+        NP={{ https_nodeport_effective }}
         echo "-- curl localhost:${NP} (HTTPS, insecure) --"
         (curl -k --connect-timeout 3 --max-time 8 -sS -o /dev/null -w "HTTP %{http_code}\n" https://127.0.0.1:${NP}/) || echo curl_failed
         echo "-- curl master-private-ip:${NP} (HTTPS, insecure) --"
@@ -110,15 +170,269 @@
       debug:
         msg: "{{ rancher_local_curls.stdout_lines }}"
 
-- name: Open Rancher NodePort in Yandex Cloud Security Group (runs locally)
-  hosts: local
+    - name: Install ajasta-rancher-pf helper script
+      when: _use_pf_backend | bool
+      ansible.builtin.copy:
+        dest: /usr/local/bin/ajasta-rancher-pf.sh
+        mode: '0755'
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          # Ensure KUBECONFIG is available
+          export KUBECONFIG="${KUBECONFIG:-/etc/kubernetes/admin.conf}"
+          # Bind configuration (allows fallback to 127.0.0.1:8443)
+          AJ_BIND_ADDRESS="${AJ_BIND_ADDRESS:-0.0.0.0}"
+          AJ_BIND_PORT="${AJ_BIND_PORT:-443}"
+          # Detect Service targetPort for HTTPS
+          TP=$(kubectl -n cattle-system get svc rancher -o jsonpath='{.spec.ports[?(@.name=="https")].targetPort}' 2>/dev/null || true)
+          if [ -z "$TP" ]; then
+            TP=$(kubectl -n cattle-system get svc rancher -o jsonpath='{.spec.ports[?(@.port==443)].targetPort}' 2>/dev/null || true)
+          fi
+          # If targetPort is not exactly 443, figure out the numeric backend port and port-forward to the pod
+          if [ "$TP" != "443" ]; then
+            # Resolve numeric target port if TP is a named port
+            if [[ "$TP" =~ ^[0-9]+$ ]]; then
+              TP_NUM="$TP"
+            else
+              # Try to resolve via Endpoints named port "https"
+              TP_NUM=$(kubectl -n cattle-system get endpoints rancher -o jsonpath='{.subsets[0].ports[?(@.name=="https")].port}' 2>/dev/null || true)
+              # Fallback to common Rancher HTTPS container port
+              if [ -z "$TP_NUM" ]; then TP_NUM=444; fi
+            fi
+            # Find a rancher pod by common labels
+            POD=$(kubectl -n cattle-system get pods -l app.kubernetes.io/name=rancher -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            if [ -z "$POD" ]; then
+              POD=$(kubectl -n cattle-system get pods -l app=rancher -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            fi
+            if [ -z "$POD" ]; then
+              echo "[ajasta-rancher-pf] No rancher pod found" >&2
+              exit 1
+            fi
+            echo "[ajasta-rancher-pf] Using pod/$POD ${AJ_BIND_PORT}:${TP_NUM} (svc targetPort=$TP, bind ${AJ_BIND_ADDRESS}:${AJ_BIND_PORT})" >&2
+            exec /usr/bin/kubectl --address "${AJ_BIND_ADDRESS}" -n cattle-system port-forward "pod/$POD" "${AJ_BIND_PORT}:${TP_NUM}"
+          else
+            echo "[ajasta-rancher-pf] Using svc/rancher ${AJ_BIND_PORT}:443 (targetPort=$TP, bind ${AJ_BIND_ADDRESS}:${AJ_BIND_PORT})" >&2
+            exec /usr/bin/kubectl --address "${AJ_BIND_ADDRESS}" -n cattle-system port-forward svc/rancher "${AJ_BIND_PORT}:443"
+          fi
+
+    - name: Create systemd unit for Rancher port-forward on 0.0.0.0:443 (auto svc/pod)
+      when: _use_pf_backend | bool
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/ajasta-rancher-pf.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Ajasta kubectl port-forward for Rancher (0.0.0.0:443 -> cattle-system/rancher HTTPS)
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          Environment=KUBECONFIG=/etc/kubernetes/admin.conf
+          ExecStart=/usr/local/bin/ajasta-rancher-pf.sh
+          Restart=always
+          RestartSec=2
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Stop and disable ajasta-port443-proxy (socat) when using PF backend
+      when: _use_pf_backend | bool
+      ansible.builtin.systemd:
+        name: ajasta-port443-proxy.service
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: Enable and start ajasta-rancher-pf (kubectl port-forward)
+      when: _use_pf_backend | bool
+      ansible.builtin.systemd:
+        name: ajasta-rancher-pf.service
+        enabled: true
+        state: restarted
+        daemon_reload: true
+
+    - name: Verify local connectivity to Rancher via port-forward (https://127.0.0.1:443)
+      when: _use_pf_backend | bool
+      ansible.builtin.shell: |
+        set -e
+        curl -k -sS -o /dev/null -w "HTTP %{http_code}\n" https://127.0.0.1:443/ || echo "curl_failed"
+      register: _curl_local_pf443
+      changed_when: false
+      failed_when: false
+
+    - name: Decide if direct PF on :443 is healthy
+      when: _use_pf_backend | bool
+      ansible.builtin.set_fact:
+        _pf443_ok: "{{ (_curl_local_pf443.rc | default(1)) == 0 and ('curl_failed' not in (_curl_local_pf443.stdout | default(''))) }}"
+
+    - name: Fallback to PF on 127.0.0.1:8443 + socat proxy on :443 when direct PF fails
+      when: _use_pf_backend | bool and not (_pf443_ok | bool)
+      block:
+        - name: Create systemd unit for Rancher port-forward on 127.0.0.1:8443 (auto svc/pod)
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/ajasta-rancher-pf-8443.service
+            mode: '0644'
+            content: |
+              [Unit]
+              Description=Ajasta kubectl port-forward for Rancher (127.0.0.1:8443 -> cattle-system/rancher HTTPS)
+              After=network-online.target
+              Wants=network-online.target
+
+              [Service]
+              Type=simple
+              Environment=KUBECONFIG=/etc/kubernetes/admin.conf
+              Environment=AJ_BIND_ADDRESS=127.0.0.1
+              Environment=AJ_BIND_PORT=8443
+              ExecStart=/usr/local/bin/ajasta-rancher-pf.sh
+              Restart=always
+              RestartSec=2
+
+              [Install]
+              WantedBy=multi-user.target
+
+        - name: Stop/disable direct :443 port-forward unit
+          ansible.builtin.systemd:
+            name: ajasta-rancher-pf.service
+            enabled: false
+            state: stopped
+            daemon_reload: true
+          failed_when: false
+
+        - name: Enable and start PF fallback unit on 127.0.0.1:8443
+          ansible.builtin.systemd:
+            name: ajasta-rancher-pf-8443.service
+            enabled: true
+            state: restarted
+            daemon_reload: true
+
+        - name: Ensure socat is installed for 443 proxy (fallback)
+          ansible.builtin.shell: |
+            set -e
+            if command -v socat >/dev/null 2>&1; then echo ok; exit 0; fi
+            if command -v dnf >/dev/null 2>&1; then dnf -y install socat; echo installed; exit 0; fi
+            if command -v yum >/dev/null 2>&1; then yum -y install socat || yum -y install nmap-ncat; echo installed; exit 0; fi
+            if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get -y install socat; echo installed; exit 0; fi
+            echo "socat_not_installed" && exit 1
+          register: _socat443_fb_install
+          changed_when: '"installed" in _socat443_fb_install.stdout'
+          failed_when: false
+
+        - name: Create systemd unit to proxy 0.0.0.0:443 -> 127.0.0.1:8443 (socat fallback)
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/ajasta-port443-proxy.service
+            mode: '0644'
+            content: |
+              [Unit]
+              Description=Ajasta local port 443 proxy to Rancher PF at 127.0.0.1:8443
+              After=network-online.target ajasta-rancher-pf-8443.service
+              Wants=network-online.target
+
+              [Service]
+              Type=simple
+              ExecStart=/usr/bin/socat -d -d TCP-LISTEN:443,reuseaddr,fork TCP:127.0.0.1:8443
+              Restart=always
+              RestartSec=2
+
+              [Install]
+              WantedBy=multi-user.target
+
+        - name: Enable and start ajasta-port443-proxy (fallback)
+          ansible.builtin.systemd:
+            name: ajasta-port443-proxy.service
+            enabled: true
+            state: restarted
+            daemon_reload: true
+
+        - name: Verify local connectivity to Rancher via :443 after fallback
+          ansible.builtin.shell: |
+            set -e
+            curl -k -sS -o /dev/null -w "HTTP %{http_code}\n" https://127.0.0.1:443/ || echo "curl_failed"
+          register: _curl_local_fb443
+          changed_when: false
+          failed_when: false
+
+    - name: Ensure socat is installed for 443 proxy
+      when: not (_use_pf_backend | bool)
+      ansible.builtin.shell: |
+        set -e
+        if command -v socat >/dev/null 2>&1; then echo ok; exit 0; fi
+        if command -v dnf >/dev/null 2>&1; then dnf -y install socat; echo installed; exit 0; fi
+        if command -v yum >/dev/null 2>&1; then yum -y install socat || yum -y install nmap-ncat; echo installed; exit 0; fi
+        if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get -y install socat; echo installed; exit 0; fi
+        echo "socat_not_installed" && exit 1
+      register: _socat443_install
+      changed_when: '"installed" in _socat443_install.stdout'
+      failed_when: false
+
+    - name: Create systemd unit to proxy 0.0.0.0:443 -> backend (socat)
+      when: not (_use_pf_backend | bool)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/ajasta-port443-proxy.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Ajasta local port 443 proxy to Rancher/Ingress HTTPS backend
+          After=network-online.target ajasta-rancher-pf.service
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/socat -d -d TCP-LISTEN:443,reuseaddr,fork TCP:{{ proxy_backend_host }}:{{ proxy_backend_port }}
+          Restart=always
+          RestartSec=2
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start ajasta-port443-proxy
+      when: not (_use_pf_backend | bool)
+      ansible.builtin.systemd:
+        name: ajasta-port443-proxy.service
+        enabled: true
+        state: restarted
+        daemon_reload: true
+
+    - name: Show listener on :443 (ss)
+      ansible.builtin.shell: ss -tlnp | grep ":443" || true
+      register: _ss_443
+      changed_when: false
+      failed_when: false
+
+    - name: Show :443 listener lines
+      when: (_use_pf_backend | bool) or ((https_nodeport_effective | default('') | trim | length) > 0)
+      debug:
+        msg: "{{ _ss_443.stdout_lines | default([]) }}"
+
+    - name: Show listener on :8443 when PF fallback is active (ss)
+      when: _use_pf_backend | bool and ( _pf443_ok is defined ) and not (_pf443_ok | bool)
+      ansible.builtin.shell: ss -tlnp | grep ":8443" || true
+      register: _ss_8443
+      changed_when: false
+      failed_when: false
+
+    - name: Show :8443 listener lines (PF fallback)
+      when: _use_pf_backend | bool and ( _pf443_ok is defined ) and not (_pf443_ok | bool)
+      debug:
+        msg: "{{ _ss_8443.stdout_lines | default([]) }}"
+
+    - name: Verify local connectivity to Rancher via :443 (localhost)
+      when: (https_nodeport_effective | default('') | trim | length) > 0
+      ansible.builtin.shell: |
+        set -e
+        curl -k -sS -o /dev/null -w "HTTP %{http_code}\n" https://127.0.0.1:443/ || echo "curl_failed"
+      register: _curl_local_443
+      changed_when: false
+      failed_when: false
+
+- name: Open Rancher NodePort in Yandex Cloud Security Group
+  hosts: k8s_master
   gather_facts: false
-  become: false
+  become: true
 
   vars:
     # Values will be passed from first play via extra_vars when running this playbook normally with a single command
     # If running this play alone, override sg_nodeport explicitly with -e
-    sg_ports: []                 # we open only the NodePort (no extra ports)
     sg_cidrs: ["0.0.0.0/0"]
     sg_add_nodeport: true
     sg_nodeport: ""             # must be provided via -e or by the combined wrapper
@@ -130,26 +444,28 @@
   tasks:
     - name: Compute effective sg_nodeport for cloud SG
       ansible.builtin.set_fact:
-        _sg_nodeport_effective: "{{ sg_nodeport if (sg_nodeport | length) > 0 else (hostvars[groups['k8s_master'][0]].rancher_nodeport | default('')) }}"
+        _sg_nodeport_effective: "{{
+          sg_nodeport if (sg_nodeport | length) > 0
+          else (
+            hostvars[groups['k8s_master'][0]].rancher_https_nodeport_effective | default(hostvars[groups['k8s_master'][0]].rancher_nodeport | default(''))
+          )
+        }}"
 
-    - name: Fail if sg_nodeport is not known
-      ansible.builtin.fail:
-        msg: "Rancher NodePort not known; pass -e sg_nodeport=<PORT> or run the first play in this file to detect it."
+    - name: sg_nodeport not known — proceeding to open only default ports 80/443 in SG
+      ansible.builtin.debug:
+        msg: "Rancher NodePort not known; Security Group will be updated only for ports 80 and 443. To add NodePort, pass -e sg_nodeport=<PORT> or run the first play."
       when: (_sg_nodeport_effective | default('') | string | length) == 0
 
     - name: Open cloud SG for Rancher NodePort
       ansible.builtin.include_role:
         name: roles/yc_open_sg_http
       vars:
-        sg_ports: []
         sg_cidrs: "{{ sg_cidrs }}"
         sg_add_nodeport: true
         sg_nodeport: "{{ _sg_nodeport_effective }}"
-        sg_id: "{{ sg_id }}"
-        instance_name: "{{ instance_name }}"
         # Pass a concrete value from inventory to avoid self-referential templating
         master_public_ip: "{{ hostvars[groups['k8s_master'][0]].ansible_host | default('') }}"
-        kubeconfig_path: "{{ kubeconfig_path }}"
+        kubeconfig_path: "/etc/kubernetes/admin.conf"
 
 - name: Final summary and suggested URL
   hosts: k8s_master
@@ -178,4 +494,5 @@
         msg:
           - "Rancher HTTPS NodePort: {{ _rancher_np | default('unknown') }}"
           - "Try from your machine: https://{{ _master_public_ip | default('MASTER_PUBLIC_IP') }}:{{ _rancher_np | default('NODEPORT') }}/"
-          - "If unreachable, ensure cloud Security Group allows the NodePort and that your ISP/firewall permits outbound HTTPS to that port."
+          - "Also try direct HTTPS on 443 (proxied to NodePort): https://{{ _master_public_ip | default('MASTER_PUBLIC_IP') }}/"
+          - "If unreachable, ensure cloud Security Group allows ports 443 and the NodePort, that the ajasta-port443-proxy service is running on the master, and that your ISP/firewall permits outbound HTTPS to that port."

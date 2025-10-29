@@ -104,10 +104,12 @@
           [Service]
           Type=oneshot
           RemainAfterExit=yes
-          ExecStart=/usr/sbin/iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-          ExecStart=/usr/sbin/iptables -I INPUT -p tcp --dport 443 -j ACCEPT
-          ExecStop=/usr/sbin/iptables -D INPUT -p tcp --dport 80 -j ACCEPT
-          ExecStop=/usr/sbin/iptables -D INPUT -p tcp --dport 443 -j ACCEPT
+          {% for p in _open_ports_list %}
+          ExecStart=/usr/sbin/iptables -I INPUT -p tcp --dport {{ p }} -j ACCEPT
+          {% endfor %}
+          {% for p in _open_ports_list %}
+          ExecStop=/usr/sbin/iptables -D INPUT -p tcp --dport {{ p }} -j ACCEPT
+          {% endfor %}
 
           [Install]
           WantedBy=multi-user.target

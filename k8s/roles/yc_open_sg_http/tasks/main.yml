@@ -9,11 +9,11 @@
   changed_when: false
   failed_when: false
 
-- name: Fail if yc CLI is not available
-  ansible.builtin.fail:
+- name: yc CLI not available — proceeding without cloud SG changes (diagnostic)
+  ansible.builtin.debug:
     msg: >-
-      yc CLI not found. Please install and authenticate the Yandex Cloud CLI on the Ansible runner.
-      Docs: https://cloud.yandex.com/en-ru/docs/cli/quickstart
+      yc CLI not found on the Ansible runner. Cloud Security Group updates will be skipped.
+      Install and authenticate yc to allow automatic SG updates: https://cloud.yandex.com/en-ru/docs/cli/quickstart
   when: _yc_check.rc != 0
 
 - name: Set effective master public IP
@@ -42,7 +42,7 @@
 # --- Robust SG discovery section ---
 # 1) Prefer discovery by master public IP (matches instance NAT address)
 - name: Discover instance ID by matching master public IP (best effort)
-  when: (sg_id | length) == 0 and (_master_ip_effective | length) > 0
+  when: (sg_id | length) == 0 and (_master_ip_effective | length) > 0 and (_yc_check.rc == 0)
   ansible.builtin.shell: |
     set -e
     python3 - <<'PY'
@@ -68,7 +68,7 @@
   failed_when: false
 
 - name: Discover SG IDs from instance ID (by public IP)
-  when: (sg_id | length) == 0 and (_inst_id_by_ip.stdout | length) > 0
+  when: (sg_id | length) == 0 and (_yc_check.rc == 0) and (_inst_id_by_ip is defined) and ((_inst_id_by_ip.get('stdout','') | trim | length) > 0)
   ansible.builtin.shell: >-
     yc compute instance get {{ _inst_id_by_ip.stdout | trim }} --format json | python3 -c 'import sys,json; j=json.load(sys.stdin); sgs=[]; 
     nis=j.get("networkInterfaces", j.get("network_interfaces", []));
@@ -80,7 +80,7 @@
 
 # 2) Fallback: discover by instance name (existing behavior)
 - name: Discover Security Group IDs from instance name (fallback)
-  when: (sg_id | length) == 0
+  when: (sg_id | length) == 0 and (_yc_check.rc == 0)
   ansible.builtin.shell: >-
     yc compute instance get {{ instance_name | quote }} --format json | python3 -c 'import sys,json; j=json.load(sys.stdin); sgs=[]; ni=j.get("networkInterfaces", j.get("network_interfaces", [])); [sgs.extend(n.get("securityGroupIds", n.get("security_group_ids", []))) for n in ni]; print(" ".join(sorted(set(sgs))))'
   register: _sg_ids_from_instance
@@ -103,7 +103,7 @@
 
 # 3) Optional last resort: if only one SG exists in folder, suggest using it
 - name: Suggest default SG when only one exists in folder (diagnostic only)
-  when: (_sg_ids_effective | length) == 0
+  when: (_sg_ids_effective | length) == 0 and (_yc_check.rc == 0)
   ansible.builtin.shell: >-
     yc vpc security-group list --format json | python3 -c 'import sys,json; s=json.load(sys.stdin); 
     print(s[0]["id"] if isinstance(s,list) and len(s)==1 else "")'
@@ -133,7 +133,7 @@
 
 # --- Auto-create a Security Group and attach it when none were found ---
 - name: Auto-create SG when none discovered (prepare instance and NIC info)
-  when: (_sg_ids_effective | length) == 0 and (auto_create_sg | default(false) | bool)
+  when: (_sg_ids_effective | length) == 0 and (auto_create_sg | default(false) | bool) and (_yc_check.rc == 0)
   ansible.builtin.shell: >-
     yc compute instance get {{ ( _inst_id_by_ip.stdout | default('') | trim ) if (_inst_id_by_ip is defined and (_inst_id_by_ip.stdout | default('') | trim) | length > 0) else (instance_name | quote) }} --format json
   register: _inst_get_json
@@ -212,7 +212,7 @@
     _sg_ids_effective: "{{ ((_parsed_existing_sg.split() if (_parsed_existing_sg | default('') | length) > 0 else []) + [_new_sg_id]) | unique }}"
 
 - name: Add ingress rules for required ports (ignore duplicates)
-  when: (_sg_ids_effective | length) > 0
+  when: (_sg_ids_effective | length) > 0 and (_yc_check.rc == 0)
   ansible.builtin.shell: |
     yc vpc security-group update --id {{ item.0 }} \
       --add-rule "direction=ingress,protocol=tcp,ports={{ item.1 }}-{{ item.1 }},v4-cidr-blocks={{ sg_cidrs | join(',') }}" || true
