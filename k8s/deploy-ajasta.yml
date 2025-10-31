@@ -126,16 +126,103 @@
       include_role:
         name: storage_longhorn
       when: storage_backend == 'longhorn'
-      
-    - name: Ensure Longhorn is installed (required for Rook OSD PVCs)
-      include_role:
-        name: storage_longhorn
-      when: storage_backend == 'rook'
 
     - name: Install Rook storage backend
       include_role:
         name: storage_rook
       when: storage_backend == 'rook'
+      
+    # --- Verify storage backend health before deploying applications ---
+    - name: Verify Rook-Ceph storage backend health
+      when: storage_backend == 'rook'
+      block:
+        - name: Check Rook operator status
+          shell: kubectl get pods -n rook-ceph -l app=rook-ceph-operator -o jsonpath='{.items[*].status.phase}' | grep -q Running
+          register: rook_operator_check
+          until: rook_operator_check.rc == 0
+          retries: 12
+          delay: 5
+          changed_when: false
+          failed_when: false
+          
+        - name: Check Ceph monitors status
+          shell: kubectl get pods -n rook-ceph -l app=rook-ceph-mon -o jsonpath='{.items[*].status.phase}' | grep -q Running
+          register: rook_mon_check
+          until: rook_mon_check.rc == 0
+          retries: 12
+          delay: 5
+          changed_when: false
+          failed_when: false
+          
+        - name: Check Ceph OSDs status
+          shell: kubectl get pods -n rook-ceph -l app=rook-ceph-osd --no-headers 2>/dev/null | grep -c Running || echo "0"
+          register: rook_osd_count
+          changed_when: false
+          
+        - name: Display Rook-Ceph cluster status
+          debug:
+            msg:
+              - "=== Rook-Ceph Storage Backend Status ==="
+              - "Operator Running: {{ 'YES' if rook_operator_check.rc == 0 else 'NO' }}"
+              - "Monitors Running: {{ 'YES' if rook_mon_check.rc == 0 else 'NO' }}"
+              - "OSDs Running: {{ rook_osd_count.stdout | default('0') }}"
+              - "StorageClass: longhorn (provisioner: rook-ceph.rbd.csi.ceph.com)"
+              
+        - name: Fail if no Ceph OSDs are running
+          fail:
+            msg: |
+              CRITICAL: Rook-Ceph storage backend is not ready for PostgreSQL deployment!
+              
+              OSD Count: {{ rook_osd_count.stdout | default('0') }}
+              
+              No Ceph OSD pods are running. This means Rook-Ceph cannot provision storage volumes.
+              
+              Common causes:
+              1. OSDs failed to start due to storage configuration issues
+              2. No suitable storage found (devices or directories)
+              3. Insufficient node resources (memory/CPU)
+              
+              Please check:
+              - kubectl get pods -n rook-ceph -l app=rook-ceph-osd
+              - kubectl get pods -n rook-ceph -l app=rook-ceph-osd-prepare
+              - kubectl logs -n rook-ceph -l app=rook-ceph-operator --tail=100
+              - kubectl get cephcluster -n rook-ceph -o yaml
+              
+              Fix the Rook-Ceph configuration and redeploy before continuing.
+          when: (rook_osd_count.stdout | default('0') | int) == 0
+          
+    - name: Verify Longhorn storage backend health
+      when: storage_backend == 'longhorn'
+      block:
+        - name: Check Longhorn manager status
+          shell: kubectl get pods -n longhorn-system -l app=longhorn-manager -o jsonpath='{.items[*].status.phase}' | grep -q Running
+          register: longhorn_manager_check
+          until: longhorn_manager_check.rc == 0
+          retries: 12
+          delay: 5
+          changed_when: false
+          failed_when: false
+          
+        - name: Display Longhorn storage backend status
+          debug:
+            msg:
+              - "=== Longhorn Storage Backend Status ==="
+              - "Manager Running: {{ 'YES' if longhorn_manager_check.rc == 0 else 'NO' }}"
+              - "StorageClass: longhorn (provisioner: driver.longhorn.io)"
+              
+        - name: Fail if Longhorn is not ready
+          fail:
+            msg: |
+              CRITICAL: Longhorn storage backend is not ready for PostgreSQL deployment!
+              
+              Longhorn manager pods are not running.
+              
+              Please check:
+              - kubectl get pods -n longhorn-system
+              - kubectl logs -n longhorn-system -l app=longhorn-manager --tail=100
+              
+              Fix the Longhorn configuration and redeploy before continuing.
+          when: longhorn_manager_check.rc != 0
       
     - name: Copy manifests directory to master node
       copy:
@@ -152,6 +239,46 @@
       command: kubectl apply -f /tmp/ajasta-manifests/02-postgres-secret.yml
       register: postgres_secret_result
       changed_when: "'created' in postgres_secret_result.stdout or 'configured' in postgres_secret_result.stdout"
+      
+    # --- Clean up stale PostgreSQL PVCs to avoid "Volume ID already exists" errors ---
+    - name: Check for existing PostgreSQL PVCs
+      shell: kubectl get pvc -n {{ app_namespace }} -l component=database -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo ""
+      register: existing_postgres_pvcs
+      changed_when: false
+      
+    - name: Check status of existing PostgreSQL PVCs
+      shell: kubectl get pvc -n {{ app_namespace }} -l component=database -o jsonpath='{.items[*].status.phase}' 2>/dev/null || echo ""
+      register: existing_postgres_pvcs_status
+      changed_when: false
+      when: existing_postgres_pvcs.stdout | length > 0
+      
+    - name: Delete stale PostgreSQL PVCs (Pending or Failed state)
+      shell: kubectl delete pvc -n {{ app_namespace }} -l component=database --ignore-not-found=true
+      when: 
+        - existing_postgres_pvcs.stdout | length > 0
+        - existing_postgres_pvcs_status.stdout is defined
+        - existing_postgres_pvcs_status.stdout is search("Pending|Failed")
+      register: postgres_pvc_cleanup
+      changed_when: postgres_pvc_cleanup.rc == 0
+      
+    - name: Display PVC cleanup status
+      debug:
+        msg:
+          - "=== PostgreSQL PVC Cleanup ==="
+          - "Existing PVCs: {{ existing_postgres_pvcs.stdout | default('None') }}"
+          - "PVC Status: {{ existing_postgres_pvcs_status.stdout | default('N/A') }}"
+          - "Cleanup Action: {{ 'Deleted stale PVCs' if (postgres_pvc_cleanup.changed | default(false)) else 'No cleanup needed' }}"
+      when: existing_postgres_pvcs.stdout | length > 0
+      
+    - name: Wait for PVC deletion to complete
+      shell: kubectl get pvc -n {{ app_namespace }} -l component=database 2>/dev/null | wc -l
+      register: pvc_check
+      until: (pvc_check.stdout | int) <= 1
+      retries: 6
+      delay: 5
+      changed_when: false
+      failed_when: false
+      when: postgres_pvc_cleanup.changed | default(false)
       
     - name: Check if PostgreSQL StatefulSet exists
       shell: kubectl get statefulset ajasta-postgres -n {{ app_namespace }} -o name 2>/dev/null || echo "not-found"

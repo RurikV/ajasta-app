@@ -21,26 +21,23 @@ ceph_mon_count: 1
 ceph_mgr_count: 1
 
 # Storage configuration for Ceph OSDs
-# Storage type: "directories" (for VMs/cloud) or "devices" (for bare metal with dedicated disks)
-# Default to "directories" for broader compatibility
+# Storage type: "directories" or "devices"
+# - "directories": Use directories on worker nodes (requires empty directories at ceph_storage_directory)
+#   Best for VM environments with single system disk (most cloud providers)
+# - "devices": Use raw block devices on worker nodes (requires unused/empty block devices)
+#   Best for bare metal or VMs with additional dedicated storage disks
+# Default to "directories" for VM environments without additional block devices
 ceph_storage_type: "directories"
 
 # Directory path for OSD storage (used when ceph_storage_type is "directories")
+# Directory must exist and be empty on all worker nodes before deployment
 ceph_storage_directory: "/var/lib/rook/storage"
 
 # Device configuration (used when ceph_storage_type is "devices")
-# Set to "all" to use all available devices on worker nodes
+# Set to "all" to use all available unused devices on worker nodes
 # Or specify device names like: /dev/sdb,/dev/sdc
+# NOTE: Devices must be completely empty (no partitions, no filesystem)
 ceph_storage_devices: "all"
-
-# Size for each OSD PVC when using storageClassDeviceSets (directory-based mode)
-ceph_osd_pvc_size: "10Gi"
-
-# StorageClass used specifically for Ceph OSD PVCs (must be external to Ceph, e.g., Longhorn)
-ceph_osd_storage_class_name: "longhorn"
-
-# Volume mode for OSD PVCs (use "Block" for Rook-Ceph OSDs on PVCs)
-ceph_osd_volume_mode: "Block"
 
 # Use all available nodes for Ceph storage
 ceph_use_all_nodes: true

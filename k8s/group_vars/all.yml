@@ -37,17 +37,17 @@ workers:
     address_name: "ajasta-k8s-worker3-ip"
 
 # VM Resources (memory in GB, cores as integer)
-# IMPORTANT: 2GB RAM is the absolute minimum for Kubernetes control plane, but it's very tight
-# and often causes API server startup failures due to resource pressure.
-# Recommendation: 4GB for master (stable operation), 3-4GB for workers
-# Cost consideration: While larger VMs cost more per hour, they SAVE money by:
-#   - Reducing failed deployments and manual intervention
-#   - Faster pod startup and better performance
-#   - Avoiding repeated VM recreation due to failures
-master_vm_memory: 4              # GB of RAM for master node (control plane + etcd + API server)
+# IMPORTANT: 6GB RAM is recommended for production workloads with storage backends
+# - Master: control plane + etcd + API server + monitoring
+# - Workers: application pods + storage backend (Longhorn/Rook-Ceph OSDs)
+# Storage backend memory requirements:
+#   - Longhorn: ~1GB per node
+#   - Rook-Ceph OSDs: 2-4GB per OSD + mon/mgr overhead
+# Cost consideration: 6GB provides stable operation for distributed storage systems
+master_vm_memory: 6              # GB of RAM for master node (control plane + etcd + API server)
 master_vm_cores: 2               # CPU cores for master node
 master_vm_disk_size: 30          # GB of disk space for master node boot disk
-worker_vm_memory: 3              # GB of RAM for worker nodes (can be less than master)
+worker_vm_memory: 6              # GB of RAM for worker nodes (sufficient for storage backends)
 worker_vm_cores: 2               # CPU cores for worker nodes
 worker_vm_disk_size: 30          # GB of disk space for worker node boot disk
 

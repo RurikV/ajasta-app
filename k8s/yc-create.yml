@@ -1,7 +1,7 @@
 ---
 - name: Create k8s infrastructure in Yandex Cloud (1 master + 3 workers)
   hosts: local
-  gather_facts: false
+  gather_facts: true
   vars:
     env_base:
       YC_CLOUD_ID: "{{ yc_cloud_id }}"
@@ -170,6 +170,35 @@
           - "Resolved worker IPs: {{ worker_ips_list }}"
           - "Worker CSV: {{ workers_csv }}"
 
+    # --- Auto-generate inventory.ini with captured VM IPs ---
+    - name: Backup existing inventory.ini (if exists)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/inventory.ini"
+        dest: "{{ playbook_dir }}/inventory.ini.backup.{{ ansible_date_time.epoch }}"
+        remote_src: false
+      when: "(master_ip_clean | default('') | length) > 0"
+      ignore_errors: true
+      delegate_to: localhost
+
+    - name: Generate inventory.ini from template with captured IPs
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/inventory.ini.j2"
+        dest: "{{ playbook_dir }}/inventory.ini"
+        mode: '0644'
+      when: "(master_ip_clean | default('') | length) > 0"
+      delegate_to: localhost
+
+    - name: Display inventory generation status
+      ansible.builtin.debug:
+        msg:
+          - "==========================================="
+          - "✓ Inventory file generated: {{ playbook_dir }}/inventory.ini"
+          - "  Master: {{ master_vm_name }} -> {{ master_ip_clean }}"
+          - "  Workers:"
+          - "{% for worker in workers %}    {{ worker.vm_name }} -> {{ worker_ips_list[loop.index0] }}{% endfor %}"
+          - "==========================================="
+      when: "(master_ip_clean | default('') | length) > 0"
+
     - name: Ensure master IP is available before bootstrap
       ansible.builtin.assert:
         that:
@@ -219,15 +248,6 @@
       ansible.builtin.debug:
         var: rancher_install_out.stdout_lines
       when: (bootstrap_k8s | default(false) | bool) and (install_rancher | default(true) | bool)
-
-    # --- Generate inventory file after successful provisioning ---
-    - name: Generate inventory.ini file
-      ansible.builtin.shell: |
-        {{ playbook_dir }}/generate-inventory.sh
-      args:
-        chdir: "{{ playbook_dir }}"
-      when: (master_ip_clean | default('') | length) > 0
-      tags: ["inventory"]
 
     - name: Show completion message
       ansible.builtin.debug:
