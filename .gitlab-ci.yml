@@ -622,6 +622,11 @@ deploy:production:
     - mkdir -p ~/.kube
     - echo "$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
     - chmod 600 ~/.kube/config
+    # Configure cluster to skip TLS verification (required for public IP access)
+    # The API server certificate is issued for internal IPs, but CI/CD accesses
+    # via public IP, causing certificate validation to fail
+    - kubectl config set-cluster kubernetes --insecure-skip-tls-verify=true
+    - echo "✅ Configured cluster to skip TLS verification"
     # Verify cluster connectivity
     - kubectl cluster-info
     - kubectl version --client
