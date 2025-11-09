@@ -171,6 +171,27 @@ validate:docker:
 helm:lint:
   stage: validate
   image: alpine/helm:latest
+  before_script:
+    # Install Helm - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
+    - |
+      if ! command -v helm >/dev/null 2>&1; then
+        echo "Helm not found, installing..."
+        if command -v apk >/dev/null 2>&1; then
+          # Alpine Linux (Docker executor) - helm already in alpine/helm image
+          echo "Running in Alpine/Docker environment"
+        elif command -v brew >/dev/null 2>&1; then
+          # macOS (shell executor) - install helm via brew
+          echo "Installing Helm on macOS..."
+          brew install helm
+        else
+          echo "Neither apk nor brew found. Please install Helm manually."
+          exit 1
+        fi
+      else
+        echo "✅ Helm is already installed"
+        helm version
+      fi
   script:
     - echo "🔍 Linting Helm charts..."
     - helm lint helm/ajasta-app
