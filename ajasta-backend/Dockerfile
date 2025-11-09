@@ -16,7 +16,7 @@ RUN mvn -q -e -DskipTests dependency:go-offline && \
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 # Install curl for potential health checks
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl=8.5.0-r0
 # Copy the fat jar from builder
 COPY --from=builder /app/target/*.jar /app/app.jar
 # Default port

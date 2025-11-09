@@ -603,7 +603,10 @@ deploy:k8s:staging:
     - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
     - echo "🚀 Deploying Ajasta App to Kubernetes Staging..."
     # Create namespace if it doesn't exist
-    - kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+    - kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml |
+      kubectl apply -f -
+    # Set ingress host variable
+    - INGRESS_HOST=${K8S_STAGING_INGRESS_HOST:-ajasta-staging.local}
     # Deploy or upgrade with Helm
     - |
       helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
@@ -613,7 +616,7 @@ deploy:k8s:staging:
         --set backend.image.tag=$DOCKER_IMAGE_TAG \
         --set frontend.image.repository=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER \
         --set frontend.image.tag=$DOCKER_IMAGE_TAG \
-        --set ingress.hosts[0].host=${K8S_STAGING_INGRESS_HOST:-ajasta-staging.local} \
+        --set ingress.hosts[0].host=$INGRESS_HOST \
         --set postgres.auth.password=$POSTGRES_PASSWORD \
         --set backend.database.password=$POSTGRES_PASSWORD \
         --set backend.secrets.jwtSecret=$JWT_SECRET \
@@ -641,7 +644,10 @@ deploy:k8s:production:
     - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
     - echo "🚀 Deploying Ajasta App to Kubernetes Production..."
     # Create namespace if it doesn't exist
-    - kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+    - kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml |
+      kubectl apply -f -
+    # Set ingress host variable
+    - INGRESS_HOST=${K8S_PRODUCTION_INGRESS_HOST:-ajasta.local}
     # Deploy or upgrade with Helm
     - |
       helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
@@ -651,7 +657,7 @@ deploy:k8s:production:
         --set backend.image.tag=$DOCKER_IMAGE_TAG \
         --set frontend.image.repository=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER \
         --set frontend.image.tag=$DOCKER_IMAGE_TAG \
-        --set ingress.hosts[0].host=${K8S_PRODUCTION_INGRESS_HOST:-ajasta.local} \
+        --set ingress.hosts[0].host=$INGRESS_HOST \
         --set postgres.auth.password=$POSTGRES_PASSWORD \
         --set backend.database.password=$POSTGRES_PASSWORD \
         --set backend.secrets.jwtSecret=$JWT_SECRET \
