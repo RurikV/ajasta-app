@@ -183,6 +183,7 @@ export default class ApiService {
 
     static logout() {
         localStorage.removeItem("token");
+        localStorage.removeItem("roles");
         // Reset in-memory cache and notify listeners
         this.cachedRoles = null;
         this.emitRolesChange();

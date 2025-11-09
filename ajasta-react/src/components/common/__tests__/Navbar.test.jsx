@@ -37,7 +37,10 @@ jest.mock('../../../services/ApiService', () => ({
     isAuthenticated: jest.fn(() => true),
     isAdmin: jest.fn(() => false),
     isCustomer: jest.fn(() => true),
+    isResourceManager: jest.fn(() => false),
     logout: jest.fn(),
+    onRolesChange: jest.fn(() => jest.fn()),
+    bootstrapRoles: jest.fn(() => Promise.resolve([])),
   }
 }));
 
