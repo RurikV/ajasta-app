@@ -152,7 +152,6 @@ validate:syntax:
     - yamllint docker-compose.yml
     - find scripts -name "*.sh" -o -name "*.zsh" | xargs shellcheck || true
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_BRANCH == "develop"
 
@@ -163,7 +162,6 @@ validate:docker:
     - docker run --rm -i hadolint/hadolint < ajasta-backend/Dockerfile
     - docker run --rm -i hadolint/hadolint < ajasta-react/Dockerfile
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_BRANCH == "develop"
 
@@ -197,7 +195,6 @@ helm:lint:
     - helm lint helm/ajasta-app
     - echo "✅ Helm chart validation successful"
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_BRANCH == "develop"
 
@@ -436,7 +433,6 @@ test:backend:
     paths:
       - ajasta-backend/target/
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_BRANCH == "develop"
 
@@ -462,7 +458,6 @@ test:frontend:
       - ajasta-react/coverage/
       - ajasta-react/build/
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_BRANCH == "develop"
 
@@ -646,9 +641,6 @@ deploy:k8s:staging:
     - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
     - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
     - echo "🚀 Deploying Ajasta App to Kubernetes Staging..."
-    # Create namespace if it doesn't exist
-    - kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml |
-      kubectl apply -f -
     # Set ingress host variable
     - INGRESS_HOST=${K8S_STAGING_INGRESS_HOST:-ajasta-staging.local}
     # Deploy or upgrade with Helm
@@ -687,9 +679,6 @@ deploy:k8s:production:
     - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
     - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
     - echo "🚀 Deploying Ajasta App to Kubernetes Production..."
-    # Create namespace if it doesn't exist
-    - kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml |
-      kubectl apply -f -
     # Set ingress host variable
     - INGRESS_HOST=${K8S_PRODUCTION_INGRESS_HOST:-ajasta.local}
     # Deploy or upgrade with Helm
