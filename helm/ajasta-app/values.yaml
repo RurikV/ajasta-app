@@ -1,0 +1,211 @@
+# Global settings
+global:
+  namespace: ajasta
+
+# Namespace configuration
+namespace:
+  create: true
+  name: ajasta
+  labels:
+    name: ajasta
+    app: ajasta
+
+# PostgreSQL Database configuration
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+  
+  replicas: 1
+  
+  service:
+    name: ajasta-postgres
+    port: 5432
+    type: ClusterIP
+  
+  persistence:
+    enabled: true
+    storageClassName: longhorn
+    accessMode: ReadWriteOnce
+    size: 5Gi
+  
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  
+  # PostgreSQL credentials (should be overridden via secret values)
+  auth:
+    database: ajastadb
+    username: admin
+    password: adminpw
+  
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 5
+  
+  readinessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+
+# Backend API configuration
+backend:
+  enabled: true
+  image:
+    repository: vladimirryrik/ajasta-backend
+    tag: alpine
+    pullPolicy: IfNotPresent
+  
+  replicas: 1
+  
+  service:
+    name: ajasta-backend
+    port: 8090
+    targetPort: 8090
+    type: ClusterIP
+  
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+      ephemeralStorage: "1Gi"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+      ephemeralStorage: "2Gi"
+  
+  # Database connection configuration
+  database:
+    url: jdbc:postgresql://ajasta-postgres:5432/ajastadb
+    username: admin
+    password: adminpw
+  
+  # Application secrets (should be overridden)
+  secrets:
+    jwtSecret: change-me-production-secret-key
+    mailUsername: ""
+    mailPassword: ""
+    awsAccessKeyId: ""
+    awsSecretAccessKey: ""
+    stripePublicKey: ""
+    stripeSecretKey: ""
+  
+  # Application configuration
+  config:
+    awsRegion: us-east-1
+    awsS3Bucket: ""
+    javaOpts: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
+  
+  livenessProbe:
+    tcpSocket:
+      port: 8090
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3
+  
+  readinessProbe:
+    tcpSocket:
+      port: 8090
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 10
+    failureThreshold: 6
+  
+  # Node affinity to avoid control-plane nodes
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: node-role.kubernetes.io/control-plane
+            operator: DoesNotExist
+
+# Frontend configuration
+frontend:
+  enabled: true
+  image:
+    repository: vladimirryrik/ajasta-frontend
+    tag: alpine
+    pullPolicy: IfNotPresent
+  
+  replicas: 1
+  
+  service:
+    name: ajasta-frontend
+    port: 80
+    targetPort: 80
+    type: ClusterIP
+  
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "100m"
+      ephemeralStorage: "500Mi"
+    limits:
+      memory: "128Mi"
+      cpu: "200m"
+      ephemeralStorage: "1Gi"
+  
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 80
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 80
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  # Node affinity to avoid control-plane nodes
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: node-role.kubernetes.io/control-plane
+            operator: DoesNotExist
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  hosts:
+    - host: ajasta.local
+      paths:
+        - path: /
+          pathType: Prefix
+          serviceName: ajasta-frontend
+          servicePort: 80
+        - path: /api
+          pathType: Prefix
+          serviceName: ajasta-backend
+          servicePort: 8090
+  tls: []
+
+# RBAC configuration
+rbac:
+  create: true
+  serviceAccount:
+    create: true
+    name: ajasta-sa
+    annotations: {}

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: ajasta-app
+description: A Helm chart for Ajasta application (PostgreSQL, Backend API, Frontend)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - ajasta
+  - spring-boot
+  - react
+  - postgresql
+maintainers:
+  - name: Ajasta Team
+home: https://github.com/RurikV/ajasta-app
+sources:
+  - https://github.com/RurikV/ajasta-app

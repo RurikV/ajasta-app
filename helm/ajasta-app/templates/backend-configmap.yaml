@@ -1,0 +1,16 @@
+{{- if .Values.backend.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: {{ include "ajasta-app.namespace" . }}
+  labels:
+    {{- include "ajasta-app.backend.labels" . | nindent 4 }}
+data:
+  DB_URL: {{ .Values.backend.database.url | quote }}
+  DB_USERNAME: {{ .Values.backend.database.username | quote }}
+  AWS_REGION: {{ .Values.backend.config.awsRegion | quote }}
+  AWS_S3_BUCKET: {{ .Values.backend.config.awsS3Bucket | quote }}
+  JAVA_OPTS: {{ .Values.backend.config.javaOpts | quote }}
+{{- end }}

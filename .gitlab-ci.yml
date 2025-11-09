@@ -167,6 +167,19 @@ validate:docker:
     - main
     - develop
 
+# Helm lint - validate Helm charts
+helm:lint:
+  stage: validate
+  image: alpine/helm:latest
+  script:
+    - echo "🔍 Linting Helm charts..."
+    - helm lint helm/ajasta-app
+    - echo "✅ Helm chart validation successful"
+  only:
+    - merge_requests
+    - main
+    - develop
+
 # Build stage - compile and prepare artifacts
 build:backend:
   <<: *docker_base
@@ -533,6 +546,104 @@ deploy:production:
     url: http://$YC_VM_EXTERNAL_IP
   script:
     - cd deploy/scripts && ./deploy-yc.zsh --mode vm
+  only:
+    - main
+    - tags
+  when: manual
+
+# Kubernetes Deployment with Helm
+# Base template for Kubernetes deployments
+.k8s_deploy_base: &k8s_deploy_base
+  stage: deploy
+  image: alpine/helm:latest
+  before_script:
+    - apk add --no-cache curl kubectl
+    # Setup kubeconfig from GitLab CI/CD variable
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
+    - chmod 600 ~/.kube/config
+    # Verify cluster connectivity
+    - kubectl cluster-info
+    - kubectl version --client
+    - helm version
+
+deploy:k8s:staging:
+  <<: *k8s_deploy_base
+  environment:
+    name: k8s-staging
+    url: http://$K8S_STAGING_INGRESS_HOST
+  variables:
+    KUBE_NAMESPACE: ajasta-staging
+    RELEASE_NAME: ajasta-staging
+  script:
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
+    - echo "🚀 Deploying Ajasta App to Kubernetes Staging..."
+    # Create namespace if it doesn't exist
+    - kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+    # Deploy or upgrade with Helm
+    - |
+      helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
+        --namespace $KUBE_NAMESPACE \
+        --set global.namespace=$KUBE_NAMESPACE \
+        --set backend.image.repository=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER \
+        --set backend.image.tag=$DOCKER_IMAGE_TAG \
+        --set frontend.image.repository=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER \
+        --set frontend.image.tag=$DOCKER_IMAGE_TAG \
+        --set ingress.hosts[0].host=${K8S_STAGING_INGRESS_HOST:-ajasta-staging.local} \
+        --set postgres.auth.password=$POSTGRES_PASSWORD \
+        --set backend.database.password=$POSTGRES_PASSWORD \
+        --set backend.secrets.jwtSecret=$JWT_SECRET \
+        --wait \
+        --timeout 10m
+    - echo "✅ Deployment to Kubernetes Staging successful"
+    # Display deployment status
+    - kubectl get all -n $KUBE_NAMESPACE
+  only:
+    - develop
+  when: manual
+
+deploy:k8s:production:
+  <<: *k8s_deploy_base
+  environment:
+    name: k8s-production
+    url: http://$K8S_PRODUCTION_INGRESS_HOST
+  variables:
+    KUBE_NAMESPACE: ajasta
+    RELEASE_NAME: ajasta-production
+  script:
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
+    - echo "🚀 Deploying Ajasta App to Kubernetes Production..."
+    # Create namespace if it doesn't exist
+    - kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+    # Deploy or upgrade with Helm
+    - |
+      helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
+        --namespace $KUBE_NAMESPACE \
+        --set global.namespace=$KUBE_NAMESPACE \
+        --set backend.image.repository=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER \
+        --set backend.image.tag=$DOCKER_IMAGE_TAG \
+        --set frontend.image.repository=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER \
+        --set frontend.image.tag=$DOCKER_IMAGE_TAG \
+        --set ingress.hosts[0].host=${K8S_PRODUCTION_INGRESS_HOST:-ajasta.local} \
+        --set postgres.auth.password=$POSTGRES_PASSWORD \
+        --set backend.database.password=$POSTGRES_PASSWORD \
+        --set backend.secrets.jwtSecret=$JWT_SECRET \
+        --set backend.secrets.awsAccessKeyId=$AWS_ACCESS_KEY_ID \
+        --set backend.secrets.awsSecretAccessKey=$AWS_SECRET_ACCESS_KEY \
+        --set backend.config.awsS3Bucket=$AWS_S3_BUCKET \
+        --set backend.secrets.stripePublicKey=$STRIPE_PUBLIC_KEY \
+        --set backend.secrets.stripeSecretKey=$STRIPE_SECRET_KEY \
+        --wait \
+        --timeout 10m
+    - echo "✅ Deployment to Kubernetes Production successful"
+    # Display deployment status
+    - kubectl get all -n $KUBE_NAMESPACE
   only:
     - main
     - tags
