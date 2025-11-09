@@ -578,7 +578,46 @@ deploy:production:
   stage: deploy
   image: alpine/helm:latest
   before_script:
-    - apk add --no-cache curl kubectl
+    # Install dependencies - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache curl kubectl
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor)
+        # curl is pre-installed on macOS, install kubectl if needed
+        if ! command -v kubectl >/dev/null 2>&1; then
+          echo "Installing kubectl on macOS..."
+          brew install kubectl
+        else
+          echo "✅ kubectl is already installed"
+        fi
+      else
+        echo "Neither apk nor brew found. Please ensure curl and kubectl" \
+             "are installed."
+        exit 1
+      fi
+    # Ensure Helm is available
+    - |
+      if ! command -v helm >/dev/null 2>&1; then
+        echo "Helm not found, installing..."
+        if command -v apk >/dev/null 2>&1; then
+          # Alpine Linux (Docker executor) - helm should be in alpine/helm image
+          echo "Running in Alpine/Docker environment - Helm should be present"
+          exit 1
+        elif command -v brew >/dev/null 2>&1; then
+          # macOS (shell executor) - install helm via brew
+          echo "Installing Helm on macOS..."
+          brew install helm
+        else
+          echo "Cannot install Helm. Please install it manually."
+          exit 1
+        fi
+      else
+        echo "✅ Helm is already installed"
+        helm version
+      fi
     # Setup kubeconfig from GitLab CI/CD variable
     - mkdir -p ~/.kube
     - echo "$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
