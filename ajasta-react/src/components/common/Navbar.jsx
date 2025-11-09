@@ -10,6 +10,7 @@ const Navbar = () => {
     const navigate = useNavigate();
 
     // Force re-render when roles change; also bootstrap roles on mount if authenticated
+    // eslint-disable-next-line no-unused-vars
     const [roleTick, setRoleTick] = useState(0);
     useEffect(() => {
         const unsubscribe = ApiService.onRolesChange(() => setRoleTick(t => t + 1));

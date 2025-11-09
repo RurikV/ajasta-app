@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import ApiService from '../../services/ApiService';
-import { useNavigate } from 'react-router-dom';
 import { useError } from '../common/ErrorDisplay';
 
 
@@ -8,7 +7,6 @@ const OrderHistoryPage = () => {
 
     const [orders, setOrders] = useState(null);
     const [message, setMessage] = useState(null);
-    const navigate = useNavigate();
     const { ErrorDisplay, showError } = useError();
 
 
@@ -37,11 +35,6 @@ const OrderHistoryPage = () => {
             minute: '2-digit',
         };
         return date.toLocaleDateString(undefined, options);
-    };
-
-
-    const handleLeaveReview = (orderId, menuId) => {
-        navigate(`/leave-review?orderId=${orderId}&menuId=${menuId}`);
     };
 
     const handleDeleteOrder = async (orderId) => {
