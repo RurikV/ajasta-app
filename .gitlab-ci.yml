@@ -646,6 +646,7 @@ deploy:k8s:staging:
     # Deploy or upgrade with Helm
     - |
       helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
+        --create-namespace \
         --namespace $KUBE_NAMESPACE \
         --set global.namespace=$KUBE_NAMESPACE \
         --set backend.image.repository=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER \
@@ -684,6 +685,7 @@ deploy:k8s:production:
     # Deploy or upgrade with Helm
     - |
       helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
+        --create-namespace \
         --namespace $KUBE_NAMESPACE \
         --set global.namespace=$KUBE_NAMESPACE \
         --set backend.image.repository=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER \
