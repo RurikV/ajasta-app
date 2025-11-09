@@ -8,6 +8,9 @@ jest.mock('axios', () => {
     put: jest.fn(),
     delete: jest.fn(),
     create: jest.fn(() => ({ get: jest.fn(), post: jest.fn(), put: jest.fn(), delete: jest.fn() })),
+    defaults: {
+      withCredentials: false,
+    },
   };
   return {
     __esModule: true,
