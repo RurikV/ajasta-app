@@ -151,10 +151,10 @@ validate:syntax:
     - yamllint .gitlab-ci.yml
     - yamllint docker-compose.yml
     - find scripts -name "*.sh" -o -name "*.zsh" | xargs shellcheck || true
-  only:
-    - merge_requests
-    - main
-    - develop
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
 
 validate:docker:
   <<: *docker_base
@@ -162,10 +162,10 @@ validate:docker:
   script:
     - docker run --rm -i hadolint/hadolint < ajasta-backend/Dockerfile
     - docker run --rm -i hadolint/hadolint < ajasta-react/Dockerfile
-  only:
-    - merge_requests
-    - main
-    - develop
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
 
 # Helm lint - validate Helm charts
 helm:lint:
@@ -196,10 +196,10 @@ helm:lint:
     - echo "🔍 Linting Helm charts..."
     - helm lint helm/ajasta-app
     - echo "✅ Helm chart validation successful"
-  only:
-    - merge_requests
-    - main
-    - develop
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
 
 # Build stage - compile and prepare artifacts
 build:backend:
@@ -435,10 +435,10 @@ test:backend:
         - ajasta-backend/target/failsafe-reports/TEST-*.xml
     paths:
       - ajasta-backend/target/
-  only:
-    - merge_requests
-    - main
-    - develop
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
 
 test:frontend:
   stage: test
@@ -461,10 +461,10 @@ test:frontend:
     paths:
       - ajasta-react/coverage/
       - ajasta-react/build/
-  only:
-    - merge_requests
-    - main
-    - develop
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
 
 # Package stage - create deployment artifacts
 package:compose:
