@@ -128,7 +128,9 @@ stages:
       fi
     - timeout 10 docker info || (echo "Docker info timeout" && exit 1)
     # Setup buildx for multi-architecture builds (ARM64 + AMD64)
-    - docker buildx create --name multiarch-builder --use || docker buildx use multiarch-builder || true
+    - |
+      docker buildx create --name multiarch-builder --use || \
+        docker buildx use multiarch-builder || true
     - docker buildx inspect --bootstrap
 
 # Validate stage - check code quality and configuration
@@ -241,13 +243,15 @@ build:backend:
     # Build with cache optimization and multi-architecture support
     - cd ajasta-backend
     - |
-      echo "Building multi-arch backend Docker image (linux/amd64,linux/arm64)..."
+      echo "Building multi-arch backend Docker image" \
+           "(linux/amd64,linux/arm64)..."
       retry_count=0
       max_retries=3
       while [ $retry_count -lt $max_retries ]; do
         if timeout 900 docker buildx build \
            --platform linux/amd64,linux/arm64 \
-           --cache-from type=registry,ref=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           --cache-from type=registry,\
+           ref=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
            --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
            --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
            --push \
@@ -319,13 +323,15 @@ build:frontend:
         API_BASE_URL="http://localhost:8090/api"
       fi
     - |
-      echo "Building multi-arch frontend Docker image (linux/amd64,linux/arm64)..."
+      echo "Building multi-arch frontend Docker image" \
+           "(linux/amd64,linux/arm64)..."
       retry_count=0
       max_retries=3
       while [ $retry_count -lt $max_retries ]; do
         if timeout 900 docker buildx build \
            --platform linux/amd64,linux/arm64 \
-           --cache-from type=registry,ref=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           --cache-from type=registry,\
+           ref=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
            --build-arg API_BASE_URL="$API_BASE_URL" \
            --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
            --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
