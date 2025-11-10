@@ -742,7 +742,7 @@ deploy:k8s:production:
     - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
     - echo "🚀 Deploying Ajasta App to Kubernetes Production..."
     # Set ingress host variable
-    - INGRESS_HOST=${K8S_PRODUCTION_INGRESS_HOST:-ajasta.local}
+    - INGRESS_HOST=${K8S_PRODUCTION_INGRESS_HOST:-$YC_VM_EXTERNAL_IP}
     # Deploy or upgrade with Helm
     - |
       # Preflight: ensure namespace state for first install (optional cleanup)
