@@ -203,6 +203,55 @@ helm:lint:
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_BRANCH == "develop"
 
+# Kubernetes auth smoke test to catch stale kubeconfig early
+k8s:auth:check:
+  stage: validate
+  image: alpine/helm:latest
+  before_script:
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        apk add --no-cache curl kubectl
+      elif command -v brew >/dev/null 2>&1; then
+        if ! command -v kubectl >/dev/null 2>&1; then
+          brew install kubectl
+        fi
+      else
+        echo "Neither apk nor brew found. Please install kubectl manually."
+        exit 1
+      fi
+  script:
+    - mkdir -p .kube
+    - echo "$KUBECONFIG_CONTENT" | base64 -d > .kube/config
+    - chmod 600 .kube/config
+    - export KUBECONFIG="$CI_PROJECT_DIR/.kube/config"
+    - |
+      CLUSTER_NAME="$(kubectl config view \
+        -o jsonpath='{.clusters[0].name}' 2>/dev/null || echo kubernetes)"
+      kubectl config unset "clusters.${CLUSTER_NAME}.certificate-authority" \
+        >/dev/null 2>&1 || true
+      kubectl config unset \
+        "clusters.${CLUSTER_NAME}.certificate-authority-data" \
+        >/dev/null 2>&1 || true
+      kubectl config set-cluster "$CLUSTER_NAME" \
+        --insecure-skip-tls-verify=true >/dev/null
+      CTX_NAME="$(kubectl config view \
+        -o jsonpath='{.contexts[0].name}' 2>/dev/null || \
+        echo kubernetes-admin@kubernetes)"
+      if kubectl config get-contexts "$CTX_NAME" >/dev/null 2>&1; then
+        kubectl config use-context "$CTX_NAME"
+      else
+        kubectl config use-context "$(kubectl config get-contexts -o name \
+          | head -n1)"
+      fi
+    - kubectl cluster-info
+    - kubectl get nodes -o wide
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+    - if: $CI_COMMIT_BRANCH == "develop"
+      when: manual
+  allow_failure: false
+
 # Build stage - compile and prepare artifacts
 build:backend:
   <<: *docker_base
@@ -568,17 +617,42 @@ deploy:production:
         echo "✅ Helm is already installed"
         helm version
       fi
-    # Setup kubeconfig from GitLab CI/CD variable
-    - mkdir -p ~/.kube
-    - echo "$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
-    - chmod 600 ~/.kube/config
-    # Configure cluster to skip TLS verification (required for public IP access)
-    # The API server certificate is issued for internal IPs, but CI/CD accesses
-    # via public IP, causing certificate validation to fail
-    - kubectl config set-cluster kubernetes --insecure-skip-tls-verify=true
+    # Setup kubeconfig from GitLab CI/CD variable (project-local, do not touch ~/.kube)
+    - mkdir -p .kube
+    - echo "$KUBECONFIG_CONTENT" | base64 -d > .kube/config
+    - chmod 600 .kube/config
+    - export KUBECONFIG="$CI_PROJECT_DIR/.kube/config"
+    # Normalize cluster/context and TLS settings; avoid CA + insecure conflict
+    - |
+      CLUSTER_NAME="$(kubectl config view \
+        -o jsonpath='{.clusters[0].name}' 2>/dev/null || echo kubernetes)"
+      CTX_NAME="$(kubectl config view \
+        -o jsonpath='{.contexts[0].name}' 2>/dev/null || \
+        echo kubernetes-admin@kubernetes)"
+      CA_KEY="clusters.${CLUSTER_NAME}.certificate-authority"
+      CA_DATA_KEY="clusters.${CLUSTER_NAME}.certificate-authority-data"
+      kubectl config unset "$CA_KEY" >/dev/null 2>&1 || true
+      kubectl config unset "$CA_DATA_KEY" >/dev/null 2>&1 || true
+      kubectl config set-cluster "$CLUSTER_NAME" \
+        --insecure-skip-tls-verify=true >/dev/null
+      if kubectl config get-contexts "$CTX_NAME" >/dev/null 2>&1; then
+        kubectl config use-context "$CTX_NAME"
+      else
+        FIRST_CTX="$(kubectl config get-contexts -o name | head -n1)"
+        kubectl config use-context "$FIRST_CTX"
+      fi
     - echo "✅ Configured cluster to skip TLS verification"
-    # Verify cluster connectivity
-    - kubectl cluster-info
+    # Verify cluster connectivity with diagnostics on failure
+    - |
+      if ! kubectl cluster-info; then
+        echo "⚠️ kubectl auth diagnostics (minified config):"
+        kubectl config view --minify || true
+        echo "⚙️  /version:"
+        kubectl get --raw=/version || true
+        echo "🔐 auth can-i:"
+        kubectl auth can-i --list || true
+        exit 1
+      fi
     - kubectl version --client
     - helm version
 
