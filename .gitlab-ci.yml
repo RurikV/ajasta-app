@@ -677,11 +677,14 @@ deploy:k8s:staging:
     # Deploy or upgrade with Helm
     - |
       # Preflight: ensure namespace state for first install (optional cleanup)
-      if ! helm status "$RELEASE_NAME" -n "$KUBE_NAMESPACE" >/dev/null 2>&1; then
-        echo "ℹ️ Helm release '$RELEASE_NAME' not found in namespace '$KUBE_NAMESPACE' (fresh install)."
+      if ! helm status "$RELEASE_NAME" -n "$KUBE_NAMESPACE" \
+        >/dev/null 2>&1; then
+        echo "ℹ️ Helm release '$RELEASE_NAME' not found in namespace" \
+             "'$KUBE_NAMESPACE' (fresh install)."
         if [ "${K8S_CLEAN_NS:-false}" = "true" ]; then
           if kubectl get namespace "$KUBE_NAMESPACE" >/dev/null 2>&1; then
-            echo "🧹 Deleting existing namespace '$KUBE_NAMESPACE' before install..."
+            echo "🧹 Deleting existing namespace '$KUBE_NAMESPACE' before" \
+                 "install..."
             kubectl delete namespace "$KUBE_NAMESPACE" --wait --timeout=5m
           else
             echo "✅ Namespace '$KUBE_NAMESPACE' does not exist."
@@ -743,8 +746,10 @@ deploy:k8s:production:
     # Deploy or upgrade with Helm
     - |
       # Preflight: ensure namespace state for first install (optional cleanup)
-      if ! helm status "$RELEASE_NAME" -n "$KUBE_NAMESPACE" >/dev/null 2>&1; then
-        echo "ℹ️ Fresh install: release missing in '$KUBE_NAMESPACE'"
+      if ! helm status "$RELEASE_NAME" -n "$KUBE_NAMESPACE" \
+        >/dev/null 2>&1; then
+        echo "ℹ️ Fresh install: release missing in" \
+             "'$KUBE_NAMESPACE'"
         if [ "${K8S_CLEAN_NS:-false}" = "true" ]; then
           if kubectl get namespace "$KUBE_NAMESPACE" >/dev/null 2>&1; then
             echo "🧹 Deleting namespace '$KUBE_NAMESPACE'..."
