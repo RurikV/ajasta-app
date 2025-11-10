@@ -250,8 +250,7 @@ build:backend:
       while [ $retry_count -lt $max_retries ]; do
         if timeout 900 docker buildx build \
            --platform linux/amd64,linux/arm64 \
-           --cache-from type=registry,\
-           ref=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           --cache-from type=registry,ref=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
            --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
            --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
            --push \
@@ -330,8 +329,7 @@ build:frontend:
       while [ $retry_count -lt $max_retries ]; do
         if timeout 900 docker buildx build \
            --platform linux/amd64,linux/arm64 \
-           --cache-from type=registry,\
-           ref=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           --cache-from type=registry,ref=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
            --build-arg API_BASE_URL="$API_BASE_URL" \
            --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
            --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
