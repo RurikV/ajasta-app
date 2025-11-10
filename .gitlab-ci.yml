@@ -127,6 +127,9 @@ stages:
              "authentication (may hit rate limits)"
       fi
     - timeout 10 docker info || (echo "Docker info timeout" && exit 1)
+    # Setup buildx for multi-architecture builds (ARM64 + AMD64)
+    - docker buildx create --name multiarch-builder --use || docker buildx use multiarch-builder || true
+    - docker buildx inspect --bootstrap
 
 # Validate stage - check code quality and configuration
 validate:syntax:
@@ -235,60 +238,33 @@ build:backend:
       fi
       echo "Image does not exist or manifest check failed," \
            "proceeding with build..."
-    # Build with cache optimization and retry mechanisms
+    # Build with cache optimization and multi-architecture support
     - cd ajasta-backend
     - |
-      echo "Building backend Docker image..."
+      echo "Building multi-arch backend Docker image (linux/amd64,linux/arm64)..."
       retry_count=0
       max_retries=3
       while [ $retry_count -lt $max_retries ]; do
-        if timeout 600 docker build \
-           --cache-from \
-           $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+        if timeout 900 docker buildx build \
+           --platform linux/amd64,linux/arm64 \
+           --cache-from type=registry,ref=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
            --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
            --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           --push \
            . ; then
-          echo "✅ Backend Docker build successful"
+          echo "✅ Backend multi-arch Docker build and push successful"
           break
         else
           retry_count=$((retry_count + 1))
           if [ $retry_count -lt $max_retries ]; then
-            echo "⚠️ Docker build failed, retrying" \
+            echo "⚠️ Docker buildx failed, retrying" \
                  "($((retry_count + 1))/$max_retries)..."
             sleep 10
           else
-            echo "❌ Docker build failed after $max_retries attempts"
+            echo "❌ Docker buildx failed after $max_retries attempts"
             exit 1
           fi
         fi
-      done
-    # Push images with retry mechanism
-    - |
-      for tag in "$DOCKER_IMAGE_TAG" "$DOCKER_LATEST_TAG"; do
-        echo "Pushing $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag..."
-        retry_count=0
-        max_retries=5
-        while [ $retry_count -lt $max_retries ]; do
-          if timeout 300 docker push \
-             $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag; then
-            echo "✅ Successfully pushed" \
-                 "$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag"
-            break
-          else
-            retry_count=$((retry_count + 1))
-            if [ $retry_count -lt $max_retries ]; then
-              wait_time=$((5 * retry_count))
-              echo "⚠️ Push failed, retrying in ${wait_time}s" \
-                   "($((retry_count + 1))/$max_retries)..."
-              sleep $wait_time
-            else
-              echo "❌ Failed to push" \
-                   "$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$tag" \
-                   "after $max_retries attempts"
-              exit 1
-            fi
-          fi
-        done
       done
   artifacts:
     reports:
@@ -343,58 +319,31 @@ build:frontend:
         API_BASE_URL="http://localhost:8090/api"
       fi
     - |
-      echo "Building frontend Docker image..."
+      echo "Building multi-arch frontend Docker image (linux/amd64,linux/arm64)..."
       retry_count=0
       max_retries=3
       while [ $retry_count -lt $max_retries ]; do
-        if timeout 600 docker build \
-           --cache-from \
-           $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+        if timeout 900 docker buildx build \
+           --platform linux/amd64,linux/arm64 \
+           --cache-from type=registry,ref=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
            --build-arg API_BASE_URL="$API_BASE_URL" \
            --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
            --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           --push \
            . ; then
-          echo "✅ Frontend Docker build successful"
+          echo "✅ Frontend multi-arch Docker build and push successful"
           break
         else
           retry_count=$((retry_count + 1))
           if [ $retry_count -lt $max_retries ]; then
-            echo "⚠️ Docker build failed, retrying" \
+            echo "⚠️ Docker buildx failed, retrying" \
                  "($((retry_count + 1))/$max_retries)..."
             sleep 10
           else
-            echo "❌ Docker build failed after $max_retries attempts"
+            echo "❌ Docker buildx failed after $max_retries attempts"
             exit 1
           fi
         fi
-      done
-    # Push images with retry mechanism
-    - |
-      for tag in "$DOCKER_IMAGE_TAG" "$DOCKER_LATEST_TAG"; do
-        echo "Pushing $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag..."
-        retry_count=0
-        max_retries=5
-        while [ $retry_count -lt $max_retries ]; do
-          if timeout 300 docker push \
-             $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag; then
-            echo "✅ Successfully pushed" \
-                 "$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag"
-            break
-          else
-            retry_count=$((retry_count + 1))
-            if [ $retry_count -lt $max_retries ]; then
-              wait_time=$((5 * retry_count))
-              echo "⚠️ Push failed, retrying in ${wait_time}s" \
-                   "($((retry_count + 1))/$max_retries)..."
-              sleep $wait_time
-            else
-              echo "❌ Failed to push" \
-                   "$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$tag" \
-                   "after $max_retries attempts"
-              exit 1
-            fi
-          fi
-        done
       done
   only:
     - main
