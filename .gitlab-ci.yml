@@ -696,7 +696,8 @@ deploy:k8s:staging:
         echo "✅ Helm release '$RELEASE_NAME' exists - upgrade path."
       fi
 
-      # Patch ingress controller Service with current external IP (resilient to IP rotation)
+      # Patch ingress controller Service with current external IP
+      # (resilient to IP rotation)
       if [ -n "${YC_VM_EXTERNAL_IP:-}" ]; then
         JSON_PATCH='{"spec":{"externalIPs":["'${YC_VM_EXTERNAL_IP}'"]}}'
         kubectl -n ingress-nginx patch svc \
@@ -788,7 +789,8 @@ deploy:k8s:production:
         echo "✅ Release exists: upgrade"
       fi
 
-      # Patch ingress controller Service with current external IP (resilient to IP rotation)
+      # Patch ingress controller Service with current external IP
+      # (resilient to IP rotation)
       if [ -n "${YC_VM_EXTERNAL_IP:-}" ]; then
         JSON_PATCH='{"spec":{"externalIPs":["'${YC_VM_EXTERNAL_IP}'"]}}'
         kubectl -n ingress-nginx patch svc \
