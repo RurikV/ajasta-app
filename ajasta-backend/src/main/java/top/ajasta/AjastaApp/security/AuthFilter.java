@@ -39,33 +39,18 @@ public class AuthFilter extends OncePerRequestFilter {
         String  token = getTokenFromRequest(request);
 
         if (token != null){
-            String email;
-
             try {
-                email = jwtUtils.getUsernameFromToken(token);
+                String email = jwtUtils.getUsernameFromToken(token);
 
-            }catch(Exception ex){
-                AuthenticationException authenticationException = new BadCredentialsException(ex.getMessage());
-                customAuthenticationEntryPoint.commence(request, response, authenticationException);
-                return;
-            }
-
-            // Validate that the token belongs to the same User-Agent (bound at login time)
-            try {
+                // Validate that the token belongs to the same User-Agent (bound at login time)
                 String currentUA = request.getHeader("User-Agent");
                 if (!jwtUtils.isUserAgentValid(token, currentUA)) {
-                    AuthenticationException authenticationException = new BadCredentialsException("Invalid authentication context");
-                    customAuthenticationEntryPoint.commence(request, response, authenticationException);
+                    log.warn("Invalid User-Agent for token, continuing without authentication");
+                    filterChain.doFilter(request, response);
                     return;
                 }
-            } catch (Exception ex) {
-                AuthenticationException authenticationException = new BadCredentialsException("Invalid token context");
-                customAuthenticationEntryPoint.commence(request, response, authenticationException);
-                return;
-            }
 
-            // Enforce session cookie (AJASTA_SID) to match token's sid claim to prevent token pasting
-            try {
+                // Enforce session cookie (AJASTA_SID) to match token's sid claim to prevent token pasting
                 String sidInToken = jwtUtils.getSessionIdFromToken(token);
                 String sidInCookie = null;
                 Cookie[] cookies = request.getCookies();
@@ -78,23 +63,23 @@ public class AuthFilter extends OncePerRequestFilter {
                     }
                 }
                 if (sidInToken == null || sidInToken.isEmpty() || sidInCookie == null || !sidInToken.equals(sidInCookie)) {
-                    AuthenticationException authenticationException = new BadCredentialsException("Invalid session context");
-                    customAuthenticationEntryPoint.commence(request, response, authenticationException);
+                    log.warn("Invalid session context for token, continuing without authentication");
+                    filterChain.doFilter(request, response);
                     return;
                 }
-            } catch (Exception ex) {
-                AuthenticationException authenticationException = new BadCredentialsException("Invalid session");
-                customAuthenticationEntryPoint.commence(request, response, authenticationException);
-                return;
-            }
 
-            UserDetails userDetails = customUserDetailsService.loadUserByUsername(email);
-            if (StringUtils.hasText(email) && jwtUtils.isTokenValid(token, userDetails)){
-                UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(
-                        userDetails, null, userDetails.getAuthorities()
-                );
-                authenticationToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authenticationToken);
+                UserDetails userDetails = customUserDetailsService.loadUserByUsername(email);
+                if (StringUtils.hasText(email) && jwtUtils.isTokenValid(token, userDetails)){
+                    UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(
+                            userDetails, null, userDetails.getAuthorities()
+                    );
+                    authenticationToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authenticationToken);
+                }
+            } catch(Exception ex){
+                // Token validation failed, but continue without authentication
+                // Spring Security will reject if the endpoint requires authentication
+                log.warn("Token validation failed: {}, continuing without authentication", ex.getMessage());
             }
         }
 
