@@ -617,7 +617,8 @@ deploy:production:
         echo "✅ Helm is already installed"
         helm version
       fi
-    # Setup kubeconfig from GitLab CI/CD variable (project-local, do not touch ~/.kube)
+    # Setup kubeconfig from GitLab CI/CD variable 
+    # (project-local, do not touch ~/.kube)
     - mkdir -p .kube
     - echo "$KUBECONFIG_CONTENT" | base64 -d > .kube/config
     - chmod 600 .kube/config
