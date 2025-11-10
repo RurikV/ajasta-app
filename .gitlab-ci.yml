@@ -665,6 +665,7 @@ deploy:k8s:staging:
   variables:
     KUBE_NAMESPACE: ajasta-staging
     RELEASE_NAME: ajasta-staging
+    K8S_CLEAN_NS: "true"
   script:
     # Convert project path to lowercase for Docker registry compatibility
     - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
@@ -675,9 +676,27 @@ deploy:k8s:staging:
     - INGRESS_HOST=${K8S_STAGING_INGRESS_HOST:-ajasta-staging.local}
     # Deploy or upgrade with Helm
     - |
+      # Preflight: ensure namespace state for first install (optional cleanup)
+      if ! helm status "$RELEASE_NAME" -n "$KUBE_NAMESPACE" >/dev/null 2>&1; then
+        echo "ℹ️ Helm release '$RELEASE_NAME' not found in namespace '$KUBE_NAMESPACE' (fresh install)."
+        if [ "${K8S_CLEAN_NS:-false}" = "true" ]; then
+          if kubectl get namespace "$KUBE_NAMESPACE" >/dev/null 2>&1; then
+            echo "🧹 Deleting existing namespace '$KUBE_NAMESPACE' before install..."
+            kubectl delete namespace "$KUBE_NAMESPACE" --wait --timeout=5m
+          else
+            echo "✅ Namespace '$KUBE_NAMESPACE' does not exist."
+          fi
+        else
+          echo "⚠️ Skipping namespace cleanup (K8S_CLEAN_NS=false)."
+        fi
+      else
+        echo "✅ Helm release '$RELEASE_NAME' exists - upgrade path."
+      fi
+
       helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
         --create-namespace \
         --namespace $KUBE_NAMESPACE \
+        --set namespace.create=false \
         --set global.namespace=$KUBE_NAMESPACE \
         --set backend.image.repository=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER \
         --set backend.image.tag=$DOCKER_IMAGE_TAG \
@@ -712,6 +731,7 @@ deploy:k8s:production:
   variables:
     KUBE_NAMESPACE: ajasta
     RELEASE_NAME: ajasta-production
+    K8S_CLEAN_NS: "true"
   script:
     # Convert project path to lowercase for Docker registry compatibility
     - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
@@ -722,9 +742,27 @@ deploy:k8s:production:
     - INGRESS_HOST=${K8S_PRODUCTION_INGRESS_HOST:-ajasta.local}
     # Deploy or upgrade with Helm
     - |
+      # Preflight: ensure namespace state for first install (optional cleanup)
+      if ! helm status "$RELEASE_NAME" -n "$KUBE_NAMESPACE" >/dev/null 2>&1; then
+        echo "ℹ️ Fresh install: release missing in '$KUBE_NAMESPACE'"
+        if [ "${K8S_CLEAN_NS:-false}" = "true" ]; then
+          if kubectl get namespace "$KUBE_NAMESPACE" >/dev/null 2>&1; then
+            echo "🧹 Deleting namespace '$KUBE_NAMESPACE'..."
+            kubectl delete namespace "$KUBE_NAMESPACE" --wait --timeout=5m
+          else
+            echo "✅ Namespace '$KUBE_NAMESPACE' absent"
+          fi
+        else
+          echo "⚠️ Skip ns cleanup (K8S_CLEAN_NS=false)"
+        fi
+      else
+        echo "✅ Release exists: upgrade"
+      fi
+
       helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
         --create-namespace \
         --namespace $KUBE_NAMESPACE \
+        --set namespace.create=false \
         --set global.namespace=$KUBE_NAMESPACE \
         --set backend.image.repository=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER \
         --set backend.image.tag=$DOCKER_IMAGE_TAG \
