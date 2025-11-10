@@ -187,8 +187,7 @@ frontend:
 ingress:
   enabled: true
   className: nginx
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
+  annotations: {}
   hosts:
     - host: ajasta.local
       paths:

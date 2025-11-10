@@ -696,6 +696,24 @@ deploy:k8s:staging:
         echo "✅ Helm release '$RELEASE_NAME' exists - upgrade path."
       fi
 
+      # Patch ingress controller Service with current external IP (resilient to IP rotation)
+      if [ -n "${YC_VM_EXTERNAL_IP:-}" ]; then
+        JSON_PATCH='{"spec":{"externalIPs":["'${YC_VM_EXTERNAL_IP}'"]}}'
+        kubectl -n ingress-nginx patch svc \
+          ingress-nginx-controller \
+          --type merge \
+          -p "$JSON_PATCH" || true
+        kubectl -n ingress-nginx get svc \
+          ingress-nginx-controller -o wide || true
+      fi
+
+      # Compute Helm host flag (use hostless catch-all if INGRESS_HOST is empty)
+      if [ -n "$INGRESS_HOST" ]; then
+        HELM_HOST_FLAG="--set ingress.hosts[0].host=$INGRESS_HOST"
+      else
+        HELM_HOST_FLAG="--set-string ingress.hosts[0].host=\"\""
+      fi
+
       helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
         --create-namespace \
         --namespace $KUBE_NAMESPACE \
@@ -705,7 +723,7 @@ deploy:k8s:staging:
         --set backend.image.tag=$DOCKER_IMAGE_TAG \
         --set frontend.image.repository=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER \
         --set frontend.image.tag=$DOCKER_IMAGE_TAG \
-        --set ingress.hosts[0].host=$INGRESS_HOST \
+        $HELM_HOST_FLAG \
         --set ingress.hosts[0].paths[0].path=/ \
         --set ingress.hosts[0].paths[0].pathType=Prefix \
         --set ingress.hosts[0].paths[0].serviceName=ajasta-frontend \
@@ -719,6 +737,12 @@ deploy:k8s:staging:
         --set backend.secrets.jwtSecret=$JWT_SECRET \
         --wait \
         --timeout 10m
+
+      # Post-deploy quick checks
+      kubectl -n $KUBE_NAMESPACE get ingress ajasta-ingress || true
+      for i in 1 2 3 4 5; do
+        if curl -fsSI "http://$INGRESS_HOST/" >/dev/null 2>&1; then
+          echo "✅ Ingress homepage reachable"; break; fi; sleep 5; done || true
     - echo "✅ Deployment to Kubernetes Staging successful"
     # Display deployment status
     - kubectl get all -n $KUBE_NAMESPACE
@@ -764,6 +788,24 @@ deploy:k8s:production:
         echo "✅ Release exists: upgrade"
       fi
 
+      # Patch ingress controller Service with current external IP (resilient to IP rotation)
+      if [ -n "${YC_VM_EXTERNAL_IP:-}" ]; then
+        JSON_PATCH='{"spec":{"externalIPs":["'${YC_VM_EXTERNAL_IP}'"]}}'
+        kubectl -n ingress-nginx patch svc \
+          ingress-nginx-controller \
+          --type merge \
+          -p "$JSON_PATCH" || true
+        kubectl -n ingress-nginx get svc \
+          ingress-nginx-controller -o wide || true
+      fi
+
+      # Compute Helm host flag (use hostless catch-all if INGRESS_HOST is empty)
+      if [ -n "$INGRESS_HOST" ]; then
+        HELM_HOST_FLAG="--set ingress.hosts[0].host=$INGRESS_HOST"
+      else
+        HELM_HOST_FLAG="--set-string ingress.hosts[0].host=\"\""
+      fi
+
       helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
         --create-namespace \
         --namespace $KUBE_NAMESPACE \
@@ -773,7 +815,7 @@ deploy:k8s:production:
         --set backend.image.tag=$DOCKER_IMAGE_TAG \
         --set frontend.image.repository=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER \
         --set frontend.image.tag=$DOCKER_IMAGE_TAG \
-        --set ingress.hosts[0].host=$INGRESS_HOST \
+        $HELM_HOST_FLAG \
         --set ingress.hosts[0].paths[0].path=/ \
         --set ingress.hosts[0].paths[0].pathType=Prefix \
         --set ingress.hosts[0].paths[0].serviceName=ajasta-frontend \
@@ -792,6 +834,12 @@ deploy:k8s:production:
         --set backend.secrets.stripeSecretKey=$STRIPE_SECRET_KEY \
         --wait \
         --timeout 10m
+
+      # Post-deploy quick checks
+      kubectl -n $KUBE_NAMESPACE get ingress ajasta-ingress || true
+      for i in 1 2 3 4 5; do
+        if curl -fsSI "http://$INGRESS_HOST/" >/dev/null 2>&1; then
+          echo "✅ Ingress homepage reachable"; break; fi; sleep 5; done || true
     - echo "✅ Deployment to Kubernetes Production successful"
     # Display deployment status
     - kubectl get all -n $KUBE_NAMESPACE
