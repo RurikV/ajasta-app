@@ -982,7 +982,8 @@ deploy:patch-ingress-externalip:
         -o jsonpath='{.spec.ingressClassName}' 2>/dev/null | tr -d '\n' \
         || true)
       DEF_CLASS=$(kubectl get ingressclass -o \
-        jsonpath='{range .items[?(@.metadata.annotations.ingressclass\\.kubernetes\\.io/is-default-class=="true")]}{.metadata.name}{end}' \
+        jsonpath= \
+      '{range .items[?(@.metadata.annotations.ingressclass\\.kubernetes\\.io/is-default-class=="true")]}{.metadata.name}{end}' \
         2>/dev/null | tr -d '\n' || true)
       if [ -z "$DEF_CLASS" ] && kubectl get ingressclass nginx \
         >/dev/null 2>&1; then DEF_CLASS="nginx"; fi
