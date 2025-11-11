@@ -932,6 +932,11 @@ deploy:patch-ingress-externalip:
         $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: '"web" == $CI_PIPELINE_SOURCE'
     - if: '"pipeline" == $CI_PIPELINE_SOURCE'
+  artifacts:
+    reports:
+      dotenv: deploy_env.env
+    when: always
+    expire_in: 1 day
   script:
     - |
       set -e
@@ -972,6 +977,8 @@ deploy:patch-ingress-externalip:
       kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
       echo "Ingress summary:"
       kubectl -n ajasta get ingress ajasta-ingress || true
+      echo "Exporting PROBE_IP via dotenv artifact for downstream jobs"
+      printf "PROBE_IP=%s\n" "$IP" > deploy_env.env
 
 # Probes the root URL and /api after deploy to catch regressions
 
