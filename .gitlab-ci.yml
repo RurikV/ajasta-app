@@ -909,7 +909,8 @@ cleanup:registry:
     - mkdir -p "$CI_PROJECT_DIR/.kube"
     - |
       if [ -n "${KUBECONFIG_CONTENT:-}" ]; then
-        echo "$KUBECONFIG_CONTENT" | base64 -d > "$KUBECONFIG" 2>/dev/null || echo "$KUBECONFIG_CONTENT" | base64 -D > "$KUBECONFIG"
+        echo "$KUBECONFIG_CONTENT" | base64 -d > "$KUBECONFIG" 2>/dev/null || \
+          echo "$KUBECONFIG_CONTENT" | base64 -D > "$KUBECONFIG"
       elif [ -f "$CI_PROJECT_DIR/kubeconfig" ]; then
         cp "$CI_PROJECT_DIR/kubeconfig" "$KUBECONFIG"
       else
@@ -918,39 +919,54 @@ cleanup:registry:
       fi
     - kubectl version --short || true
 
-# Patches ingress-nginx controller Service with the current public IP before any deploy
-# Use INGRESS_PUBLIC_IP (preferred) or YC_VM_EXTERNAL_IP as the source of truth
-# Example: set CI/CD variable INGRESS_PUBLIC_IP=51.250.100.218
+# Patches ingress-nginx controller Service with the current public IP
+# Use INGRESS_PUBLIC_IP (preferred) or YC_VM_EXTERNAL_IP as the source
+# Example: INGRESS_PUBLIC_IP=51.250.100.218
 
 deploy:patch-ingress-externalip:
   stage: deploy
   extends: [".deploy_kube_base"]
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
-    - if: '$CI_PIPELINE_SOURCE == "pipeline"'
+    - if: >-
+        $CI_PIPELINE_SOURCE == "push" &&
+        $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: '"web" == $CI_PIPELINE_SOURCE'
+    - if: '"pipeline" == $CI_PIPELINE_SOURCE'
   script:
     - |
       set -e
       IP="${INGRESS_PUBLIC_IP:-${YC_VM_EXTERNAL_IP:-}}"
       if [ -z "$IP" ]; then
-        echo "INGRESS_PUBLIC_IP/YC_VM_EXTERNAL_IP not set. Trying to autodetect from ingress/service..." >&2
+        echo "INGRESS_PUBLIC_IP/YC_VM_EXTERNAL_IP not set." >&2
+        echo "Trying to autodetect from ingress/service..." >&2
         # Try Ingress LoadBalancer IP/hostname
-        IP=$(kubectl -n ajasta get ingress ajasta-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null | tr -d '\n') || true
+        JSONPATH_IP='{.status.loadBalancer.ingress[0].ip}'
+        JSONPATH_HOST='{.status.loadBalancer.ingress[0].hostname}'
+        IP=$(kubectl -n ajasta get ingress ajasta-ingress \
+          -o jsonpath="$JSONPATH_IP" 2>/dev/null | tr -d '\n') || true
         if [ -z "$IP" ]; then
-          IP=$(kubectl -n ajasta get ingress ajasta-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null | tr -d '\n') || true
+          IP=$(kubectl -n ajasta get ingress ajasta-ingress \
+            -o jsonpath="$JSONPATH_HOST" 2>/dev/null | tr -d '\n') || true
         fi
         # Try existing Service externalIPs[0]
         if [ -z "$IP" ]; then
-          IP=$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.spec.externalIPs[0]}' 2>/dev/null | tr -d '\n') || true
+          IP=$(kubectl -n ingress-nginx get svc ingress-nginx-controller \
+            -o jsonpath='{.spec.externalIPs[0]}' 2>/dev/null | tr -d '\n') || true
         fi
       fi
       if [ -z "$IP" ]; then
-        echo "ERROR: Could not determine public IP. Set INGRESS_PUBLIC_IP in CI variables." >&2
+        echo "ERROR: Could not determine public IP." >&2
+        echo "Set INGRESS_PUBLIC_IP in CI variables." >&2
         exit 1
       fi
-      echo "Patching ingress-nginx-controller Service with externalIPs=[$IP]"
-      kubectl -n ingress-nginx patch svc ingress-nginx-controller --type merge -p '{"spec":{"externalIPs":["'"$IP"'"]}}' || true
+      echo "Patching ingress-nginx-controller with externalIPs=[$IP]"
+      PATCH_PAYLOAD=$(cat <<'JSON'
+      {"spec":{"externalIPs":["IP_PLACEHOLDER"]}}
+      JSON
+      )
+      PATCH_PAYLOAD=${PATCH_PAYLOAD/IP_PLACEHOLDER/$IP}
+      kubectl -n ingress-nginx patch svc ingress-nginx-controller \
+        --type merge -p "$PATCH_PAYLOAD" || true
       echo "Service summary:"
       kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
       echo "Ingress summary:"
@@ -965,9 +981,11 @@ deploy:probe-root:
   variables:
     PROBE_IP: "$INGRESS_PUBLIC_IP"
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
-    - if: '$CI_PIPELINE_SOURCE == "pipeline"'
+    - if: >-
+        $CI_PIPELINE_SOURCE == "push" &&
+        $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: '"web" == $CI_PIPELINE_SOURCE'
+    - if: '"pipeline" == $CI_PIPELINE_SOURCE'
   script:
     - |
       set -e
@@ -976,12 +994,15 @@ deploy:probe-root:
         echo "ERROR: Set INGRESS_PUBLIC_IP or YC_VM_EXTERNAL_IP for probe." >&2
         exit 1
       fi
-      echo "Probing http://$IP/"
-      curl -sS -o /dev/null -w "HTTP %{http_code}\\n" "http://$IP/"
-      echo "Probing http://$IP/api/health (and /api if health not present)"
-      code=$(curl -sS -o /dev/null -w "%{http_code}" "http://$IP/api/health" || true)
+      BASE="http://$IP"
+      echo "Probing $BASE/"
+      curl -sS -o /dev/null -w "HTTP %{http_code}\\n" "$BASE/"
+      echo "Probing $BASE/api/health (fallback: /api)"
+      code=$(curl -sS -o /dev/null -w "%{http_code}" \
+        "$BASE/api/health" || true)
       if [ "$code" = "000" ] || [ "$code" = "404" ]; then
-        curl -sS -o /dev/null -w "HTTP %{http_code}\\n" "http://$IP/api" || true
+        curl -sS -o /dev/null -w "HTTP %{http_code}\\n" \
+          "$BASE/api" || true
       else
         echo "HTTP $code"
       fi
