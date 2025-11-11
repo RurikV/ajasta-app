@@ -247,9 +247,7 @@ k8s:auth:check:
     - kubectl get nodes -o wide
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
-      when: manual
     - if: $CI_COMMIT_BRANCH == "develop"
-      when: manual
   allow_failure: false
 
 # Build stage - compile and prepare artifacts
