@@ -951,7 +951,8 @@ deploy:patch-ingress-externalip:
         # Try existing Service externalIPs[0]
         if [ -z "$IP" ]; then
           IP=$(kubectl -n ingress-nginx get svc ingress-nginx-controller \
-            -o jsonpath='{.spec.externalIPs[0]}' 2>/dev/null | tr -d '\n') || true
+            -o jsonpath='{.spec.externalIPs[0]}' 2>/dev/null | tr -d '\n') \
+            || true
         fi
       fi
       if [ -z "$IP" ]; then
