@@ -973,10 +973,39 @@ deploy:patch-ingress-externalip:
       PATCH_PAYLOAD=${PATCH_PAYLOAD/IP_PLACEHOLDER/$IP}
       kubectl -n ingress-nginx patch svc ingress-nginx-controller \
         --type merge -p "$PATCH_PAYLOAD" || true
+      # Ensure externalTrafficPolicy is Cluster (idempotent)
+      kubectl -n ingress-nginx patch svc ingress-nginx-controller \
+        --type merge -p '{"spec":{"externalTrafficPolicy":"Cluster"}}' \
+        || true
+      # Ensure ajasta-ingress uses a valid IngressClass
+      CUR_CLASS=$(kubectl -n ajasta get ingress ajasta-ingress \
+        -o jsonpath='{.spec.ingressClassName}' 2>/dev/null | tr -d '\n' \
+        || true)
+      DEF_CLASS=$(kubectl get ingressclass -o \
+        jsonpath='{range .items[?(@.metadata.annotations.ingressclass\\.kubernetes\\.io/is-default-class=="true")]}{.metadata.name}{end}' \
+        2>/dev/null | tr -d '\n' || true)
+      if [ -z "$DEF_CLASS" ] && kubectl get ingressclass nginx \
+        >/dev/null 2>&1; then DEF_CLASS="nginx"; fi
+      if [ -n "$DEF_CLASS" ]; then
+        if [ -z "$CUR_CLASS" ] || ! kubectl get ingressclass "$CUR_CLASS" \
+          >/dev/null 2>&1; then
+          echo "Patching ajasta-ingress class to: $DEF_CLASS"
+          kubectl -n ajasta patch ingress ajasta-ingress --type merge \
+            -p "{\"spec\":{\"ingressClassName\":\"$DEF_CLASS\"}}"
+        fi
+      else
+        echo "WARN: No IngressClass detected; leaving class unchanged."
+      fi
       echo "Service summary:"
       kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
       echo "Ingress summary:"
       kubectl -n ajasta get ingress ajasta-ingress || true
+      echo "Ingress describe (first 120 lines):"
+      kubectl -n ajasta describe ingress ajasta-ingress \
+        | sed -n '1,120p' || true
+      echo "Service endpoints:"
+      kubectl -n ajasta get endpoints ajasta-frontend ajasta-backend -o wide \
+        || true
       echo "Exporting PROBE_IP via dotenv artifact for downstream jobs"
       printf "PROBE_IP=%s\n" "$IP" > deploy_env.env
 
@@ -984,7 +1013,7 @@ deploy:patch-ingress-externalip:
 
 deploy:probe-root:
   stage: deploy
-  needs: ["deploy:patch-ingress-externalip"]
+  needs: ["deploy:patch-ingress-externalip", "deploy:k8s:production"]
   image: curlimages/curl:8.10.1
   variables:
     PROBE_IP: "$INGRESS_PUBLIC_IP"
