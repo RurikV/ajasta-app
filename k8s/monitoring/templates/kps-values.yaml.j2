@@ -1,0 +1,74 @@
+# kube-prometheus-stack values rendered by Ansible
+# Variables from playbook:
+# - enable_ingress
+# - ingress_class_name
+# - grafana_domain, prometheus_domain, alertmanager_domain
+# - grafana_admin_user, grafana_admin_password
+# - grafana_pvc_size
+# - release_name_kps (used by ServiceMonitor labels elsewhere)
+# - logging_namespace (for Loki URL)
+
+# Grafana configuration
+grafana:
+  adminUser: "{{ grafana_admin_user }}"
+  adminPassword: "{{ grafana_admin_password }}"
+  {% if enable_ingress %}
+  ingress:
+    enabled: true
+    ingressClassName: "{{ ingress_class_name }}"
+    hosts:
+      - {{ grafana_domain | to_json }}
+    path: "{{ grafana_path }}"
+    pathType: ImplementationSpecific
+  {% else %}
+  ingress:
+    enabled: false
+  {% endif %}
+  persistence:
+    enabled: true
+    size: {{ grafana_pvc_size }}
+  # Add Loki as a datasource
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      access: proxy
+      url: http://loki.{{ logging_namespace }}.svc.cluster.local:3100
+      isDefault: false
+
+# Prometheus Server Ingress
+prometheus:
+  {% if enable_ingress %}
+  ingress:
+    enabled: true
+    ingressClassName: "{{ ingress_class_name }}"
+    hosts:
+      - {{ prometheus_domain | to_json }}
+    paths:
+      - "{{ prometheus_path }}"
+    pathType: ImplementationSpecific
+  {% else %}
+  ingress:
+    enabled: false
+  {% endif %}
+
+# Alertmanager Ingress
+alertmanager:
+  {% if enable_ingress %}
+  ingress:
+    enabled: true
+    ingressClassName: "{{ ingress_class_name }}"
+    hosts:
+      - {{ alertmanager_domain | to_json }}
+    paths:
+      - "{{ alertmanager_path }}"
+    pathType: ImplementationSpecific
+  {% else %}
+  ingress:
+    enabled: false
+  {% endif %}
+
+# Keep default exporters and kube components enabled
+kubeStateMetrics:
+  enabled: true
+nodeExporter:
+  enabled: true

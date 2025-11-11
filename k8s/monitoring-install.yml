@@ -1,0 +1,210 @@
+---
+# Installs Prometheus + Grafana (kube-prometheus-stack) and Loki + Promtail via Helm
+# and applies ServiceMonitor and example alert rules.
+#
+# Quick usage (no domains, access by Ingress public IP on port 80):
+#   ansible-playbook -i k8s/inventory.ini k8s/monitoring-install.yml \
+#     -e enable_ingress=true \
+#     -e ingress_use_ip=true \
+#     -e grafana_admin_password='ChangeMe_SuperSecret'
+#
+# After completion you'll see links like:
+#   http://<INGRESS_IP>/grafana
+#   http://<INGRESS_IP>/prometheus
+#   http://<INGRESS_IP>/alertmanager
+#   Grafana login: admin / ChangeMe_SuperSecret
+#
+# To use domains and TLS later, set ingress_use_ip=false and pass
+# grafana_domain/prometheus_domain/alertmanager_domain variables and configure cert-manager.
+# If you prefer not to expose Ingress yet, set enable_ingress=false and use kubectl port-forward.
+
+- name: Install Kubernetes monitoring & logging (Prometheus, Grafana, Loki)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # General
+    monitoring_namespace: monitoring
+    logging_namespace: logging
+    release_name_kps: kps
+    release_name_loki: loki
+
+    # Ingress and access
+    enable_ingress: true
+    ingress_class_name: nginx
+    # If true, Ingress hosts will be removed post-install so UIs are reachable via raw IP (hostless/catch-all)
+    ingress_use_ip: true
+
+    # UI paths when served behind a single IP without hostnames
+    grafana_path: /grafana
+    prometheus_path: /prometheus
+    alertmanager_path: /alertmanager
+
+    # Ingress controller service to read current external IP from
+    ingress_controller_namespace: ingress-nginx
+    ingress_controller_svc: ingress-nginx-controller
+
+    grafana_domain: grafana.example.com
+    prometheus_domain: prometheus.example.com
+    alertmanager_domain: alertmanager.example.com
+    grafana_admin_user: admin
+    grafana_admin_password: "ChangeMe_SuperSecret"
+
+    # Storage sizes
+    grafana_pvc_size: 5Gi
+    loki_pvc_size: 10Gi
+
+    # Paths for rendered files
+    build_dir: k8s/build/monitoring
+    values_dir: "{{ build_dir }}/values"
+    manifests_dir: "{{ build_dir }}/manifests"
+
+    # App monitoring
+    app_namespace: ajasta
+    app_label_key: "app.kubernetes.io/name"
+    app_backend_label_value: "ajasta-backend"
+    app_metrics_port_name: "http-metrics"
+    app_metrics_port: 8080
+    app_metrics_path: "/actuator/prometheus"
+
+  tasks:
+    - name: Ensure build directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ build_dir }}"
+        - "{{ values_dir }}"
+        - "{{ manifests_dir }}"
+
+    - name: Create namespaces (monitoring, logging)
+      ansible.builtin.shell: |
+        set -e
+        kubectl get ns {{ monitoring_namespace }} >/dev/null 2>&1 || kubectl create ns {{ monitoring_namespace }}
+        kubectl get ns {{ logging_namespace }} >/dev/null 2>&1 || kubectl create ns {{ logging_namespace }}
+      args:
+        executable: /bin/bash
+
+    - name: Render kube-prometheus-stack values
+      ansible.builtin.template:
+        src: k8s/monitoring/templates/kps-values.yaml.j2
+        dest: "{{ values_dir }}/kps-values.yaml"
+        mode: '0644'
+
+    - name: Render loki-stack values
+      ansible.builtin.template:
+        src: k8s/monitoring/templates/loki-values.yaml.j2
+        dest: "{{ values_dir }}/loki-values.yaml"
+        mode: '0644'
+
+    - name: Render Service and ServiceMonitor for backend metrics
+      ansible.builtin.template:
+        src: k8s/monitoring/templates/backend-servicemonitor.yaml.j2
+        dest: "{{ manifests_dir }}/backend-servicemonitor.yaml"
+        mode: '0644'
+
+    - name: Render custom Prometheus rules
+      ansible.builtin.template:
+        src: k8s/monitoring/templates/prometheus-rules.yaml.j2
+        dest: "{{ manifests_dir }}/prometheus-rules.yaml"
+        mode: '0644'
+
+    - name: Add Helm repos for monitoring
+      ansible.builtin.shell: |
+        set -e
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+        helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
+        helm repo update
+      args:
+        executable: /bin/bash
+
+    - name: Install/upgrade kube-prometheus-stack
+      ansible.builtin.shell: |
+        set -e
+        helm upgrade --install {{ release_name_kps }} prometheus-community/kube-prometheus-stack \
+          --namespace {{ monitoring_namespace }} -f {{ values_dir }}/kps-values.yaml
+      args:
+        executable: /bin/bash
+
+    - name: Install/upgrade loki-stack (Loki + Promtail)
+      ansible.builtin.shell: |
+        set -e
+        helm upgrade --install {{ release_name_loki }} grafana/loki-stack \
+          --namespace {{ logging_namespace }} -f {{ values_dir }}/loki-values.yaml
+      args:
+        executable: /bin/bash
+
+    - name: Apply ServiceMonitor and rules
+      ansible.builtin.shell: |
+        set -e
+        kubectl apply -f {{ manifests_dir }}/backend-servicemonitor.yaml
+        kubectl apply -f {{ manifests_dir }}/prometheus-rules.yaml
+      args:
+        executable: /bin/bash
+
+    - name: Wait for monitoring ingresses to appear
+      when: enable_ingress | bool
+      ansible.builtin.shell: |
+        set -e
+        for i in {1..30}; do
+          kubectl -n {{ monitoring_namespace }} get ingress {{ release_name_kps }}-grafana >/dev/null 2>&1 && \
+          kubectl -n {{ monitoring_namespace }} get ingress {{ release_name_kps }}-kube-prometheus-stack-prometheus >/dev/null 2>&1 && \
+          kubectl -n {{ monitoring_namespace }} get ingress {{ release_name_kps }}-kube-prometheus-stack-alertmanager >/dev/null 2>&1 && exit 0; \
+          sleep 5; done; exit 1
+      args:
+        executable: /bin/bash
+
+    - name: Remove host from monitoring ingresses for IP-based access (catch-all)
+      when: enable_ingress | bool and ingress_use_ip | bool
+      ansible.builtin.shell: |
+        set -e
+        for ing in \
+          {{ release_name_kps }}-grafana \
+          {{ release_name_kps }}-kube-prometheus-stack-prometheus \
+          {{ release_name_kps }}-kube-prometheus-stack-alertmanager; do
+          # Remove host if present
+          kubectl -n {{ monitoring_namespace }} patch ingress "$ing" --type json -p='[{"op":"remove","path":"/spec/rules/0/host"}]' >/dev/null 2>&1 || true
+          # Remove TLS section if present (hostless TLS would not match)
+          kubectl -n {{ monitoring_namespace }} patch ingress "$ing" --type json -p='[{"op":"remove","path":"/spec/tls"}]' >/dev/null 2>&1 || true
+        done
+      args:
+        executable: /bin/bash
+
+    - name: Read current external IP of ingress controller
+      when: ingress_use_ip | bool
+      ansible.builtin.shell: |
+        kubectl -n {{ ingress_controller_namespace }} get svc {{ ingress_controller_svc }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+      args:
+        executable: /bin/bash
+      register: ingress_ip_cmd
+      changed_when: false
+      failed_when: false
+
+    - name: Set ingress_external_ip fact
+      when: ingress_use_ip | bool
+      ansible.builtin.set_fact:
+        ingress_external_ip: "{{ (ingress_ip_cmd.stdout | default('')) | trim }}"
+
+    - name: Show access information
+      ansible.builtin.debug:
+        msg: |
+          Monitoring installed.
+          Grafana login: {{ grafana_admin_user }} / {{ grafana_admin_password }}
+          Ingress enabled: {{ enable_ingress }}
+          {% if ingress_use_ip %}
+          Access via IP (port 80):
+            Grafana: http://{{ ingress_external_ip | default('YOUR_INGRESS_IP') }}{{ grafana_path }}
+            Prometheus: http://{{ ingress_external_ip | default('YOUR_INGRESS_IP') }}{{ prometheus_path }}
+            Alertmanager: http://{{ ingress_external_ip | default('YOUR_INGRESS_IP') }}{{ alertmanager_path }}
+          {% else %}
+          URLs (if DNS is configured):
+            Grafana: https://{{ grafana_domain }}
+            Prometheus: https://{{ prometheus_domain }}
+            Alertmanager: https://{{ alertmanager_domain }}
+          {% endif %}
+          If you have no domain yet, use port-forward:
+            kubectl -n {{ monitoring_namespace }} port-forward svc/{{ release_name_kps }}-grafana 3000:80
+            kubectl -n {{ monitoring_namespace }} port-forward svc/{{ release_name_kps }}-kube-prometheus-stack-prometheus 9090:9090
+            kubectl -n {{ monitoring_namespace }} port-forward svc/{{ release_name_kps }}-kube-prometheus-stack-alertmanager 9093:9093

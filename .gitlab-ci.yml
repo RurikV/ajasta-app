@@ -871,8 +871,7 @@ deploy:k8s:production:
     # to fix the cause:
     # the Ingress was bound to the hostname `ajasta.top`,
     # so requests to the raw IP did not match and NGINX served a 404 from the default backend.
-    - kubectl -n ajasta patch ingress ajasta-ingress \
-        --type json -p='[{"op":"remove","path":"/spec/rules/0/host"}]'
+    - kubectl -n ajasta patch ingress ajasta-ingress --type json -p='[{"op":"remove","path":"/spec/rules/0/host"}]'
     # Display deployment status
     - kubectl get all -n $KUBE_NAMESPACE
   only:
