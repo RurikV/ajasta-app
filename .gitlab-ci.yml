@@ -725,7 +725,6 @@ deploy:k8s:staging:
         --set frontend.image.repository=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER \
         --set frontend.image.tag=$DOCKER_IMAGE_TAG \
         $HELM_HOST_FLAG \
-        --set ingress.defaultBackend.enabled=true \
         --set ingress.hosts[0].paths[0].path=/ \
         --set ingress.hosts[0].paths[0].pathType=Prefix \
         --set ingress.hosts[0].paths[0].serviceName=ajasta-frontend \
