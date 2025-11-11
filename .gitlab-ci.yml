@@ -154,7 +154,8 @@ validate:syntax:
       fi
   script:
     - |
-      yamllint -d "{extends: default, rules: { line-length: { max: 130 } } }" .gitlab-ci.yml
+      CONF='{extends: default, rules: { line-length: { max: 130 } } }'
+      yamllint -d "$CONF" .gitlab-ci.yml
     - yamllint docker-compose.yml
     - find scripts -name "*.sh" -o -name "*.zsh" | xargs shellcheck || true
   rules:
@@ -866,6 +867,12 @@ deploy:k8s:production:
       kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide \
         || true
     - echo "✅ Deployment to Kubernetes Production successful"
+    # remove the host from `ajasta-ingress` to make it hostless (catch‑all)
+    # to fix the cause:
+    # the Ingress was bound to the hostname `ajasta.top`,
+    # so requests to the raw IP did not match and NGINX served a 404 from the default backend.
+    - kubectl -n ajasta patch ingress ajasta-ingress \
+        --type json -p='[{"op":"remove","path":"/spec/rules/0/host"}]'
     # Display deployment status
     - kubectl get all -n $KUBE_NAMESPACE
   only:
@@ -982,9 +989,10 @@ deploy:patch-ingress-externalip:
       CUR_CLASS=$(kubectl -n ajasta get ingress ajasta-ingress \
         -o jsonpath='{.spec.ingressClassName}' 2>/dev/null | tr -d '\n' \
         || true)
-      DEF_CLASS=$(kubectl get ingressclass -o \
-        jsonpath= \
-      '{range .items[?(@.metadata.annotations.ingressclass\\.kubernetes\\.io/is-default-class=="true")]}{.metadata.name}{end}' \
+      JSONPATH_DEF='{range .items[?(@.metadata.annotations.ingressclass'
+      JSONPATH_DEF="$JSONPATH_DEF"'\.kubernetes\.io/is-default-class=="true")]}'
+      JSONPATH_DEF="$JSONPATH_DEF"'{.metadata.name}{end}'
+      DEF_CLASS=$(kubectl get ingressclass -o jsonpath="$JSONPATH_DEF" \
         2>/dev/null | tr -d '\n' || true)
       if [ -z "$DEF_CLASS" ] && kubectl get ingressclass nginx \
         >/dev/null 2>&1; then DEF_CLASS="nginx"; fi
