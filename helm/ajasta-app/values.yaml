@@ -188,6 +188,10 @@ ingress:
   enabled: true
   className: nginx
   annotations: {}
+  defaultBackend:
+    enabled: false
+    serviceName: ajasta-frontend
+    servicePort: 80
   hosts:
     - host: ajasta.local
       paths:

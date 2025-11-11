@@ -25,6 +25,13 @@ spec:
       secretName: {{ .secretName }}
     {{- end }}
   {{- end }}
+  {{- if and .Values.ingress.defaultBackend .Values.ingress.defaultBackend.enabled }}
+  defaultBackend:
+    service:
+      name: {{ .Values.ingress.defaultBackend.serviceName }}
+      port:
+        number: {{ .Values.ingress.defaultBackend.servicePort }}
+  {{- end }}
   rules:
     {{- range .Values.ingress.hosts }}
     -

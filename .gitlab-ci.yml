@@ -724,6 +724,7 @@ deploy:k8s:staging:
         --set frontend.image.repository=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER \
         --set frontend.image.tag=$DOCKER_IMAGE_TAG \
         $HELM_HOST_FLAG \
+        --set ingress.defaultBackend.enabled=true \
         --set ingress.hosts[0].paths[0].path=/ \
         --set ingress.hosts[0].paths[0].pathType=Prefix \
         --set ingress.hosts[0].paths[0].serviceName=ajasta-frontend \
@@ -740,9 +741,21 @@ deploy:k8s:staging:
 
       # Post-deploy quick checks
       kubectl -n $KUBE_NAMESPACE get ingress ajasta-ingress || true
+      # Probe homepage
       for i in 1 2 3 4 5; do
         if curl -fsSI "http://$INGRESS_HOST/" >/dev/null 2>&1; then
           echo "✅ Ingress homepage reachable"; break; fi; sleep 5; done || true
+      # Probe public API endpoint
+      for i in 1 2 3 4 5; do
+        if curl -fsSI \
+          "http://$INGRESS_HOST/api/resources?active=true" \
+          >/dev/null 2>&1; then
+          echo "✅ Public API reachable"; break; fi; sleep 5; done || true
+      # Basic diagnostics
+      kubectl -n $KUBE_NAMESPACE describe ingress ajasta-ingress \
+        | sed -n '1,120p' || true
+      kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide \
+        || true
     - echo "✅ Deployment to Kubernetes Staging successful"
     # Display deployment status
     - kubectl get all -n $KUBE_NAMESPACE
@@ -837,9 +850,21 @@ deploy:k8s:production:
 
       # Post-deploy quick checks
       kubectl -n $KUBE_NAMESPACE get ingress ajasta-ingress || true
+      # Probe homepage
       for i in 1 2 3 4 5; do
         if curl -fsSI "http://$INGRESS_HOST/" >/dev/null 2>&1; then
           echo "✅ Ingress homepage reachable"; break; fi; sleep 5; done || true
+      # Probe public API endpoint
+      for i in 1 2 3 4 5; do
+        if curl -fsSI \
+          "http://$INGRESS_HOST/api/resources?active=true" \
+          >/dev/null 2>&1; then
+          echo "✅ Public API reachable"; break; fi; sleep 5; done || true
+      # Basic diagnostics
+      kubectl -n $KUBE_NAMESPACE describe ingress ajasta-ingress \
+        | sed -n '1,120p' || true
+      kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide \
+        || true
     - echo "✅ Deployment to Kubernetes Production successful"
     # Display deployment status
     - kubectl get all -n $KUBE_NAMESPACE
