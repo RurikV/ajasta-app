@@ -1,0 +1,48 @@
+# Fill in your YC context. You can export YC_TOKEN or use a service account key file.
+yc_cloud_id  = "<your-cloud-id>"
+yc_folder_id = "<your-folder-id>"
+yc_zone      = "ru-central1-b"
+
+# If you prefer SA key auth, point to an existing key JSON (e.g., ../sa-key.json)
+# yc_service_account_key_file = "../sa-key.json"
+
+# Networking
+yc_network_name           = "external-ajasta-network"
+yc_subnet_name            = "ajasta-external-segment"
+yc_subnet_cidr            = "172.16.17.0/28"
+yc_internal_network_name  = "internal-ajasta-network"
+yc_internal_subnet_name   = "ajasta-internal-segment"
+yc_internal_subnet_cidr   = "10.10.0.0/24"
+
+# Static addresses
+master_address_name = "ajasta-k8s-master-ip"
+workers = [
+  { vm_name = "k8s-worker-1", address_name = "ajasta-k8s-worker1-ip" },
+  { vm_name = "k8s-worker-2", address_name = "ajasta-k8s-worker2-ip" },
+  { vm_name = "k8s-worker-3", address_name = "ajasta-k8s-worker3-ip" },
+]
+
+# VM specs
+master_vm_name     = "k8s-master"
+master_vm_memory   = 6
+master_vm_cores    = 2
+master_vm_disk_size = 30
+worker_vm_memory   = 6
+worker_vm_cores    = 2
+worker_vm_disk_size = 30
+
+# SSH access
+ssh_username   = "ajasta"
+# Option A (recommended in tfvars): provide a path to your public key file (functions are not allowed in tfvars)
+# Supports ~ expansion
+ssh_public_key_file = "~/.ssh/id_ed25519.pub"
+
+# Option B: provide raw key content directly (less convenient, but works)
+# ssh_public_key = "ssh-ed25519 AAAA... user@example"
+
+# cloud-init user-data (relative to repo root; default already set)
+# metadata_yaml = "../scripts/metadata.yaml"
+
+# Optional: create a service account and output its key JSON (not recommended for prod repos)
+# create_service_account = true
+# yc_sa_name = "otus"

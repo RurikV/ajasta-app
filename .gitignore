@@ -2,6 +2,10 @@
 /.env
 /scripts/.tmp-user-data**.yaml
 /sa-key.json
+/sa-iam-key.json
 /other-k8s/
 /ajasta-cms/target/
 /k8s/kubeconfigs/
+/terraform/terraform.tfvars
+/terraform/.terraform*
+/terraform/terraform.tfstate*
