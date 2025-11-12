@@ -10,46 +10,46 @@
 
 # Grafana configuration
 grafana:
-  adminUser: "{{ grafana_admin_user }}"
-  adminPassword: "{{ grafana_admin_password }}"
+  adminUser: "admin"
+  adminPassword: "ChangeMe_SuperSecret"
   ingress:
-    enabled: {{ enable_ingress | bool }}
-    ingressClassName: "{{ ingress_class_name }}"
+    enabled: True
+    ingressClassName: "nginx"
     hosts:
-      - {{ grafana_domain | to_json }}
-    path: "{{ grafana_path }}"
+      - "grafana.example.com"
+    path: "/grafana"
     pathType: ImplementationSpecific
   persistence:
     enabled: true
-    size: {{ grafana_pvc_size }}
+    size: 5Gi
   # Add Loki as a datasource
   additionalDataSources:
     - name: Loki
       type: loki
       access: proxy
-      url: http://loki.{{ logging_namespace }}.svc.cluster.local:3100
+      url: http://loki.logging.svc.cluster.local:3100
       isDefault: false
 
 # Prometheus Server Ingress
 prometheus:
   ingress:
-    enabled: {{ enable_ingress | bool }}
-    ingressClassName: "{{ ingress_class_name }}"
+    enabled: True
+    ingressClassName: "nginx"
     hosts:
-      - {{ prometheus_domain | to_json }}
+      - "prometheus.example.com"
     paths:
-      - "{{ prometheus_path }}"
+      - "/prometheus"
     pathType: ImplementationSpecific
 
 # Alertmanager Ingress
 alertmanager:
   ingress:
-    enabled: {{ enable_ingress | bool }}
-    ingressClassName: "{{ ingress_class_name }}"
+    enabled: True
+    ingressClassName: "nginx"
     hosts:
-      - {{ alertmanager_domain | to_json }}
+      - "alertmanager.example.com"
     paths:
-      - "{{ alertmanager_path }}"
+      - "/alertmanager"
     pathType: ImplementationSpecific
 
 # Keep default exporters and kube components enabled

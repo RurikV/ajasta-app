@@ -89,25 +89,25 @@
 
     - name: Render kube-prometheus-stack values
       ansible.builtin.template:
-        src: k8s/monitoring/templates/kps-values.yaml.j2
+        src: "{{ playbook_dir }}/monitoring/templates/kps-values.yaml.j2"
         dest: "{{ values_dir }}/kps-values.yaml"
         mode: '0644'
 
     - name: Render loki-stack values
       ansible.builtin.template:
-        src: k8s/monitoring/templates/loki-values.yaml.j2
+        src: "{{ playbook_dir }}/monitoring/templates/loki-values.yaml.j2"
         dest: "{{ values_dir }}/loki-values.yaml"
         mode: '0644'
 
     - name: Render Service and ServiceMonitor for backend metrics
       ansible.builtin.template:
-        src: k8s/monitoring/templates/backend-servicemonitor.yaml.j2
+        src: "{{ playbook_dir }}/monitoring/templates/backend-servicemonitor.yaml.j2"
         dest: "{{ manifests_dir }}/backend-servicemonitor.yaml"
         mode: '0644'
 
     - name: Render custom Prometheus rules
       ansible.builtin.template:
-        src: k8s/monitoring/templates/prometheus-rules.yaml.j2
+        src: "{{ playbook_dir }}/monitoring/templates/prometheus-rules.yaml.j2"
         dest: "{{ manifests_dir }}/prometheus-rules.yaml"
         mode: '0644'
 
