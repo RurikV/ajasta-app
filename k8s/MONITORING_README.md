@@ -65,11 +65,17 @@ Run with `-e enable_ingress=false`, then locally:
 kubectl -n monitoring port-forward svc/kps-grafana 3000:80
 kubectl -n monitoring port-forward svc/kps-kube-prometheus-stack-prometheus 9090:9090
 kubectl -n monitoring port-forward svc/kps-kube-prometheus-stack-alertmanager 9093:9093
+kubectl -n logging    port-forward svc/loki 3100:3100
 ```
 Open:
 - Grafana: http://localhost:3000
 - Prometheus: http://localhost:9090
 - Alertmanager: http://localhost:9093
+
+Loki notes:
+- Loki has no standalone UI; use Grafana Explore to query logs against the Loki datasource.
+- You can still access Loki’s HTTP API when port-forwarded: http://localhost:3100
+  - Example endpoints: `/ready`, `/metrics`, `/loki/api/v1/labels`, `/loki/api/v1/query`
 
 ---
 

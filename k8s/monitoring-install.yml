@@ -208,3 +208,4 @@
             kubectl -n {{ monitoring_namespace }} port-forward svc/{{ release_name_kps }}-grafana 3000:80
             kubectl -n {{ monitoring_namespace }} port-forward svc/{{ release_name_kps }}-kube-prometheus-stack-prometheus 9090:9090
             kubectl -n {{ monitoring_namespace }} port-forward svc/{{ release_name_kps }}-kube-prometheus-stack-alertmanager 9093:9093
+            kubectl -n {{ logging_namespace }} port-forward svc/{{ release_name_loki }} 3100:3100
