@@ -57,9 +57,6 @@ variables:
       - ${TF_ROOT}/.terraform/
       - ${TF_ROOT}/.terraform.lock.hcl
       - ${TF_PLUGIN_CACHE_DIR}/
-  artifacts:
-    reports:
-      terraform: ${TF_ROOT}/plan.json
 
 # Terraform validation stage
 terraform:validate:
@@ -68,10 +65,13 @@ terraform:validate:
   script:
     - terraform fmt -check -recursive
     - terraform validate -no-color
+    - echo "Terraform validation completed successfully"
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_BRANCH == "develop"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  artifacts:
+    when: never
 
 # Terraform planning stage
 terraform:plan:
@@ -79,13 +79,13 @@ terraform:plan:
   stage: plan
   script:
     - terraform plan -input=false -out=plan.tfplan
-    - terraform show -json plan.tfplan > plan.json
     - terraform show -no-color plan.tfplan > plan.txt
+    - echo "Terraform plan created successfully"
+    - ls -la plan.tfplan plan.txt
   artifacts:
     paths:
-      - ${TF_ROOT}/plan.tfplan
-      - ${TF_ROOT}/plan.json
-      - ${TF_ROOT}/plan.txt
+      - terraform/plan.tfplan
+      - terraform/plan.txt
     expire_in: "1 week"
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
@@ -105,11 +105,12 @@ terraform:apply:dev:
     - echo "TERRAFORM_WORKER_IPS=" >> terraform_outputs.env
     - terraform output -json worker_public_ips >> terraform_outputs.env
     - echo "TERRAFORM_CLUSTER_READY=true" >> terraform_outputs.env
+    - ls -la terraform_outputs.env
   artifacts:
     paths:
-      - ${TF_ROOT}/terraform_outputs.env
+      - terraform/terraform_outputs.env
     reports:
-      dotenv: ${TF_ROOT}/terraform_outputs.env
+      dotenv: terraform/terraform_outputs.env
   rules:
     - if: $CI_COMMIT_BRANCH == "develop"
   needs: [terraform:plan]
@@ -131,12 +132,12 @@ deploy:tf:production:
     - echo "TERRAFORM_CLUSTER_READY=true" >> terraform_outputs.env
     - echo "Production Kubernetes Cluster Created Successfully"
     - echo "Cluster ready for application deployment"
+    - ls -la terraform_outputs.env
   artifacts:
     paths:
-      - ${TF_ROOT}/terraform_outputs.env
-      - ${TF_ROOT}/plan.txt
+      - terraform/terraform_outputs.env
     reports:
-      dotenv: ${TF_ROOT}/terraform_outputs.env
+      dotenv: terraform/terraform_outputs.env
     expire_in: "1 month"
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
