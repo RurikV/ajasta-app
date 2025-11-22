@@ -22,7 +22,7 @@ variables:
   TF_VAR_yc_folder_id: "${YC_FOLDER_ID}"
   TF_VAR_yc_token: "${YC_TOKEN}"
   TF_VAR_ssh_username: "ajasta"
-  TF_VAR_ssh_public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC"
+  SSH_PRIVATE_KEY: "${YC_SSH_PRIVATE_KEY}"
 
 # Base configuration for Terraform jobs (Shell Runner)
 .terraform_base: &terraform_base
@@ -73,6 +73,25 @@ variables:
         rm -f terraform_${TERRAFORM_VERSION}_*.zip
       fi
 
+    # Extract SSH public key from private key
+    - |
+      if [ -n "${SSH_PRIVATE_KEY:-}" ]; then
+        echo "🔑 Extracting SSH public key from private key..."
+        echo "${SSH_PRIVATE_KEY}" | tr -d '\r' > /tmp/id_rsa
+        chmod 600 /tmp/id_rsa
+        if ssh-keygen -y -f /tmp/id_rsa > /tmp/id_rsa.pub 2>/dev/null; then
+          export TF_VAR_ssh_public_key="$(cat /tmp/id_rsa.pub)"
+          echo "✅ SSH public key extracted successfully"
+        else
+          echo "❌ Failed to extract SSH public key"
+          export TF_VAR_ssh_public_key=""
+        fi
+        rm -f /tmp/id_rsa /tmp/id_rsa.pub
+      else
+        echo "⚠️ No SSH private key provided"
+        export TF_VAR_ssh_public_key=""
+      fi
+
     # Navigate to terraform directory
     - cd ${TF_ROOT}
 
@@ -93,8 +112,57 @@ variables:
       }
       EOF
 
-    # Copy variables file
-    - cp terraform.tfvars.gitlab terraform.tfvars
+    # Create terraform.tfvars from environment variables
+    - |
+      cat > terraform.tfvars << 'EOF'
+      # Yandex Cloud configuration - from GitLab CI variables
+      yc_cloud_id  = "${TF_VAR_yc_cloud_id}"
+      yc_folder_id = "${TF_VAR_yc_folder_id}"
+      yc_zone      = "ru-central1-b"
+
+      # SSH configuration - public key extracted from private key in CI/CD
+      ssh_username = "ajasta"
+      ssh_public_key = "${TF_VAR_ssh_public_key}"
+
+      # Networking - using same names as manual deployment
+      yc_network_name           = "external-ajasta-network"
+      yc_subnet_name            = "ajasta-external-segment"
+      yc_subnet_cidr            = "172.16.17.0/28"
+      yc_internal_network_name  = "internal-ajasta-network"
+      yc_internal_subnet_name   = "ajasta-internal-segment"
+      yc_internal_subnet_cidr   = "10.10.0.0/24"
+
+      # Static addresses - same naming convention
+      master_address_name = "ajasta-k8s-master-ip"
+      workers = [
+        { vm_name = "k8s-worker-1", address_name = "ajasta-k8s-worker1-ip" },
+        { vm_name = "k8s-worker-2", address_name = "ajasta-k8s-worker2-ip" },
+        { vm_name = "k8s-worker-3", address_name = "ajasta-k8s-worker3-ip" },
+      ]
+
+      # VM specifications - same as manual deployment
+      master_vm_name     = "k8s-master"
+      master_vm_memory   = 6
+      master_vm_cores    = 2
+      master_vm_disk_size = 30
+      worker_vm_memory   = 6
+      worker_vm_cores    = 2
+      worker_vm_disk_size = 30
+
+      # cloud-init user-data (relative to terraform directory)
+      metadata_yaml = "../scripts/metadata.yaml"
+      EOF
+
+    # Debug variables and environment check
+    - echo "🔍 Debug: Environment variables check:"
+    - echo "   TF_VAR_yc_cloud_id: ${TF_VAR_yc_cloud_id:0:20}..."
+    - echo "   TF_VAR_yc_folder_id: ${TF_VAR_yc_folder_id:0:20}..."
+    - echo "   TF_VAR_ssh_username: ${TF_VAR_ssh_username}"
+    - echo "   TF_VAR_ssh_public_key: ${TF_VAR_ssh_public_key:0:30}..."
+    - echo "   SSH_PRIVATE_KEY length: ${#SSH_PRIVATE_KEY}"
+    - echo ""
+    - echo "📄 terraform.tfvars created:"
+    - cat terraform.tfvars | head -10
 
     # Show versions
     - terraform --version
