@@ -71,7 +71,8 @@ else
 fi
 
 echo "📝 Creating terraform.tfvars from environment variables..."
-cat > terraform.tfvars << EOF
+mkdir -p terraform
+cat > terraform/terraform.tfvars << EOF
 # Yandex Cloud configuration
 yc_cloud_id  = "${TF_VAR_yc_cloud_id}"
 yc_folder_id = "${TF_VAR_yc_folder_id}"
@@ -107,7 +108,7 @@ worker_vm_cores = 2
 worker_vm_disk_size = 30
 
 # cloud-init user-data
-metadata_yaml = "scripts/metadata.yaml"
+metadata_yaml = "../scripts/metadata.yaml"
 EOF
 
 echo "🔍 Debug: Terraform variables check"
@@ -119,6 +120,6 @@ echo "   SSH_PRIVATE_KEY length: ${#SSH_PRIVATE_KEY}"
 echo ""
 
 echo "📄 terraform.tfvars created successfully:"
-head -10 terraform.tfvars
+head -10 terraform/terraform.tfvars
 
 echo "🚀 Terraform setup completed successfully!"
