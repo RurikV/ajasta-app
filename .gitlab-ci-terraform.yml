@@ -1,5 +1,5 @@
 ---
-# GitLab CI/CD Pipeline for Terraform Operations (Simplified)
+# GitLab CI/CD Pipeline for Terraform Operations
 # This file handles Terraform infrastructure deployment for Kubernetes cluster
 
 variables:
@@ -19,7 +19,7 @@ variables:
   TF_VAR_yc_folder_id: "${YC_FOLDER_ID}"
   TF_VAR_yc_token: "${YC_TOKEN}"
   TF_VAR_ssh_username: "ajasta"
-  SSH_PUBLIC_KEY: "${YC_SSH_PRIVATE_KEY}"
+  TF_VAR_ssh_public_key: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC"
 
 # Base configuration for Terraform jobs
 .terraform_base: &terraform_base
@@ -31,26 +31,15 @@ variables:
     - cd ${TF_ROOT}
     - export TF_CLI_CONFIG_FILE="${CI_PROJECT_DIR}/.terraformrc"
     - mkdir -p ${TF_PLUGIN_CACHE_DIR}
-    - |
-      echo 'provider_installation {' > ${CI_PROJECT_DIR}/.terraformrc
-      echo '  network_mirror {' >> ${CI_PROJECT_DIR}/.terraformrc
-      echo '    url = "https://terraform-mirror.yandexcloud.net/"' >> ${CI_PROJECT_DIR}/.terraformrc
-      echo '    include = ["registry.terraform.io/*/*"]' >> ${CI_PROJECT_DIR}/.terraformrc
-      echo '  }' >> ${CI_PROJECT_DIR}/.terraformrc
-      echo '  direct {' >> ${CI_PROJECT_DIR}/.terraformrc
-      echo '    exclude = ["registry.terraform.io/*/*"]' >> ${CI_PROJECT_DIR}/.terraformrc
-      echo '  }' >> ${CI_PROJECT_DIR}/.terraformrc
-      echo '}' >> ${CI_PROJECT_DIR}/.terraformrc
-    - |
-      if [ -n "${SSH_PUBLIC_KEY:-}" ]; then
-        echo "${SSH_PUBLIC_KEY}" | tr -d '\r' > /tmp/id_rsa
-        chmod 600 /tmp/id_rsa
-        ssh-keygen -y -f /tmp/id_rsa > /tmp/id_rsa.pub
-        export TF_VAR_ssh_public_key=$(cat /tmp/id_rsa.pub)
-        rm -f /tmp/id_rsa /tmp/id_rsa.pub
-      else
-        export TF_VAR_ssh_public_key=""
-      fi
+    - echo 'provider_installation {' > ${CI_PROJECT_DIR}/.terraformrc
+    - echo '  network_mirror {' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '    url = "https://terraform-mirror.yandexcloud.net/"' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '    include = ["registry.terraform.io/*/*"]' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '  }' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '  direct {' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '    exclude = ["registry.terraform.io/*/*"]' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '  }' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '}' >> ${CI_PROJECT_DIR}/.terraformrc
     - cp terraform.tfvars.gitlab terraform.tfvars
     - terraform --version
     - terraform init -input=false -backend=true
@@ -91,7 +80,6 @@ terraform:plan:
   script:
     - terraform plan -input=false -out=plan.tfplan
     - terraform show -json plan.tfplan > plan.json
-    - terraform show -no-color plan.tfplan | head -50
     - terraform show -no-color plan.tfplan > plan.txt
   artifacts:
     paths:
@@ -112,8 +100,11 @@ terraform:apply:dev:
     name: terraform-dev
   script:
     - terraform apply -input=false -auto-approve plan.tfplan
-    - echo "TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip)" > terraform_outputs.env
-    - echo "TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips)" >> terraform_outputs.env
+    - echo "TERRAFORM_MASTER_IP=" > terraform_outputs.env
+    - terraform output -raw master_public_ip >> terraform_outputs.env
+    - echo "TERRAFORM_WORKER_IPS=" >> terraform_outputs.env
+    - terraform output -json worker_public_ips >> terraform_outputs.env
+    - echo "TERRAFORM_CLUSTER_READY=true" >> terraform_outputs.env
   artifacts:
     paths:
       - ${TF_ROOT}/terraform_outputs.env
@@ -132,13 +123,13 @@ deploy:tf:production:
     url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
     on_stop: terraform:destroy:production
   script:
-    - echo "🚀 Starting Terraform deployment to PRODUCTION environment..."
     - terraform apply -input=false plan.tfplan
-    - echo "TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip)" > terraform_outputs.env
-    - echo "TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips)" >> terraform_outputs.env
+    - echo "TERRAFORM_MASTER_IP=" > terraform_outputs.env
+    - terraform output -raw master_public_ip >> terraform_outputs.env
+    - echo "TERRAFORM_WORKER_IPS=" >> terraform_outputs.env
+    - terraform output -json worker_public_ips >> terraform_outputs.env
     - echo "TERRAFORM_CLUSTER_READY=true" >> terraform_outputs.env
-    - echo "✅ Production Kubernetes Cluster Created Successfully!"
-    - echo "Master IP: $(terraform output -raw master_public_ip)"
+    - echo "Production Kubernetes Cluster Created Successfully"
     - echo "Cluster ready for application deployment"
   artifacts:
     paths:
@@ -161,12 +152,9 @@ terraform:destroy:production:
     name: terraform-production
     action: stop
   script:
-    - echo "🚨 DANGER: This will destroy the PRODUCTION infrastructure!"
-    - echo "Proceeding with destruction in 10 seconds..."
-    - sleep 10
     - terraform plan -destroy -out=destroy.tfplan
     - terraform apply -input=false -auto-approve destroy.tfplan
-    - echo "✅ Production infrastructure destroyed successfully"
+    - echo "Production infrastructure destroyed successfully"
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
       when: manual
