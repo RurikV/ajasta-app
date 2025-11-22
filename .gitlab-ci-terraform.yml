@@ -117,12 +117,13 @@ terraform:apply:dev:
     name: terraform-dev
   script:
     - terraform apply -input=false -auto-approve plan.tfplan
-    - echo "TERRAFORM_MASTER_IP=" > terraform_outputs.env
-    - terraform output -raw master_public_ip >> terraform_outputs.env
-    - echo "TERRAFORM_WORKER_IPS=" >> terraform_outputs.env
-    - terraform output -json worker_public_ips >> terraform_outputs.env
-    - echo "TERRAFORM_CLUSTER_READY=true" >> terraform_outputs.env
-    - ls -la terraform_outputs.env
+    - |
+      cat > terraform_outputs.env << EOF
+      TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip)
+      TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips)
+      TERRAFORM_CLUSTER_READY=true
+      EOF
+    - cat terraform_outputs.env
   artifacts:
     paths:
       - terraform/terraform_outputs.env
@@ -142,14 +143,15 @@ deploy:tf:production:
     on_stop: terraform:destroy:production
   script:
     - terraform apply -input=false plan.tfplan
-    - echo "TERRAFORM_MASTER_IP=" > terraform_outputs.env
-    - terraform output -raw master_public_ip >> terraform_outputs.env
-    - echo "TERRAFORM_WORKER_IPS=" >> terraform_outputs.env
-    - terraform output -json worker_public_ips >> terraform_outputs.env
-    - echo "TERRAFORM_CLUSTER_READY=true" >> terraform_outputs.env
+    - |
+      cat > terraform_outputs.env << EOF
+      TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip)
+      TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips)
+      TERRAFORM_CLUSTER_READY=true
+      EOF
     - echo "Production Kubernetes Cluster Created Successfully"
     - echo "Cluster ready for application deployment"
-    - ls -la terraform_outputs.env
+    - cat terraform_outputs.env
   artifacts:
     paths:
       - terraform/terraform_outputs.env
