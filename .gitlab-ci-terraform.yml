@@ -28,6 +28,9 @@ variables:
 # Base configuration for Terraform jobs (Shell Runner)
 .terraform_base: &terraform_base
   before_script:
+    # Create plugin cache directory
+    - mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+
     # Make setup script executable and run it from project root
     - chmod +x scripts/terraform-setup.sh
 

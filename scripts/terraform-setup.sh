@@ -71,15 +71,15 @@ else
 fi
 
 echo "📝 Creating terraform.tfvars from environment variables..."
-cat > terraform.tfvars << 'EOF'
+cat > terraform.tfvars << EOF
 # Yandex Cloud configuration
-yc_cloud_id  = "'"${TF_VAR_yc_cloud_id}"'"
-yc_folder_id = "'"${TF_VAR_yc_folder_id}"'"
+yc_cloud_id  = "${TF_VAR_yc_cloud_id}"
+yc_folder_id = "${TF_VAR_yc_folder_id}"
 yc_zone      = "ru-central1-b"
 
 # SSH configuration
-ssh_username = "'"${TF_VAR_ssh_username}"'"
-ssh_public_key = "'"${TF_VAR_ssh_public_key}"'"
+ssh_username = "${TF_VAR_ssh_username}"
+ssh_public_key = "${TF_VAR_ssh_public_key}"
 
 # Networking
 yc_network_name = "external-ajasta-network"
