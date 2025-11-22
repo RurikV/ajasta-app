@@ -7,7 +7,7 @@ resource "yandex_vpc_address" "master" {
 
 resource "yandex_vpc_address" "workers" {
   for_each = { for w in var.workers : w.vm_name => w }
-  name = each.value.address_name
+  name     = each.value.address_name
   external_ipv4_address {
     zone_id = var.yc_zone
   }

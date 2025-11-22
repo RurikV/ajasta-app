@@ -107,7 +107,7 @@ worker_vm_cores = 2
 worker_vm_disk_size = 30
 
 # cloud-init user-data
-metadata_yaml = "../scripts/metadata.yaml"
+metadata_yaml = "scripts/metadata.yaml"
 EOF
 
 echo "🔍 Debug: Terraform variables check"

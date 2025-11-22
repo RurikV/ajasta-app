@@ -5,7 +5,7 @@ output "master_public_ip" {
 
 output "worker_public_ips" {
   description = "Map of worker name => public IP"
-  value = { for k, inst in yandex_compute_instance.workers : k => inst.network_interface[0].nat_ip_address }
+  value       = { for k, inst in yandex_compute_instance.workers : k => inst.network_interface[0].nat_ip_address }
 }
 
 output "master_instance_id" {

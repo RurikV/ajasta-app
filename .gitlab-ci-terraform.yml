@@ -4,7 +4,7 @@
 
 variables:
   # Terraform configuration
-  TF_ROOT: "${CI_PROJECT_DIR}/terraform"
+  TF_ROOT: "${CI_PROJECT_DIR}"
   TF_STATE_NAME: "production"
 
   # GitLab Terraform HTTP backend configuration
@@ -33,9 +33,6 @@ variables:
 
     # Run external terraform setup script from project root
     - scripts/terraform-setup.sh
-
-    # Navigate to terraform directory for remaining operations
-    - cd ${TF_ROOT}
 
     # Setup Terraform CLI config
     - export TF_CLI_CONFIG_FILE="${CI_PROJECT_DIR}/.terraformrc"
@@ -71,8 +68,8 @@ variables:
   cache:
     key: terraform-${CI_COMMIT_REF_SLUG}
     paths:
-      - ${TF_ROOT}/.terraform/
-      - ${TF_ROOT}/.terraform.lock.hcl
+      - .terraform/
+      - .terraform.lock.hcl
 
 # Terraform validation stage
 terraform:validate:
@@ -98,8 +95,8 @@ terraform:plan:
     - ls -la plan.tfplan plan.txt
   artifacts:
     paths:
-      - terraform/plan.tfplan
-      - terraform/plan.txt
+      - plan.tfplan
+      - plan.txt
     expire_in: "1 week"
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
@@ -122,9 +119,9 @@ terraform:apply:dev:
     - ls -la terraform_outputs.env
   artifacts:
     paths:
-      - terraform/terraform_outputs.env
+      - terraform_outputs.env
     reports:
-      dotenv: terraform/terraform_outputs.env
+      dotenv: terraform_outputs.env
   rules:
     - if: $CI_COMMIT_BRANCH == "develop"
   needs: [terraform:plan]
@@ -149,9 +146,9 @@ deploy:tf:production:
     - ls -la terraform_outputs.env
   artifacts:
     paths:
-      - terraform/terraform_outputs.env
+      - terraform_outputs.env
     reports:
-      dotenv: terraform/terraform_outputs.env
+      dotenv: terraform_outputs.env
     expire_in: "1 month"
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
