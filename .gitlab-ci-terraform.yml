@@ -31,17 +31,16 @@ variables:
     - cd ${TF_ROOT}
     - export TF_CLI_CONFIG_FILE="${CI_PROJECT_DIR}/.terraformrc"
     - mkdir -p ${TF_PLUGIN_CACHE_DIR}
-    - cat > ${CI_PROJECT_DIR}/.terraformrc <<EOF
-provider_installation {
-  network_mirror {
-    url = "https://terraform-mirror.yandexcloud.net/"
-    include = ["registry.terraform.io/*/*"]
-  }
-  direct {
-    exclude = ["registry.terraform.io/*/*"]
-  }
-}
-EOF
+    - |
+      echo 'provider_installation {' > ${CI_PROJECT_DIR}/.terraformrc
+      echo '  network_mirror {' >> ${CI_PROJECT_DIR}/.terraformrc
+      echo '    url = "https://terraform-mirror.yandexcloud.net/"' >> ${CI_PROJECT_DIR}/.terraformrc
+      echo '    include = ["registry.terraform.io/*/*"]' >> ${CI_PROJECT_DIR}/.terraformrc
+      echo '  }' >> ${CI_PROJECT_DIR}/.terraformrc
+      echo '  direct {' >> ${CI_PROJECT_DIR}/.terraformrc
+      echo '    exclude = ["registry.terraform.io/*/*"]' >> ${CI_PROJECT_DIR}/.terraformrc
+      echo '  }' >> ${CI_PROJECT_DIR}/.terraformrc
+      echo '}' >> ${CI_PROJECT_DIR}/.terraformrc
     - |
       if [ -n "${SSH_PUBLIC_KEY:-}" ]; then
         echo "${SSH_PUBLIC_KEY}" | tr -d '\r' > /tmp/id_rsa
