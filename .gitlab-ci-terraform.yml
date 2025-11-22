@@ -28,14 +28,14 @@ variables:
 # Base configuration for Terraform jobs (Shell Runner)
 .terraform_base: &terraform_base
   before_script:
-    # Make setup script executable and run it
-    - chmod +x ../scripts/terraform-setup.sh
+    # Make setup script executable and run it from project root
+    - chmod +x scripts/terraform-setup.sh
 
-    # Navigate to terraform directory
+    # Run external terraform setup script from project root
+    - scripts/terraform-setup.sh
+
+    # Navigate to terraform directory for remaining operations
     - cd ${TF_ROOT}
-
-    # Run external terraform setup script
-    - ../scripts/terraform-setup.sh
 
     # Setup Terraform CLI config
     - export TF_CLI_CONFIG_FILE="${CI_PROJECT_DIR}/.terraformrc"
