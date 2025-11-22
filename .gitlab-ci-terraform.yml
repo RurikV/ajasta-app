@@ -201,6 +201,35 @@ deploy:tf:production:
   needs: [terraform:plan]
   timeout: 30m
 
+# Update kubeconfig after Terraform deployment
+k8s:update-kubeconfig:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client curl jq
+    - chmod +x ../scripts/update-kubeconfig.sh
+  script:
+    # Wait a bit for the cluster to be ready
+    - echo "⏳ Waiting 60 seconds for Kubernetes cluster to initialize..."
+    - sleep 60
+    # Run the kubeconfig update script
+    - ../scripts/update-kubeconfig.sh "$TERRAFORM_MASTER_IP"
+    # Verify the connection
+    - export KUBECONFIG="$HOME/.kube/config"
+    - kubectl cluster-info
+    - kubectl get nodes
+    - echo "✅ Kubeconfig updated and verified successfully"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+  needs: [deploy:tf:production]
+  dependencies:
+    - deploy:tf:production
+  timeout: 10m
+  environment:
+    name: terraform-production
+    url: http://${TERRAFORM_MASTER_IP:-$YC_VM_EXTERNAL_IP}
+
 # Terraform destroy job for production (manual cleanup)
 terraform:destroy:production:
   <<: *terraform_base
