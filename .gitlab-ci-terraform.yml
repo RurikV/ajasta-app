@@ -1,0 +1,378 @@
+---
+# GitLab CI/CD Pipeline for Terraform Operations
+# This file handles Terraform infrastructure deployment for Kubernetes cluster
+
+variables:
+  # Terraform configuration
+  TF_ROOT: "${CI_PROJECT_DIR}/terraform"
+  TF_STATE_NAME: "production"
+
+  # GitLab Terraform HTTP backend configuration
+  TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
+  TF_HTTP_LOCK_ADDRESS: "${TF_HTTP_ADDRESS}/lock"
+  TF_HTTP_UNLOCK_ADDRESS: "${TF_HTTP_ADDRESS}/lock"
+  TF_HTTP_USERNAME: "gitlab-ci-token"
+  TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
+
+  # Terraform CLI cache directories
+  TF_PLUGIN_CACHE_DIR: "${CI_PROJECT_DIR}/.terraform.d/plugin-cache"
+  TF_IN_AUTOMATION: "true"
+
+  # Yandex Cloud variables - use existing CI variables
+  TF_VAR_yc_cloud_id: "${YC_CLOUD_ID}"
+  TF_VAR_yc_folder_id: "${YC_FOLDER_ID}"
+  TF_VAR_yc_token: "${YC_TOKEN}"
+
+  # SSH configuration - derive public key from private key
+  TF_VAR_ssh_username: "ajasta"
+
+  # Extract public key from private key for Terraform
+  SSH_PUBLIC_KEY: "${YC_SSH_PRIVATE_KEY}"
+
+# Base configuration for Terraform jobs
+.terraform_base: &terraform_base
+  image:
+    name: hashicorp/terraform:1.8
+    entrypoint: [""]
+  before_script:
+    # Install required utilities for JSON processing and SSH
+    - apk add --no-cache openssh-client jq curl
+
+    # Extract public key from private key for Terraform
+    - |
+      if [ -n "${SSH_PUBLIC_KEY:-}" ]; then
+        echo "Extracting public key from private key..."
+        # Create temporary file for private key
+        echo "${SSH_PUBLIC_KEY}" | tr -d '\r' > /tmp/id_rsa
+
+        # Set proper permissions
+        chmod 600 /tmp/id_rsa
+
+        # Extract public key
+        ssh-keygen -y -f /tmp/id_rsa > /tmp/id_rsa.pub
+
+        # Read public key content
+        PUBLIC_KEY_CONTENT=$(cat /tmp/id_rsa.pub)
+        echo "Public key extracted: ${PUBLIC_KEY_CONTENT:0:30}..."
+
+        # Set Terraform variable
+        export TF_VAR_ssh_public_key="${PUBLIC_KEY_CONTENT}"
+
+        # Clean up temporary files
+        rm -f /tmp/id_rsa /tmp/id_rsa.pub
+      else
+        echo "⚠️ SSH_PUBLIC_KEY not found, SSH key injection will be skipped"
+        export TF_VAR_ssh_public_key=""
+      fi
+
+    # Ensure we're in the correct directory
+    - cd ${TF_ROOT}
+
+    # Create Terraform CLI config for Yandex Cloud provider mirror
+    - |
+      mkdir -p ${TF_PLUGIN_CACHE_DIR}
+      cat > ${CI_PROJECT_DIR}/.terraformrc << EOF
+      provider_installation {
+        network_mirror {
+          url = "https://terraform-mirror.yandexcloud.net/"
+          include = ["registry.terraform.io/*/*"]
+        }
+        direct {
+          exclude = ["registry.terraform.io/*/*"]
+        }
+      }
+      EOF
+
+    # Set Terraform CLI config environment variable
+    - export TF_CLI_CONFIG_FILE="${CI_PROJECT_DIR}/.terraformrc"
+
+    # Initialize Terraform with GitLab-specific tfvars
+    - terraform --version
+
+    # Copy GitLab-specific tfvars file
+    - cp terraform.tfvars.gitlab terraform.tfvars
+
+    # Initialize Terraform with GitLab backend
+    - terraform init -input=false -backend=true
+      -backend-config="address=${TF_HTTP_ADDRESS}"
+      -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}"
+      -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}"
+      -backend-config="username=${TF_HTTP_USERNAME}"
+      -backend-config="password=${TF_HTTP_PASSWORD}"
+      -backend-config="lock_method=POST"
+      -backend-config="unlock_method=POST"
+      -backend-config="retry_wait_min=5"
+
+    # Verify Terraform variables are set
+    - echo "=== Terraform Variables Check ==="
+    - echo "YC Cloud ID: ${TF_VAR_yc_cloud_id:0:10}..."
+    - echo "YC Folder ID: ${TF_VAR_yc_folder_id:0:10}..."
+    - echo "YC Token: ${TF_VAR_yc_token:0:10}..."
+    - echo "SSH Username: ${TF_VAR_ssh_username}"
+    - echo "SSH Public Key: ${TF_VAR_ssh_public_key:0:30}..."
+  cache:
+    key: terraform-${CI_COMMIT_REF_SLUG}
+    paths:
+      - ${TF_ROOT}/.terraform/
+      - ${TF_ROOT}/.terraform.lock.hcl
+      - ${TF_PLUGIN_CACHE_DIR}/
+  artifacts:
+    reports:
+      # Save Terraform plan as JSON for GitLab to parse
+      terraform: ${TF_ROOT}/plan.json
+
+# Terraform validation stage
+terraform:validate:
+  <<: *terraform_base
+  stage: validate
+  script:
+    # Validate Terraform configuration
+    - terraform fmt -check -recursive
+    - terraform validate -no-color
+    - terraform graph
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# Terraform planning stage
+terraform:plan:
+  <<: *terraform_base
+  stage: plan
+  script:
+    # Generate execution plan
+    - terraform plan -input=false -out=plan.tfplan
+    - terraform show -json plan.tfplan > plan.json
+
+    # Display plan summary
+    - terraform show -no-color plan.tfplan | head -50
+
+    # Save plan summary for review
+    - terraform show -no-color plan.tfplan > plan.txt
+  artifacts:
+    paths:
+      - ${TF_ROOT}/plan.tfplan
+      - ${TF_ROOT}/plan.json
+      - ${TF_ROOT}/plan.txt
+    reports:
+      terraform: ${TF_ROOT}/plan.json
+    expire_in: "1 week"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+  needs: [terraform:validate]
+
+# Terraform apply job for development (automatic)
+terraform:apply:dev:
+  <<: *terraform_base
+  stage: deploy
+  environment:
+    name: terraform-dev
+    url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
+  script:
+    # Apply the plan for development environment
+    - terraform apply -input=false -auto-approve plan.tfplan
+
+    # Get outputs for connection
+    - echo "TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip)" > terraform_outputs.env
+    - echo "TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips)" >> terraform_outputs.env
+
+    # Generate Ansible inventory from Terraform outputs
+    - |
+      cat > ansible_inventory.ini << EOF
+      [k8s_master]
+      $(terraform output -raw master_public_ip) ansible_user=ajasta
+
+      [k8s_workers]
+      $(terraform output -json worker_public_ips | jq -r 'to_entries[] | "\(.value) ansible_user=ajasta"' | tr '\n' '\n')
+
+      [k8s:children]
+      k8s_master
+      k8s_workers
+      EOF
+
+    # Display cluster information
+    - echo "=== Kubernetes Cluster Information ==="
+    - echo "Master IP: $(terraform output -raw master_public_ip)"
+    - |
+      echo "Worker IPs: $(terraform output -json worker_public_ips | jq -r 'to_entries[] | "\(.key): \(.value)"' | tr '\n' ', ' | sed 's/,$//')"
+
+    # Instructions for kubectl configuration
+    - echo ""
+    - echo "=== Next Steps ==="
+    - echo "1. Copy inventory to k8s/inventory.ini:"
+    - echo "   cp terraform/ansible_inventory.ini k8s/inventory.ini"
+    - echo ""
+    - echo "2. Run Kubernetes deployment:"
+    - echo "   ansible-playbook k8s/deploy-ajasta.yml -i k8s/inventory.ini"
+  artifacts:
+    paths:
+      - ${TF_ROOT}/terraform_outputs.env
+      - ${TF_ROOT}/ansible_inventory.ini
+    reports:
+      dotenv: ${TF_ROOT}/terraform_outputs.env
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+  needs: [terraform:plan]
+
+# Terraform apply job for production (manual deployment)
+deploy:tf:production:
+  <<: *terraform_base
+  stage: deploy
+  environment:
+    name: terraform-production
+    url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
+    on_stop: terraform:destroy:production
+  script:
+    # Manual confirmation message
+    - echo "🚀 Starting Terraform deployment to PRODUCTION environment..."
+    - echo "⚠️  This will create/modify infrastructure in production!"
+    - echo ""
+    - echo "Review the plan before proceeding:"
+    - cat plan.txt | head -100
+
+    # Apply the plan for production environment
+    - terraform apply -input=false plan.tfplan
+
+    # Get outputs for connection and further deployment
+    - echo "TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip)" > terraform_outputs.env
+    - echo "TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips)" >> terraform_outputs.env
+    - echo "TERRAFORM_CLUSTER_READY=true" >> terraform_outputs.env
+
+    # Generate Ansible inventory from Terraform outputs
+    - |
+      cat > ansible_inventory.ini << EOF
+      [k8s_master]
+      $(terraform output -raw master_public_ip) ansible_user=ajasta
+
+      [k8s_workers]
+      $(terraform output -json worker_public_ips | jq -r 'to_entries[] | "\(.value) ansible_user=ajasta"' | tr '\n' '\n')
+
+      [k8s:children]
+      k8s_master
+      k8s_workers
+
+      [all:vars]
+      ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
+      ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+      EOF
+
+    # Display cluster information
+    - echo ""
+    - echo "✅ Production Kubernetes Cluster Created Successfully!"
+    - echo "=== Cluster Information ==="
+    - echo "Master IP: $(terraform output -raw master_public_ip)"
+    - |
+      echo "Worker IPs: $(terraform output -json worker_public_ips | jq -r 'to_entries[] | "\(.key): \(.value)"' | tr '\n' ', ' | sed 's/,$//')"
+    - |
+      echo "Network: $(terraform output -json worker_public_ips | jq -r 'length') nodes (1 master + $(($(terraform output -json worker_public_ips | jq 'length')-1)) workers)"
+
+    # Instructions for next deployment steps
+    - echo ""
+    - echo "=== Next Steps for Application Deployment ==="
+    - echo "1. The cluster infrastructure is ready"
+    - echo "2. Use the k8s deployment pipeline to deploy Ajasta app:"
+    - echo "   - deploy:k8s:production"
+    - echo "3. Or run Ansible manually:"
+    - echo "   cp terraform/ansible_inventory.ini k8s/inventory.ini"
+    - echo "   ansible-playbook k8s/deploy-ajasta.yml -i k8s/inventory.ini"
+    - echo ""
+    - echo "=== Environment Information ==="
+    - echo "Master: ajasta@$(terraform output -raw master_public_ip)"
+    - |
+      echo "Workers: ajasta@$(terraform output -json worker_public_ips | jq -r 'to_entries | first | .value')"
+
+    # Create kubeconfig download script for convenience
+    - |
+      cat > fetch_kubeconfig.sh << 'EOF'
+      #!/bin/bash
+      set -e
+
+      MASTER_IP="$(terraform output -raw master_public_ip)"
+      echo "Fetching kubeconfig from master: ${MASTER_IP}"
+
+      mkdir -p ~/.ssh
+      ssh-keyscan -H ${MASTER_IP} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      ssh ajasta@${MASTER_IP} 'sudo cat /etc/kubernetes/admin.conf' > ~/.kube/config-ajasta-tf
+      export KUBECONFIG=~/.kube/config-ajasta-tf
+
+      # Update server IP to external IP
+      sed -i "s/https:\/\/127.0.0.1:6443/https:\/\/${MASTER_IP}:6443/" ~/.kube/config-ajasta-tf
+
+      # Test connection
+      kubectl cluster-info
+      kubectl get nodes
+
+      echo "✅ Kubeconfig configured at ~/.kube/config-ajasta-tf"
+      echo "Use: export KUBECONFIG=~/.kube/config-ajasta-tf"
+      EOF
+      chmod +x fetch_kubeconfig.sh
+  artifacts:
+    paths:
+      - ${TF_ROOT}/terraform_outputs.env
+      - ${TF_ROOT}/ansible_inventory.ini
+      - ${TF_ROOT}/fetch_kubeconfig.sh
+      - ${TF_ROOT}/plan.txt
+    reports:
+      dotenv: ${TF_ROOT}/terraform_outputs.env
+    expire_in: "1 month"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+  needs: [terraform:plan]
+  timeout: 30m
+
+# Terraform destroy job for production (manual cleanup)
+terraform:destroy:production:
+  <<: *terraform_base
+  stage: deploy
+  environment:
+    name: terraform-production
+    action: stop
+  script:
+    # Warning message
+    - echo "🚨 DANGER: This will destroy the PRODUCTION infrastructure!"
+    - echo "⚠️  This action is irreversible and will delete all resources!"
+    - echo ""
+    - echo "Resources to be destroyed:"
+    - terraform show -json | jq -r '.values.root_module.resources[] | "\(.type): \(.name)"'
+    - echo ""
+    - echo "Proceeding with destruction in 10 seconds (Ctrl+C to cancel)..."
+    - sleep 10
+
+    # Generate destroy plan and execute
+    - terraform plan -destroy -out=destroy.tfplan
+    - terraform apply -input=false -auto-approve destroy.tfplan
+
+    - echo "✅ Production infrastructure destroyed successfully"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+  needs: []
+  timeout: 15m
+  allow_failure: true
+
+# Terraform state cleanup job (maintenance)
+terraform:state:cleanup:
+  <<: *terraform_base
+  stage: deploy
+  script:
+    # List current state resources
+    - echo "=== Current Terraform State ==="
+    - terraform state list
+
+    # Check for any drift
+    - terraform plan -detailed-exitcode -out=drift-check.tfplan || echo "Drift detected"
+
+    # Provide state management commands
+    - echo ""
+    - echo "=== State Management Commands ==="
+    - echo "To refresh state: terraform refresh"
+    - echo "To remove resource: terraform state rm <resource_address>"
+    - echo "To import resource: terraform import <resource_address> <resource_id>"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+  timeout: 5m

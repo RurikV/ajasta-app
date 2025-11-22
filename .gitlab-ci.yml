@@ -1,6 +1,10 @@
 ---
 # GitLab CI/CD Pipeline for Ajasta App
 
+# Include Terraform CI/CD configuration
+include:
+  - local: '.gitlab-ci-terraform.yml'
+
 variables:
   # Docker Registry Configuration
   DOCKER_REGISTRY: $CI_REGISTRY
@@ -27,6 +31,7 @@ variables:
 
 stages:
   - validate
+  - plan
   - build
   - test
   - package
