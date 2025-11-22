@@ -70,8 +70,6 @@ terraform:validate:
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_BRANCH == "develop"
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-  artifacts:
-    when: never
 
 # Terraform planning stage
 terraform:plan:
