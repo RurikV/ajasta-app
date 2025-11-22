@@ -115,23 +115,92 @@ terraform:apply:dev:
   stage: deploy
   environment:
     name: terraform-dev
+    on_stop: terraform:cleanup:dev
   script:
-    - terraform apply -input=false -auto-approve plan.tfplan
     - |
-      cat > terraform_outputs.env << EOF
-      TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip)
-      TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips)
+      # Handle existing resources and conflicts
+      echo "🚀 Starting Terraform apply for development..."
+
+      # Try to apply the plan, but handle common errors
+      if terraform apply -input=false -auto-approve plan.tfplan; then
+        echo "✅ Terraform apply successful"
+
+        # Create outputs file only on success
+        cat > terraform_outputs.env << EOF
+      TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip 2>/dev/null || echo "")
+      TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips 2>/dev/null || echo "{}")
       TERRAFORM_CLUSTER_READY=true
       EOF
-    - cat terraform_outputs.env
+
+        echo "📄 Terraform outputs:"
+        cat terraform_outputs.env
+
+      else
+        echo "❌ Terraform apply failed"
+
+        # Create outputs file with failure status
+        cat > terraform_outputs.env << EOF
+      TERRAFORM_MASTER_IP=""
+      TERRAFORM_WORKER_IPS={}
+      TERRAFORM_CLUSTER_READY=false
+      TERRAFORM_ERROR=true
+      EOF
+
+        echo "🚨 Error details:"
+        echo "This usually means:"
+        echo "1. Resources already exist (run terraform:cleanup:dev job)"
+        echo "2. Quota limits exceeded (check Yandex Cloud console)"
+        echo "3. State is out of sync (run terraform:cleanup:dev job)"
+
+        exit 1
+      fi
   artifacts:
     paths:
       - terraform/terraform_outputs.env
     reports:
       dotenv: terraform/terraform_outputs.env
+    expire_in: "1 week"
   rules:
     - if: $CI_COMMIT_BRANCH == "develop"
   needs: [terraform:plan]
+
+# Terraform cleanup job for development (manual)
+terraform:cleanup:dev:
+  <<: *terraform_base
+  stage: deploy
+  environment:
+    name: terraform-dev
+    action: stop
+  script:
+    - |
+      echo "🧹 Starting Terraform cleanup for development..."
+
+      # Make cleanup scripts executable
+      chmod +x ../scripts/terraform-destroy-all.sh
+      chmod +x ../scripts/cleanup-yandex-resources.sh
+
+      # Try complete destruction first
+      if ../scripts/terraform-destroy-all.sh --force; then
+        echo "✅ Terraform destruction completed"
+      else
+        echo "⚠️  Terraform destruction had issues, trying manual cleanup..."
+
+        # Fall back to manual cleanup
+        ../scripts/cleanup-yandex-resources.sh cleanup
+      fi
+
+      # Create cleanup completion marker
+      echo "TERRAFORM_CLEANUP_COMPLETED=true" > terraform_cleanup.env
+      echo "CLEANUP_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> terraform_cleanup.env
+
+    - cat terraform_cleanup.env
+  artifacts:
+    reports:
+      dotenv: terraform/terraform_cleanup.env
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+      when: manual
+  allow_failure: true
 
 # Terraform apply job for production (manual deployment)
 deploy:tf:production:
@@ -142,16 +211,44 @@ deploy:tf:production:
     url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
     on_stop: terraform:destroy:production
   script:
-    - terraform apply -input=false plan.tfplan
     - |
-      cat > terraform_outputs.env << EOF
-      TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip)
-      TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips)
+      echo "🚀 Starting Terraform apply for production..."
+
+      # Try to apply the plan, but handle common errors
+      if terraform apply -input=false plan.tfplan; then
+        echo "✅ Terraform apply successful"
+
+        # Create outputs file only on success
+        cat > terraform_outputs.env << EOF
+      TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip 2>/dev/null || echo "")
+      TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips 2>/dev/null || echo "{}")
       TERRAFORM_CLUSTER_READY=true
       EOF
-    - echo "Production Kubernetes Cluster Created Successfully"
-    - echo "Cluster ready for application deployment"
-    - cat terraform_outputs.env
+
+        echo "📄 Terraform outputs:"
+        cat terraform_outputs.env
+        echo "🎉 Production Kubernetes Cluster Created Successfully"
+        echo "🚀 Cluster ready for application deployment"
+
+      else
+        echo "❌ Terraform apply failed"
+
+        # Create outputs file with failure status
+        cat > terraform_outputs.env << EOF
+      TERRAFORM_MASTER_IP=""
+      TERRAFORM_WORKER_IPS={}
+      TERRAFORM_CLUSTER_READY=false
+      TERRAFORM_ERROR=true
+      EOF
+
+        echo "🚨 Production deployment failed!"
+        echo "This usually means:"
+        echo "1. Resources already exist (check Yandex Cloud console)"
+        echo "2. Quota limits exceeded (request quota increase)"
+        echo "3. State is out of sync (contact administrator)"
+
+        exit 1
+      fi
   artifacts:
     paths:
       - terraform/terraform_outputs.env
