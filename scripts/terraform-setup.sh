@@ -79,16 +79,16 @@ yc_folder_id = "${TF_VAR_yc_folder_id}"
 yc_zone      = "ru-central1-b"
 
 # SSH configuration
-ssh_username = "${TF_VAR_ssh_username}"
+ssh_username   = "${TF_VAR_ssh_username}"
 ssh_public_key = "${TF_VAR_ssh_public_key}"
 
 # Networking
-yc_network_name = "external-ajasta-network"
-yc_subnet_name = "ajasta-external-segment"
-yc_subnet_cidr = "172.16.17.0/28"
+yc_network_name          = "external-ajasta-network"
+yc_subnet_name           = "ajasta-external-segment"
+yc_subnet_cidr           = "172.16.17.0/28"
 yc_internal_network_name = "internal-ajasta-network"
-yc_internal_subnet_name = "ajasta-internal-segment"
-yc_internal_subnet_cidr = "10.10.0.0/24"
+yc_internal_subnet_name  = "ajasta-internal-segment"
+yc_internal_subnet_cidr  = "10.10.0.0/24"
 
 # Static addresses
 master_address_name = "ajasta-k8s-master-ip"
@@ -99,12 +99,12 @@ workers = [
 ]
 
 # VM specifications
-master_vm_name = "k8s-master"
-master_vm_memory = 6
-master_vm_cores = 2
+master_vm_name      = "k8s-master"
+master_vm_memory    = 6
+master_vm_cores     = 2
 master_vm_disk_size = 30
-worker_vm_memory = 6
-worker_vm_cores = 2
+worker_vm_memory    = 6
+worker_vm_cores     = 2
 worker_vm_disk_size = 30
 
 # cloud-init user-data
