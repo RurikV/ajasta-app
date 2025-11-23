@@ -309,45 +309,103 @@ terraform:plan:
         echo "$error_output" | grep -o 'ID: [a-f0-9-]*' | head -1 | sed 's/ID: //' | tr -d ' '
       }
 
-      # Try to create plan, but handle state lock errors
+      # Function to check if this is a new state that needs initialization
+      handle_state_refresh() {
+        echo "🔍 Checking state status for initial deployment..."
+
+        # Try to fetch current state - if 404, this is a new deployment
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          -H "Authorization: Bearer ${CI_JOB_TOKEN}" "${TF_HTTP_ADDRESS}")
+
+        if [[ "$HTTP_STATUS" == "404" ]]; then
+          echo "🆕 No existing state found - this is a fresh deployment"
+          echo "📝 Creating initial empty state..."
+
+          # Try to create an initial empty state
+          curl -s -X LOCK \
+            -H "Authorization: Bearer ${CI_JOB_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "${TF_HTTP_LOCK_ADDRESS}" \
+            -d '{"ID":"initial-setup","Operation":"OperationTypePlan","Info":"Initial setup"}' >/dev/null 2>&1 || true
+
+          return 0  # Indicate this is a new state
+        elif [[ "$HTTP_STATUS" == "200" ]]; then
+          echo "📂 Existing state found - proceeding with normal plan"
+          return 1  # Indicate existing state
+        else
+          echo "⚠️  Unexpected HTTP status: $HTTP_STATUS"
+          echo "🔄 Proceeding with plan anyway..."
+          return 1
+        fi
+      }
+
+      # Check if we need to handle initial state creation
+      IS_NEW_STATE=false
+      if handle_state_refresh; then
+        IS_NEW_STATE=true
+        echo "🎯 This is a new deployment - using special plan handling"
+      fi
+
+      # Try to create plan, with special handling for new state
       PLAN_ERROR=""
-      if ! terraform plan -input=false -out=plan.tfplan 2>&1; then
-        PLAN_ERROR="${PIPESTATUS[0]}"
-        echo "❌ Terraform plan failed with exit code: $PLAN_ERROR"
+      if [ "$IS_NEW_STATE" = true ]; then
+        echo "🆕 Running plan for new state (skip refresh)..."
+        if ! terraform plan -input=false -out=plan.tfplan -refresh=false 2>&1; then
+          PLAN_ERROR="${PIPESTATUS[0]}"
+          echo "❌ New state terraform plan failed with exit code: $PLAN_ERROR"
+        else
+          echo "✅ New state terraform plan created successfully"
+        fi
+      else
+        echo "📂 Running plan for existing state..."
+        if ! terraform plan -input=false -out=plan.tfplan 2>&1; then
+          PLAN_ERROR="${PIPESTATUS[0]}"
+          echo "❌ Terraform plan failed with exit code: $PLAN_ERROR"
+        else
+          echo "✅ Terraform plan created successfully"
+        fi
+      fi
 
-        # Try to get the actual error output
-        echo "🔍 Checking for state lock errors..."
+      # Handle any plan errors
+      if [ -n "$PLAN_ERROR" ] && [ "$PLAN_ERROR" != "0" ]; then
+        echo "🔄 Plan failed, trying fallback approaches..."
 
-        # Attempt to run plan again and capture output to extract lock ID
-        ERROR_OUTPUT=$(terraform plan -input=false -out=plan.tfplan 2>&1 || true)
+        if [ "$IS_NEW_STATE" = true ]; then
+          echo "🆕 New state plan failed, trying with lock disabled..."
+          terraform plan -input=false -out=plan.tfplan -refresh=false -lock=false
+        else
+          echo "📂 Existing state plan failed, checking for locks..."
+          # Try to get the actual error output
+          ERROR_OUTPUT=$(terraform plan -input=false -out=plan.tfplan 2>&1 || true)
 
-        # Try to extract lock ID from error message
-        LOCK_ID=$(extract_lock_id "$ERROR_OUTPUT")
+          # Try to extract lock ID from error message
+          LOCK_ID=$(extract_lock_id "$ERROR_OUTPUT")
 
-        if [ ! -z "$LOCK_ID" ]; then
-          echo "🔓 Found state lock ID: $LOCK_ID"
-          echo "🔧 Attempting to force unlock..."
+          if [ ! -z "$LOCK_ID" ]; then
+            echo "🔓 Found state lock ID: $LOCK_ID"
+            echo "🔧 Attempting to force unlock..."
 
-          if terraform force-unlock -force "$LOCK_ID"; then
-            echo "✅ Successfully force-unlocked state"
+            if terraform force-unlock -force "$LOCK_ID"; then
+              echo "✅ Successfully force-unlocked state"
 
-            # Retry the plan
-            if terraform plan -input=false -out=plan.tfplan; then
-              echo "✅ Terraform plan created after force unlock"
+              # Retry the plan
+              if terraform plan -input=false -out=plan.tfplan; then
+                echo "✅ Terraform plan created after force unlock"
+              else
+                echo "❌ Plan still failed after unlock, trying with lock override..."
+                terraform plan -input=false -out=plan.tfplan -lock=false
+              fi
             else
-              echo "❌ Plan still failed after unlock, trying with lock override..."
+              echo "❌ Failed to force unlock state, trying with lock override..."
               terraform plan -input=false -out=plan.tfplan -lock=false
             fi
           else
-            echo "❌ Failed to force unlock state, trying with lock override..."
+            echo "⚠️  Could not extract lock ID, trying with lock override..."
             terraform plan -input=false -out=plan.tfplan -lock=false
           fi
-        else
-          echo "⚠️  Could not extract lock ID, trying with lock override..."
-          terraform plan -input=false -out=plan.tfplan -lock=false
         fi
       else
-        echo "✅ Terraform plan created successfully"
+        echo "✅ Terraform plan completed successfully"
       fi
 
       terraform show -no-color plan.tfplan > plan.txt
