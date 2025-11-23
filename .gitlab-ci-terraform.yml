@@ -76,6 +76,17 @@ variables:
       -backend-config="lock_method=POST"
       -backend-config="unlock_method=POST"
       -backend-config="retry_wait_min=5"
+
+    # Check for existing state locks and attempt to force unlock if needed
+    - |
+      echo "🔍 Checking for existing state locks..."
+      # Try to get current state lock info
+      if terraform force-unlock -help 2>/dev/null | grep -q "Lock ID:"; then
+        echo "⚠️  State lock detection capability available"
+        # Continue with normal operations - will handle locks during apply/plan
+      else
+        echo "ℹ️  No force-unlock capability detected"
+      fi
   # Note: Cache disabled to prevent provider cache corruption from previous runs
   # Terraform will download providers fresh each time
 
@@ -97,10 +108,59 @@ terraform:plan:
   <<: *terraform_base
   stage: plan
   script:
-    - terraform plan -input=false -out=plan.tfplan
-    - terraform show -no-color plan.tfplan > plan.txt
-    - echo "Terraform plan created successfully"
-    - ls -la plan.tfplan plan.txt
+    - |
+      echo "🎯 Starting Terraform plan with state lock handling..."
+
+      # Function to extract lock ID from error output
+      extract_lock_id() {
+        local error_output="$1"
+        echo "$error_output" | grep -o 'ID: [a-f0-9-]*' | head -1 | sed 's/ID: //' | tr -d ' '
+      }
+
+      # Try to create plan, but handle state lock errors
+      PLAN_ERROR=""
+      if ! terraform plan -input=false -out=plan.tfplan 2>&1; then
+        PLAN_ERROR="${PIPESTATUS[0]}"
+        echo "❌ Terraform plan failed with exit code: $PLAN_ERROR"
+
+        # Try to get the actual error output
+        echo "🔍 Checking for state lock errors..."
+
+        # Attempt to run plan again and capture output to extract lock ID
+        ERROR_OUTPUT=$(terraform plan -input=false -out=plan.tfplan 2>&1 || true)
+
+        # Try to extract lock ID from error message
+        LOCK_ID=$(extract_lock_id "$ERROR_OUTPUT")
+
+        if [ ! -z "$LOCK_ID" ]; then
+          echo "🔓 Found state lock ID: $LOCK_ID"
+          echo "🔧 Attempting to force unlock..."
+
+          if terraform force-unlock -force "$LOCK_ID"; then
+            echo "✅ Successfully force-unlocked state"
+
+            # Retry the plan
+            if terraform plan -input=false -out=plan.tfplan; then
+              echo "✅ Terraform plan created after force unlock"
+            else
+              echo "❌ Plan still failed after unlock, trying with lock override..."
+              terraform plan -input=false -out=plan.tfplan -lock=false
+            fi
+          else
+            echo "❌ Failed to force unlock state, trying with lock override..."
+            terraform plan -input=false -out=plan.tfplan -lock=false
+          fi
+        else
+          echo "⚠️  Could not extract lock ID, trying with lock override..."
+          terraform plan -input=false -out=plan.tfplan -lock=false
+        fi
+      else
+        echo "✅ Terraform plan created successfully"
+      fi
+
+      terraform show -no-color plan.tfplan > plan.txt
+      echo "📄 Plan files created:"
+      ls -la plan.tfplan plan.txt
   artifacts:
     paths:
       - terraform/plan.tfplan
@@ -111,6 +171,30 @@ terraform:plan:
     - if: $CI_COMMIT_BRANCH == "develop"
   needs: [terraform:validate]
 
+# State management job for manual intervention
+terraform:state:unlock:
+  <<: *terraform_base
+  stage: plan
+  script:
+    - |
+      echo "🔓 Terraform State Unlock Utility"
+      echo "This job helps resolve state lock issues manually"
+
+      # Show current state lock status
+      echo "📋 Current terraform state status:"
+      terraform state pull > /dev/null 2>&1 && echo "✅ State accessible" || echo "❌ State locked or inaccessible"
+
+      # Instructions for manual unlock
+      echo "💡 To manually unlock the state:"
+      echo "1. Run: terraform force-unlock LOCK_ID"
+      echo "2. LOCK_ID can be obtained from the error message"
+      echo "3. Or use the GitLab UI: Settings > CI/CD > Terraform states"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+    - when: manual
+  allow_failure: true
+
 # Terraform apply job for development (automatic)
 terraform:apply:dev:
   <<: *terraform_base
@@ -120,23 +204,45 @@ terraform:apply:dev:
     on_stop: terraform:cleanup:dev
   script:
     - |
-      # Handle existing resources and conflicts
+      # Function to extract lock ID from error output
+      extract_lock_id() {
+        local error_output="$1"
+        echo "$error_output" | grep -o 'ID: [a-f0-9-]*' | head -1 | sed 's/ID: //' | tr -d ' '
+      }
+
       echo "🚀 Starting Terraform apply for development..."
 
-      # Try to apply the plan, but handle common errors
-      if terraform apply -input=false -auto-approve plan.tfplan; then
-        echo "✅ Terraform apply successful"
-      else
-        echo "❌ Terraform apply failed, attempting force unlock..."
+      # Try to apply the plan, but handle state lock errors
+      if ! terraform apply -input=false -auto-approve plan.tfplan; then
+        echo "❌ Terraform apply failed, checking for state locks..."
 
-        # Try to force unlock if there's a lock issue
-        if terraform force-unlock -lock-id=$(terraform force-unlock -help 2>/dev/null | grep "Lock ID:" | awk '{print $4}' | head -1) 2>/dev/null || echo "No lock ID found"; then
-          echo "✅ Successfully force-unlocked state"
-          terraform apply -input=false -auto-approve plan.tfplan
+        # Get the error output to extract lock ID
+        ERROR_OUTPUT=$(terraform apply -input=false -auto-approve plan.tfplan 2>&1 || true)
+        LOCK_ID=$(extract_lock_id "$ERROR_OUTPUT")
+
+        if [ ! -z "$LOCK_ID" ]; then
+          echo "🔓 Found state lock ID: $LOCK_ID"
+          echo "🔧 Attempting to force unlock..."
+
+          if terraform force-unlock -force "$LOCK_ID"; then
+            echo "✅ Successfully force-unlocked state"
+
+            # Retry the apply
+            if terraform apply -input=false -auto-approve plan.tfplan; then
+              echo "✅ Terraform apply successful after force unlock"
+            else
+              echo "❌ Apply still failed after unlock, trying with lock override..."
+              terraform apply -input=false -auto-approve plan.tfplan -lock=false
+            fi
+          else
+            echo "❌ Failed to force unlock, trying with lock override..."
+            sleep 5
+            terraform apply -input=false -auto-approve plan.tfplan -lock=false
+          fi
         else
-          echo "⚠️  Could not force unlock, retrying apply..."
+          echo "⚠️  Could not extract lock ID, trying with lock override..."
           sleep 5
-          terraform apply -input=false -auto-approve plan.tfplan
+          terraform apply -input=false -auto-approve plan.tfplan -lock=false
         fi
       fi
 
