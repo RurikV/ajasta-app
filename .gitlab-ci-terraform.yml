@@ -5,7 +5,7 @@
 variables:
   # Terraform configuration
   TF_ROOT: "${CI_PROJECT_DIR}/terraform"
-  TF_STATE_NAME: "production-v2"
+  TF_STATE_NAME: "production-${CI_PIPELINE_ID}"
 
   # GitLab Terraform HTTP backend configuration
   TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
@@ -92,10 +92,10 @@ variables:
       echo "CI_JOB_TOKEN: ${CI_JOB_TOKEN:+[SET]}"
 
       # Verify the URLs contain the correct state name
-      if [[ "${TF_HTTP_ADDRESS}" == *"production-v2"* ]]; then
-        echo "✅ TF_HTTP_ADDRESS correctly references production-v2"
+      if [[ "${TF_HTTP_ADDRESS}" == *"production-${CI_PIPELINE_ID}"* ]]; then
+        echo "✅ TF_HTTP_ADDRESS correctly references production-${CI_PIPELINE_ID}"
       else
-        echo "❌ TF_HTTP_ADDRESS does not contain production-v2 - there might be variable caching"
+        echo "❌ TF_HTTP_ADDRESS does not contain production-${CI_PIPELINE_ID} - there might be variable caching"
         echo "🔄 Recalculating TF_HTTP_ADDRESS..."
         export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
         export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
@@ -137,7 +137,7 @@ variables:
         echo "📋 Required GitLab CI/CD Variables to configure:"
         echo "  Variable Name        | Value"
         echo "  -------------------- | --------------------------------"
-        echo "  TF_HTTP_ADDRESS      | \${CI_API_V4_URL}/projects/\${CI_PROJECT_ID}/terraform/state/production"
+        echo "  TF_HTTP_ADDRESS      | \${CI_API_V4_URL}/projects/\${CI_PROJECT_ID}/terraform/state/production-\${CI_PIPELINE_ID}"
         echo "  TF_HTTP_USERNAME     | gitlab-ci-token"
         echo "  TF_HTTP_PASSWORD     | \${CI_JOB_TOKEN}"
         echo ""
@@ -166,12 +166,16 @@ variables:
 
       # Test the GitLab API endpoint first to verify authentication
       echo "🔐 Testing GitLab API authentication..."
-      if curl -s -f -H "Authorization: Bearer ${CI_JOB_TOKEN}" \
-        "${TF_HTTP_ADDRESS}" >/dev/null 2>&1; then
-        echo "✅ GitLab API authentication successful"
+      HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${CI_JOB_TOKEN}" "${TF_HTTP_ADDRESS}")
+      if [[ "$HTTP_STATUS" == "200" ]]; then
+        echo "✅ GitLab API authentication successful - existing state found"
+      elif [[ "$HTTP_STATUS" == "404" ]]; then
+        echo "✅ GitLab API authentication successful - no existing state (expected)"
+        echo "🆕 Creating new Terraform state: ${TF_STATE_NAME}"
       else
-        echo "⚠️  GitLab API authentication test failed (expected for new state)"
-        echo "📝 This is normal for a new state file - continuing with init..."
+        echo "⚠️  GitLab API returned status $HTTP_STATUS"
+        echo "🔍 This may indicate permission issues or existing state conflicts"
+        echo "📝 Continuing with init - Terraform will handle state creation..."
       fi
 
       # Force terraform to use the exported variables
