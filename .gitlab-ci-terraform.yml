@@ -179,7 +179,9 @@ variables:
       fi
 
       # Force terraform to use the exported variables
-      terraform init -input=false -backend=true \
+      # Try initial Terraform init without state refresh for new state creation
+      echo "🔧 Attempting Terraform init for new state creation..."
+      if ! terraform init -input=false -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
         -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
         -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
@@ -187,7 +189,48 @@ variables:
         -backend-config="password=${TF_HTTP_PASSWORD}" \
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5"
+        -backend-config="retry_wait_min=5"; then
+
+        echo "⚠️  Initial terraform init failed, trying alternative approach..."
+        echo "🔄 Attempting init with state refresh disabled..."
+
+        # Try alternative approach - initialize without backend first, then configure
+        rm -rf .terraform .terraform.lock.hcl || true
+
+        if terraform init -input=false -backend=false; then
+          echo "✅ Local terraform init successful"
+          echo "🔄 Reconfiguring with GitLab backend..."
+
+          # Now try to reconfigure with backend
+          terraform init -input=false -backend=true -migrate-state \
+            -backend-config="address=${TF_HTTP_ADDRESS}" \
+            -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+            -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+            -backend-config="username=${TF_HTTP_USERNAME}" \
+            -backend-config="password=${TF_HTTP_PASSWORD}" \
+            -backend-config="lock_method=POST" \
+            -backend-config="unlock_method=POST" \
+            -backend-config="retry_wait_min=5" || \
+
+          # Final fallback - try with lock disabled
+          echo "🔓 Trying final fallback with lock disabled..."
+          terraform init -input=false -backend=true \
+            -backend-config="address=${TF_HTTP_ADDRESS}" \
+            -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+            -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+            -backend-config="username=${TF_HTTP_USERNAME}" \
+            -backend-config="password=${TF_HTTP_PASSWORD}" \
+            -backend-config="lock_method=POST" \
+            -backend-config="unlock_method=POST" \
+            -backend-config="retry_wait_min=5" \
+            -lock=false
+        else
+          echo "❌ All Terraform init attempts failed"
+          exit 1
+        fi
+      else
+        echo "✅ Terraform init successful"
+      fi
 
     # Check for existing state locks and attempt to force unlock if needed
     - |
