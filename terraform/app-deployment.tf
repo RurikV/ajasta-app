@@ -67,7 +67,7 @@ locals {
 }
 
 # Cloud-init script for Docker and application setup
-data "templatefile" "app_setup" {
+data "template_file" "app_setup" {
   template = file("${path.module}/../scripts/app-setup-cloudinit.yaml")
 
   vars = {
@@ -123,7 +123,7 @@ resource "null_resource" "deploy_app_master" {
 
   # Upload cloud-init script
   provisioner "file" {
-    content     = data.templatefile.app_setup.rendered
+    content     = data.template_file.app_setup.rendered
     destination = "/tmp/app-setup.yaml"
   }
 

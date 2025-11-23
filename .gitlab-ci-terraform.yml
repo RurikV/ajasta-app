@@ -60,9 +60,11 @@ variables:
     - terraform --version
     - jq --version
 
+    # Create plugin cache directory to avoid CLI warnings
+    - mkdir -p ${CI_PROJECT_DIR}/.terraform.d/plugin-cache
+
     # Clear any cached provider data that might reference non-existent providers
     - rm -rf ${TF_ROOT}/.terraform ${TF_ROOT}/.terraform.lock.hcl || true
-    - rm -rf ${CI_PROJECT_DIR}/.terraform.d || true
 
     # Initialize Terraform
     - terraform init -input=false -backend=true
