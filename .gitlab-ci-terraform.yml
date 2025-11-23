@@ -289,26 +289,6 @@ terraform:plan:
       export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
       export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
 
-      # Always ensure backend is properly configured for plan step
-      echo "🔄 Configuring backend for terraform plan..."
-      terraform init -input=false -backend=true -reconfigure \
-        -backend-config="address=${TF_HTTP_ADDRESS}" \
-        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-        -backend-config="username=${TF_HTTP_USERNAME}" \
-        -backend-config="password=${TF_HTTP_PASSWORD}" \
-        -backend-config="lock_method=POST" \
-        -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5" \
-        -lock=false
-      echo "✅ Backend configuration completed for plan"
-
-      # Function to extract lock ID from error output
-      extract_lock_id() {
-        local error_output="$1"
-        echo "$error_output" | grep -o 'ID: [a-f0-9-]*' | head -1 | sed 's/ID: //' | tr -d ' '
-      }
-
       # Function to check if this is a new state that needs initialization
       handle_state_refresh() {
         echo "🔍 Checking state status for initial deployment..."
@@ -319,23 +299,14 @@ terraform:plan:
 
         if [[ "$HTTP_STATUS" == "404" ]]; then
           echo "🆕 No existing state found - this is a fresh deployment"
-          echo "📝 Creating initial empty state..."
-
-          # Try to create an initial empty state
-          curl -s -X LOCK \
-            -H "Authorization: Bearer ${CI_JOB_TOKEN}" \
-            -H "Content-Type: application/json" \
-            "${TF_HTTP_LOCK_ADDRESS}" \
-            -d '{"ID":"initial-setup","Operation":"OperationTypePlan","Info":"Initial setup"}' >/dev/null 2>&1 || true
-
           return 0  # Indicate this is a new state
         elif [[ "$HTTP_STATUS" == "200" ]]; then
           echo "📂 Existing state found - proceeding with normal plan"
           return 1  # Indicate existing state
         else
           echo "⚠️  Unexpected HTTP status: $HTTP_STATUS"
-          echo "🔄 Proceeding with plan anyway..."
-          return 1
+          echo "🔄 Assuming fresh deployment for safety..."
+          return 0
         fi
       }
 
@@ -343,8 +314,62 @@ terraform:plan:
       IS_NEW_STATE=false
       if handle_state_refresh; then
         IS_NEW_STATE=true
-        echo "🎯 This is a new deployment - using special plan handling"
+        echo "🎯 This is a new deployment - using special backend handling"
       fi
+
+      # Configure backend based on state status
+      if [ "$IS_NEW_STATE" = true ]; then
+        echo "🔄 Configuring backend for new state (skip refresh)..."
+        # For new state, try to configure backend without state refresh
+        rm -rf .terraform .terraform.lock.hcl || true
+
+        # Initialize without backend first
+        terraform init -input=false -backend=false
+
+        # Then configure backend with minimal options
+        terraform init -input=false -backend=true -migrate-state \
+          -backend-config="address=${TF_HTTP_ADDRESS}" \
+          -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+          -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+          -backend-config="username=${TF_HTTP_USERNAME}" \
+          -backend-config="password=${TF_HTTP_PASSWORD}" \
+          -backend-config="lock_method=POST" \
+          -backend-config="unlock_method=POST" \
+          -backend-config="retry_wait_min=5" \
+          -lock=false || \
+
+        # Fallback: try reconfigure if migration fails
+        terraform init -input=false -backend=true -reconfigure \
+          -backend-config="address=${TF_HTTP_ADDRESS}" \
+          -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+          -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+          -backend-config="username=${TF_HTTP_USERNAME}" \
+          -backend-config="password=${TF_HTTP_PASSWORD}" \
+          -backend-config="lock_method=POST" \
+          -backend-config="unlock_method=POST" \
+          -backend-config="retry_wait_min=5" \
+          -lock=false
+      else
+        echo "🔄 Configuring backend for existing state..."
+        terraform init -input=false -backend=true -reconfigure \
+          -backend-config="address=${TF_HTTP_ADDRESS}" \
+          -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+          -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+          -backend-config="username=${TF_HTTP_USERNAME}" \
+          -backend-config="password=${TF_HTTP_PASSWORD}" \
+          -backend-config="lock_method=POST" \
+          -backend-config="unlock_method=POST" \
+          -backend-config="retry_wait_min=5" \
+          -lock=false
+      fi
+
+      echo "✅ Backend configuration completed for plan"
+
+      # Function to extract lock ID from error output
+      extract_lock_id() {
+        local error_output="$1"
+        echo "$error_output" | grep -o 'ID: [a-f0-9-]*' | head -1 | sed 's/ID: //' | tr -d ' '
+      }
 
       # Try to create plan, with special handling for new state
       PLAN_ERROR=""
