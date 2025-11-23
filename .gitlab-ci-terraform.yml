@@ -231,29 +231,6 @@ terraform:plan:
     - if: $CI_COMMIT_BRANCH == "develop"
   needs: [terraform:validate]
 
-# State management job for manual intervention
-terraform:state:unlock:
-  <<: *terraform_base
-  stage: plan
-  script:
-    - |
-      echo "🔓 Terraform State Unlock Utility"
-      echo "This job helps resolve state lock issues manually"
-
-      # Show current state lock status
-      echo "📋 Current terraform state status:"
-      terraform state pull > /dev/null 2>&1 && echo "✅ State accessible" || echo "❌ State locked or inaccessible"
-
-      # Instructions for manual unlock
-      echo "💡 To manually unlock the state:"
-      echo "1. Run: terraform force-unlock LOCK_ID"
-      echo "2. LOCK_ID can be obtained from the error message"
-      echo "3. Or use the GitLab UI: Settings > CI/CD > Terraform states"
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main"
-    - if: $CI_COMMIT_BRANCH == "develop"
-    - when: manual
-  allow_failure: true
 
 # Terraform apply job for development (automatic)
 terraform:apply:dev:
