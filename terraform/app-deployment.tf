@@ -66,11 +66,9 @@ locals {
   }
 }
 
-# Cloud-init script for Docker and application setup
-data "templatefile" "app_setup" {
-  template = file("${path.module}/../scripts/app-setup-cloudinit.yaml")
-
-  vars = {
+# Cloud-init script variables
+locals {
+  cloud_init_content = templatefile("${path.module}/../scripts/app-setup-cloudinit.yaml", {
     # Docker registry credentials (if needed)
     docker_registry = var.docker_registry
     docker_username = var.docker_username
@@ -101,7 +99,7 @@ data "templatefile" "app_setup" {
 
     # Network configuration
     app_network_name = local.app_network_name
-  }
+  })
 }
 
 # Deploy application on master node
@@ -123,7 +121,7 @@ resource "null_resource" "deploy_app_master" {
 
   # Upload cloud-init script
   provisioner "file" {
-    content     = data.templatefile.app_setup.rendered
+    content     = local.cloud_init_content
     destination = "/tmp/app-setup.yaml"
   }
 
