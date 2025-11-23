@@ -261,12 +261,7 @@ terraform:apply:dev:
           fi
 
           echo "🔄 Attempting to apply with backend configuration explicitly passed..."
-          terraform apply -input=false -auto-approve plan.tfplan \
-            -backend-config="address=${TF_HTTP_ADDRESS}" \
-            -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-            -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-            -backend-config="username=${TF_HTTP_USERNAME}" \
-            -backend-config="password=${TF_HTTP_PASSWORD}"
+          terraform apply -input=false -auto-approve -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" plan.tfplan
         else
           # Handle state lock errors
           LOCK_ID=$(extract_lock_id "$ERROR_OUTPUT")
@@ -276,12 +271,7 @@ terraform:apply:dev:
             echo "🔧 Attempting to force unlock..."
 
             # Try force unlock with backend config
-            if terraform force-unlock -force "$LOCK_ID" \
-              -backend-config="address=${TF_HTTP_ADDRESS}" \
-              -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-              -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-              -backend-config="username=${TF_HTTP_USERNAME}" \
-              -backend-config="password=${TF_HTTP_PASSWORD}"; then
+            if terraform force-unlock -force "$LOCK_ID"; then
               echo "✅ Successfully force-unlocked state"
 
               # Retry the apply
@@ -437,12 +427,7 @@ deploy:tf:production:
           fi
 
           echo "🔄 Attempting to apply with backend configuration explicitly passed..."
-          terraform apply -input=false -auto-approve plan.tfplan \
-            -backend-config="address=${TF_HTTP_ADDRESS}" \
-            -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-            -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-            -backend-config="username=${TF_HTTP_USERNAME}" \
-            -backend-config="password=${TF_HTTP_PASSWORD}"
+          terraform apply -input=false -auto-approve -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" plan.tfplan
         else
           # Handle state lock errors
           LOCK_ID=$(extract_lock_id "$ERROR_OUTPUT")
@@ -452,12 +437,7 @@ deploy:tf:production:
             echo "🔧 Attempting to force unlock..."
 
             # Try force unlock with backend config
-            if terraform force-unlock -force "$LOCK_ID" \
-              -backend-config="address=${TF_HTTP_ADDRESS}" \
-              -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-              -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-              -backend-config="username=${TF_HTTP_USERNAME}" \
-              -backend-config="password=${TF_HTTP_PASSWORD}"; then
+            if terraform force-unlock -force "$LOCK_ID"; then
               echo "✅ Successfully force-unlocked state"
 
               # Retry the apply
