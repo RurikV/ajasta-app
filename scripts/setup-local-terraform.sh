@@ -10,26 +10,24 @@ echo "🔧 Setting up Terraform for local development..."
 # Navigate to terraform directory
 cd terraform
 
-# Enable local backend by uncommenting it
-echo "📝 Configuring local backend..."
+# For local development, create a local backend file
+echo "📝 Configuring local backend for development..."
 if [ -f "backend.tf" ]; then
-    # Uncomment the local backend configuration
-    sed -i '' 's/# terraform {/terraform {/' backend.tf
-    sed -i '' 's/# }/}/' backend.tf
-    sed -i '' 's/#   backend "local"/  backend "local"/' backend.tf
-    sed -i '' 's/#     path = "terraform.tfstate"/    path = "terraform.tfstate"/' backend.tf
+    # Backup the original backend file
+    cp backend.tf backend.tf.backup
+fi
 
-    echo "✅ Local backend configured"
-else
-    echo "⚠️  backend.tf file not found, creating..."
-    cat > backend.tf << 'EOF'
+# Create local backend configuration
+cat > backend.tf << 'EOF'
+# Terraform Backend Configuration for Local Development
 terraform {
   backend "local" {
     path = "terraform.tfstate"
   }
 }
 EOF
-fi
+
+echo "✅ Local backend configured"
 
 # Check if terraform.tfvars exists
 if [ ! -f "terraform.tfvars" ]; then

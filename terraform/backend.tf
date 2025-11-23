@@ -1,10 +1,7 @@
 # Terraform Backend Configuration
-# This file is for local development only
-# GitLab CI/CD will override this with HTTP backend
+# GitLab CI/CD will use HTTP backend
+# For local development, use setup-local-terraform.sh script
 
-# Uncomment the following for local development:
-# terraform {
-#   backend "local" {
-#     path = "terraform.tfstate"
-#   }
-# }
+terraform {
+  backend "http" {}
+}
