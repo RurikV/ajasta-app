@@ -109,6 +109,43 @@ worker_vm_disk_size = 30
 
 # cloud-init user-data
 metadata_yaml = "../scripts/metadata.yaml"
+
+# Application Deployment Configuration
+deploy_app = true
+
+# Docker Images
+backend_image = "vladimirryrik/ajasta-backend:alpine"
+frontend_image = "vladimirryrik/ajasta-frontend:alpine"
+
+# Application Ports
+frontend_port = 3000
+backend_port = 8090
+postgres_port = 5432
+
+# Database Configuration
+postgres_db = "ajastadb"
+postgres_user = "admin"
+postgres_password = "adminpw"
+
+# Application Configuration
+jwt_secret = "change-me-production-secret-key-$(date +%s)"
+app_environment = "production"
+
+# Optional Service Configurations (set as needed)
+mail_username = ""
+mail_password = ""
+aws_access_key_id = ""
+aws_secret_access_key = ""
+aws_region = "us-east-1"
+aws_s3_bucket = ""
+stripe_public_key = ""
+stripe_secret_key = ""
+
+# JVM Configuration
+java_opts = "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0"
+
+# SSH Configuration for App Deployment
+ssh_private_key_file = "~/.ssh/id_rsa"
 EOF
 
 echo "🔍 Debug: Terraform variables check"

@@ -130,10 +130,19 @@ terraform:apply:dev:
       TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip 2>/dev/null || echo "")
       TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips 2>/dev/null || echo "{}")
       TERRAFORM_CLUSTER_READY=true
+      FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null || echo "")
+      BACKEND_API_URL=$(terraform output -raw backend_api_url 2>/dev/null || echo "")
+      APP_DEPLOYMENT_STATUS=$(terraform output -raw app_deployment_status 2>/dev/null || echo "")
       EOF
 
         echo "📄 Terraform outputs:"
         cat terraform_outputs.env
+
+        echo "🎉 Development Ajasta Application Deployment Complete!"
+        echo "🌐 Application Access:"
+        echo "   Frontend: $(terraform output -raw frontend_url 2>/dev/null || echo 'Not available')"
+        echo "   Backend API: $(terraform output -raw backend_api_url 2>/dev/null || echo 'Not available')"
+        echo "🚀 Application is ready for use!"
 
       else
         echo "❌ Terraform apply failed"
@@ -223,12 +232,19 @@ deploy:tf:production:
       TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip 2>/dev/null || echo "")
       TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips 2>/dev/null || echo "{}")
       TERRAFORM_CLUSTER_READY=true
+      FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null || echo "")
+      BACKEND_API_URL=$(terraform output -raw backend_api_url 2>/dev/null || echo "")
+      APP_DEPLOYMENT_STATUS=$(terraform output -raw app_deployment_status 2>/dev/null || echo "")
       EOF
 
         echo "📄 Terraform outputs:"
         cat terraform_outputs.env
-        echo "🎉 Production Kubernetes Cluster Created Successfully"
-        echo "🚀 Cluster ready for application deployment"
+
+        echo "🎉 Production Ajasta Application Deployment Complete!"
+        echo "🌐 Application Access:"
+        echo "   Frontend: $(terraform output -raw frontend_url 2>/dev/null || echo 'Not available')"
+        echo "   Backend API: $(terraform output -raw backend_api_url 2>/dev/null || echo 'Not available')"
+        echo "🚀 Application is ready for use!"
 
       else
         echo "❌ Terraform apply failed"
