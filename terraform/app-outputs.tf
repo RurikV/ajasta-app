@@ -2,17 +2,17 @@
 
 output "app_deployment_status" {
   description = "Status of the application deployment"
-  value = var.deploy_app ? "Application deployed successfully" : "Application deployment skipped"
+  value       = var.deploy_app ? "Application deployed successfully" : "Application deployment skipped"
 }
 
 output "frontend_url" {
   description = "URL for accessing the frontend application"
-  value = var.deploy_app ? "http://${yandex_vpc_address.master.external_ipv4_address[0].address}:${var.frontend_port}" : null
+  value       = var.deploy_app ? "http://${yandex_vpc_address.master.external_ipv4_address[0].address}:${var.frontend_port}" : null
 }
 
 output "backend_api_url" {
   description = "URL for accessing the backend API"
-  value = var.deploy_app ? "http://${yandex_vpc_address.master.external_ipv4_address[0].address}:${var.backend_port}/api" : null
+  value       = var.deploy_app ? "http://${yandex_vpc_address.master.external_ipv4_address[0].address}:${var.backend_port}/api" : null
 }
 
 output "database_info" {
@@ -28,10 +28,10 @@ output "database_info" {
 output "application_management" {
   description = "Commands for managing the application"
   value = var.deploy_app ? {
-    start   = "ssh ${var.ssh_username}@${yandex_vpc_address.master.external_ipv4_address[0].address} 'cd /opt/ajasta-app && ./start-app.sh'"
-    stop    = "ssh ${var.ssh_username}@${yandex_vpc_address.master.external_ipv4_address[0].address} 'cd /opt/ajasta-app && ./stop-app.sh'"
-    status  = "ssh ${var.ssh_username}@${yandex_vpc_address.master.external_ipv4_address[0].address} 'cd /opt/ajasta-app && ./status-app.sh'"
-    logs    = "ssh ${var.ssh_username}@${yandex_vpc_address.master.external_ipv4_address[0].address} 'cd /opt/ajasta-app && docker-compose logs -f'"
+    start  = "ssh ${var.ssh_username}@${yandex_vpc_address.master.external_ipv4_address[0].address} 'cd /opt/ajasta-app && ./start-app.sh'"
+    stop   = "ssh ${var.ssh_username}@${yandex_vpc_address.master.external_ipv4_address[0].address} 'cd /opt/ajasta-app && ./stop-app.sh'"
+    status = "ssh ${var.ssh_username}@${yandex_vpc_address.master.external_ipv4_address[0].address} 'cd /opt/ajasta-app && ./status-app.sh'"
+    logs   = "ssh ${var.ssh_username}@${yandex_vpc_address.master.external_ipv4_address[0].address} 'cd /opt/ajasta-app && docker-compose logs -f'"
   } : null
 }
 
@@ -48,10 +48,10 @@ output "container_info" {
 output "access_credentials" {
   description = "Access credentials and configuration"
   value = var.deploy_app ? {
-    ssh_host     = yandex_vpc_address.master.external_ipv4_address[0].address
-    ssh_user     = var.ssh_username
-    ssh_command  = "ssh ${var.ssh_username}@${yandex_vpc_address.master.external_ipv4_address[0].address}"
-    environment  = var.app_environment
+    ssh_host    = yandex_vpc_address.master.external_ipv4_address[0].address
+    ssh_user    = var.ssh_username
+    ssh_command = "ssh ${var.ssh_username}@${yandex_vpc_address.master.external_ipv4_address[0].address}"
+    environment = var.app_environment
   } : null
   sensitive = true
 }
@@ -79,11 +79,11 @@ output "deployment_commands" {
 output "configuration_files" {
   description = "Paths to important configuration files"
   value = var.deploy_app ? {
-    app_env_file      = "/opt/ajasta-app/.env"
-    docker_compose    = "/opt/ajasta-app/docker-compose.yml"
-    app_scripts       = "/opt/ajasta-app/start-app.sh"
-    logs_directory    = "/opt/ajasta-app/logs"
-    data_directory    = "/opt/ajasta-app/data"
+    app_env_file   = "/opt/ajasta-app/.env"
+    docker_compose = "/opt/ajasta-app/docker-compose.yml"
+    app_scripts    = "/opt/ajasta-app/start-app.sh"
+    logs_directory = "/opt/ajasta-app/logs"
+    data_directory = "/opt/ajasta-app/data"
   } : null
 }
 

@@ -10,8 +10,8 @@ locals {
     name  = "ajasta-postgres"
     image = "postgres:16-alpine"
     env_vars = {
-      POSTGRES_DB     = var.postgres_db
-      POSTGRES_USER   = var.postgres_user
+      POSTGRES_DB       = var.postgres_db
+      POSTGRES_USER     = var.postgres_user
       POSTGRES_PASSWORD = var.postgres_password
     }
     ports = {
@@ -36,14 +36,14 @@ locals {
       JWT_SECRET = var.jwt_secret
 
       # Optional configurations
-      MAIL_USERNAME               = var.mail_username
-      MAIL_PASSWORD               = var.mail_password
-      AWS_ACCESS_KEY_ID           = var.aws_access_key_id
-      AWS_SECRET_ACCESS_KEY       = var.aws_secret_access_key
-      AWS_REGION                  = var.aws_region
-      AWS_S3_BUCKET               = var.aws_s3_bucket
-      STRIPE_PUBLIC_KEY           = var.stripe_public_key
-      STRIPE_SECRET_KEY           = var.stripe_secret_key
+      MAIL_USERNAME         = var.mail_username
+      MAIL_PASSWORD         = var.mail_password
+      AWS_ACCESS_KEY_ID     = var.aws_access_key_id
+      AWS_SECRET_ACCESS_KEY = var.aws_secret_access_key
+      AWS_REGION            = var.aws_region
+      AWS_S3_BUCKET         = var.aws_s3_bucket
+      STRIPE_PUBLIC_KEY     = var.stripe_public_key
+      STRIPE_SECRET_KEY     = var.stripe_secret_key
 
       # JVM configuration
       JAVA_OPTS = var.java_opts
@@ -67,45 +67,46 @@ locals {
 }
 
 # Cloud-init script for Docker and application setup
-data "template_file" "app_setup" {
+data "templatefile" "app_setup" {
   template = file("${path.module}/../scripts/app-setup-cloudinit.yaml")
 
   vars = {
     # Docker registry credentials (if needed)
-    docker_registry     = var.docker_registry
-    docker_username     = var.docker_username
-    docker_password     = var.docker_password
+    docker_registry = var.docker_registry
+    docker_username = var.docker_username
+    docker_password = var.docker_password
 
     # Application configurations
-    postgres_db         = var.postgres_db
-    postgres_user       = var.postgres_user
-    postgres_password   = var.postgres_password
-    postgres_port       = var.postgres_port
+    postgres_db       = var.postgres_db
+    postgres_user     = var.postgres_user
+    postgres_password = var.postgres_password
+    postgres_port     = var.postgres_port
 
-    backend_image       = var.backend_image
-    frontend_image      = var.frontend_image
-    backend_port        = var.backend_port
-    frontend_port       = var.frontend_port
+    backend_image  = var.backend_image
+    frontend_image = var.frontend_image
+    backend_port   = var.backend_port
+    frontend_port  = var.frontend_port
 
     # Application secrets
-    jwt_secret          = var.jwt_secret
-    mail_username       = var.mail_username
-    mail_password       = var.mail_password
-    aws_access_key_id   = var.aws_access_key_id
+    jwt_secret            = var.jwt_secret
+    mail_username         = var.mail_username
+    mail_password         = var.mail_password
+    aws_access_key_id     = var.aws_access_key_id
     aws_secret_access_key = var.aws_secret_access_key
-    aws_region          = var.aws_region
-    aws_s3_bucket       = var.aws_s3_bucket
-    stripe_public_key   = var.stripe_public_key
-    stripe_secret_key   = var.stripe_secret_key
-    java_opts           = var.java_opts
+    aws_region            = var.aws_region
+    aws_s3_bucket         = var.aws_s3_bucket
+    stripe_public_key     = var.stripe_public_key
+    stripe_secret_key     = var.stripe_secret_key
+    java_opts             = var.java_opts
 
     # Network configuration
-    app_network_name    = local.app_network_name
+    app_network_name = local.app_network_name
   }
 }
 
 # Deploy application on master node
 resource "null_resource" "deploy_app_master" {
+  count = var.deploy_app ? 1 : 0
   depends_on = [
     yandex_compute_instance.master,
     yandex_compute_instance.workers
@@ -122,7 +123,7 @@ resource "null_resource" "deploy_app_master" {
 
   # Upload cloud-init script
   provisioner "file" {
-    content     = data.template_file.app_setup.rendered
+    content     = data.templatefile.app_setup.rendered
     destination = "/tmp/app-setup.yaml"
   }
 
@@ -145,6 +146,7 @@ resource "null_resource" "deploy_app_master" {
 
 # Health check for the deployed application
 resource "null_resource" "health_check" {
+  count      = var.deploy_app ? 1 : 0
   depends_on = [null_resource.deploy_app_master]
 
   connection {
@@ -195,6 +197,7 @@ resource "null_resource" "health_check" {
 
 # Create application startup script for manual use
 resource "local_file" "app_startup_script" {
+  count    = var.deploy_app ? 1 : 0
   filename = "${path.module}/../scripts/start-ajasta-app.sh"
   content  = <<-EOT
 #!/bin/bash

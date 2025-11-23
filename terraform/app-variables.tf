@@ -168,7 +168,7 @@ variable "app_environment" {
   default     = "production"
 
   validation {
-    condition = contains(["development", "staging", "production"], var.app_environment)
+    condition     = contains(["development", "staging", "production"], var.app_environment)
     error_message = "Environment must be one of: development, staging, production."
   }
 }
