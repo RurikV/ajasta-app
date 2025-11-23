@@ -230,6 +230,34 @@ variables:
       else
         echo "ℹ️  No force-unlock capability detected"
       fi
+
+    # Ensure backend is properly configured before proceeding with plan
+    - |
+      echo "🔧 Verifying backend configuration before plan..."
+
+      # Check if backend is already configured
+      if terraform show 2>/dev/null | grep -q "No state"; then
+        echo "🔄 Backend needs reconfiguration..."
+
+        # Reconfigure with backend
+        if terraform init -input=false -backend=true -reconfigure \
+          -backend-config="address=${TF_HTTP_ADDRESS}" \
+          -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+          -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+          -backend-config="username=${TF_HTTP_USERNAME}" \
+          -backend-config="password=${TF_HTTP_PASSWORD}" \
+          -backend-config="lock_method=POST" \
+          -backend-config="unlock_method=POST" \
+          -backend-config="retry_wait_min=5" \
+          -lock=false; then
+          echo "✅ Backend reconfiguration successful"
+        else
+          echo "❌ Backend reconfiguration failed"
+          exit 1
+        fi
+      else
+        echo "✅ Backend already configured"
+      fi
   # Note: Cache disabled to prevent provider cache corruption from previous runs
   # Terraform will download providers fresh each time
 
@@ -253,6 +281,29 @@ terraform:plan:
   script:
     - |
       echo "🎯 Starting Terraform plan with state lock handling..."
+
+      # Ensure we have the correct backend configuration
+      echo "🔧 Verifying backend variables before plan..."
+      export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
+      export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
+      export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
+
+      # Double-check backend is properly configured
+      if terraform show 2>/dev/null | grep -q "No state"; then
+        echo "🔄 Reconfiguring backend one more time before plan..."
+        terraform init -input=false -backend=true -reconfigure \
+          -backend-config="address=${TF_HTTP_ADDRESS}" \
+          -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+          -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+          -backend-config="username=${TF_HTTP_USERNAME}" \
+          -backend-config="password=${TF_HTTP_PASSWORD}" \
+          -backend-config="lock_method=POST" \
+          -backend-config="unlock_method=POST" \
+          -backend-config="retry_wait_min=5" \
+          -lock=false
+      else
+        echo "✅ Backend is properly configured"
+      fi
 
       # Function to extract lock ID from error output
       extract_lock_id() {
