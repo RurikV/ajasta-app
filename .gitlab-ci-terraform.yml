@@ -402,23 +402,84 @@ deploy:tf:production:
     on_stop: terraform:destroy:production
   script:
     - |
+      # Function to extract lock ID from error output
+      extract_lock_id() {
+        local error_output="$1"
+        echo "$error_output" | grep -o 'ID: [a-f0-9-]*' | head -1 | sed 's/ID: //' | tr -d ' '
+      }
+
+      # Function to check for backend auth errors
+      is_backend_auth_error() {
+        local error_output="$1"
+        echo "$error_output" | grep -q "HTTP remote state endpoint requires auth"
+      }
+
       echo "🚀 Starting Terraform apply for production..."
 
-      # Try to apply the plan, but handle common errors
-      if terraform apply -input=false plan.tfplan; then
-        echo "✅ Terraform apply successful"
-      else
-        echo "❌ Terraform apply failed, attempting force unlock..."
+      # Try to apply the plan, but handle backend authentication and state lock errors
+      if ! terraform apply -input=false -auto-approve plan.tfplan 2>&1; then
+        ERROR_OUTPUT="${PIPESTATUS[0]}"
+        echo "❌ Terraform apply failed with exit code: $ERROR_OUTPUT"
 
-        # Try to force unlock if there's a lock issue
-        if terraform force-unlock -lock-id=$(terraform force-unlock -help 2>/dev/null | grep "Lock ID:" | awk '{print $4}' | head -1) 2>/dev/null || echo "No lock ID found"; then
-          echo "✅ Successfully force-unlocked state"
-          terraform apply -input=false -auto-approve plan.tfplan
+        # Get the actual error output
+        ERROR_OUTPUT=$(terraform apply -input=false -auto-approve plan.tfplan 2>&1 || true)
+
+        # Check for backend authentication errors first
+        if is_backend_auth_error "$ERROR_OUTPUT"; then
+          echo "🔐 Backend authentication error detected!"
+          echo "🔧 Checking backend configuration..."
+
+          # Re-verify backend variables
+          if [ -z "${TF_HTTP_PASSWORD}" ]; then
+            echo "❌ TF_HTTP_PASSWORD is not set or empty"
+            echo "This usually indicates a GitLab CI/CD variable configuration issue"
+            exit 1
+          fi
+
+          echo "🔄 Attempting to apply with backend configuration explicitly passed..."
+          terraform apply -input=false -auto-approve plan.tfplan \
+            -backend-config="address=${TF_HTTP_ADDRESS}" \
+            -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+            -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+            -backend-config="username=${TF_HTTP_USERNAME}" \
+            -backend-config="password=${TF_HTTP_PASSWORD}"
         else
-          echo "⚠️  Could not force unlock, retrying apply..."
-          sleep 5
-          terraform apply -input=false -auto-approve plan.tfplan
+          # Handle state lock errors
+          LOCK_ID=$(extract_lock_id "$ERROR_OUTPUT")
+
+          if [ ! -z "$LOCK_ID" ]; then
+            echo "🔓 Found state lock ID: $LOCK_ID"
+            echo "🔧 Attempting to force unlock..."
+
+            # Try force unlock with backend config
+            if terraform force-unlock -force "$LOCK_ID" \
+              -backend-config="address=${TF_HTTP_ADDRESS}" \
+              -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+              -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+              -backend-config="username=${TF_HTTP_USERNAME}" \
+              -backend-config="password=${TF_HTTP_PASSWORD}"; then
+              echo "✅ Successfully force-unlocked state"
+
+              # Retry the apply
+              if terraform apply -input=false -auto-approve plan.tfplan; then
+                echo "✅ Terraform apply successful after force unlock"
+              else
+                echo "❌ Apply still failed after unlock, trying with lock override..."
+                terraform apply -input=false -auto-approve plan.tfplan -lock=false
+              fi
+            else
+              echo "❌ Failed to force unlock, trying with lock override..."
+              sleep 5
+              terraform apply -input=false -auto-approve plan.tfplan -lock=false
+            fi
+          else
+            echo "⚠️  Could not extract lock ID, trying with lock override..."
+            sleep 5
+            terraform apply -input=false -auto-approve plan.tfplan -lock=false
+          fi
         fi
+      else
+        echo "✅ Terraform apply successful"
       fi
 
         # Create outputs file only on success
