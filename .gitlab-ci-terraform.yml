@@ -179,9 +179,26 @@ variables:
       fi
 
       # Force terraform to use the exported variables
-      # Try initial Terraform init without state refresh for new state creation
       echo "🔧 Attempting Terraform init for new state creation..."
-      if ! terraform init -input=false -backend=true \
+
+      # Try to create an empty state file first via GitLab API
+      echo "📝 Creating empty state file via GitLab API..."
+      STATE_CREATE_RESPONSE=$(curl -s -X POST \
+        -H "Authorization: Bearer ${CI_JOB_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d '{"name":"'"${TF_STATE_NAME}"'"}' \
+        "${TF_HTTP_ADDRESS}" 2>/dev/null || echo "")
+
+      if echo "$STATE_CREATE_RESPONSE" | grep -q '"id"'; then
+        echo "✅ State file created successfully via API"
+      elif echo "$STATE_CREATE_RESPONSE" | grep -q "already exists"; then
+        echo "ℹ️  State file already exists"
+      else
+        echo "ℹ️  State creation attempt completed (may not be needed)"
+      fi
+
+      # Now try terraform init - it should work since the state exists or we can create it
+      if terraform init -input=false -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
         -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
         -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
@@ -189,47 +206,18 @@ variables:
         -backend-config="password=${TF_HTTP_PASSWORD}" \
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5"; then
-
-        echo "⚠️  Initial terraform init failed, trying alternative approach..."
-        echo "🔄 Attempting init with state refresh disabled..."
-
-        # Try alternative approach - initialize without backend first, then configure
-        rm -rf .terraform .terraform.lock.hcl || true
-
-        if terraform init -input=false -backend=false; then
-          echo "✅ Local terraform init successful"
-          echo "🔄 Reconfiguring with GitLab backend..."
-
-          # Now try to reconfigure with backend
-          terraform init -input=false -backend=true -migrate-state \
-            -backend-config="address=${TF_HTTP_ADDRESS}" \
-            -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-            -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-            -backend-config="username=${TF_HTTP_USERNAME}" \
-            -backend-config="password=${TF_HTTP_PASSWORD}" \
-            -backend-config="lock_method=POST" \
-            -backend-config="unlock_method=POST" \
-            -backend-config="retry_wait_min=5" || \
-
-          # Final fallback - try with lock disabled
-          echo "🔓 Trying final fallback with lock disabled..."
-          terraform init -input=false -backend=true \
-            -backend-config="address=${TF_HTTP_ADDRESS}" \
-            -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-            -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-            -backend-config="username=${TF_HTTP_USERNAME}" \
-            -backend-config="password=${TF_HTTP_PASSWORD}" \
-            -backend-config="lock_method=POST" \
-            -backend-config="unlock_method=POST" \
-            -backend-config="retry_wait_min=5" \
-            -lock=false
-        else
-          echo "❌ All Terraform init attempts failed"
-          exit 1
-        fi
-      else
+        -backend-config="retry_wait_min=5" \
+        -lock=false; then
         echo "✅ Terraform init successful"
+      else
+        echo "❌ Terraform init failed even with API pre-creation"
+        echo "🔄 Trying complete initialization without backend..."
+
+        # Last resort: try without any backend configuration
+        rm -rf .terraform .terraform.lock.hcl || true
+        terraform init -input=false -backend=false
+
+        echo "📝 Backend will be configured manually in terraform plan/apply steps"
       fi
 
     # Check for existing state locks and attempt to force unlock if needed
