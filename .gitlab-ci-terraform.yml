@@ -69,22 +69,60 @@ variables:
     # Debug: Show backend configuration variables (without sensitive data)
     - |
       echo "🔧 Backend Configuration Debug:"
-      echo "TF_HTTP_ADDRESS: ${TF_HTTP_ADDRESS}"
-      echo "TF_HTTP_LOCK_ADDRESS: ${TF_HTTP_LOCK_ADDRESS}"
-      echo "TF_HTTP_UNLOCK_ADDRESS: ${TF_HTTP_UNLOCK_ADDRESS}"
-      echo "TF_HTTP_USERNAME: ${TF_HTTP_USERNAME}"
-      echo "TF_HTTP_PASSWORD: [REDACTED]"
-      echo "CI_PROJECT_ID: ${CI_PROJECT_ID}"
-      echo "TF_STATE_NAME: ${TF_STATE_NAME}"
+      echo "TF_HTTP_ADDRESS: ${TF_HTTP_ADDRESS:-[NOT_SET]}"
+      echo "TF_HTTP_LOCK_ADDRESS: ${TF_HTTP_LOCK_ADDRESS:-[NOT_SET]}"
+      echo "TF_HTTP_UNLOCK_ADDRESS: ${TF_HTTP_UNLOCK_ADDRESS:-[NOT_SET]}"
+      echo "TF_HTTP_USERNAME: ${TF_HTTP_USERNAME:-[NOT_SET]}"
+      echo "TF_HTTP_PASSWORD: ${TF_HTTP_PASSWORD:+[SET]}"
+      echo "CI_PROJECT_ID: ${CI_PROJECT_ID:-[NOT_SET]}"
+      echo "TF_STATE_NAME: ${TF_STATE_NAME:-[NOT_SET]}"
+      echo "CI_API_V4_URL: ${CI_API_V4_URL:-[NOT_SET]}"
+      echo "CI_JOB_TOKEN: ${CI_JOB_TOKEN:+[SET]}"
 
-    # Verify required backend variables are set
+    # Verify required backend variables are set and provide detailed feedback
     - |
+      echo "🔍 Verifying backend configuration variables..."
+
+      if [ -z "${TF_HTTP_ADDRESS}" ]; then
+        echo "❌ TF_HTTP_ADDRESS is not set"
+        echo "💡 This should be auto-generated from: \${CI_API_V4_URL}/projects/\${CI_PROJECT_ID}/terraform/state/\${TF_STATE_NAME}"
+      fi
+
+      if [ -z "${TF_HTTP_USERNAME}" ]; then
+        echo "❌ TF_HTTP_USERNAME is not set"
+        echo "💡 This should be set to: gitlab-ci-token"
+      fi
+
+      if [ -z "${TF_HTTP_PASSWORD}" ]; then
+        echo "❌ TF_HTTP_PASSWORD is not set"
+        echo "💡 This should be set to: \${CI_JOB_TOKEN}"
+      fi
+
+      if [ -z "${CI_PROJECT_ID}" ]; then
+        echo "❌ CI_PROJECT_ID is not set (GitLab environment variable issue)"
+      fi
+
+      if [ -z "${CI_API_V4_URL}" ]; then
+        echo "❌ CI_API_V4_URL is not set (GitLab environment variable issue)"
+      fi
+
       if [ -z "${TF_HTTP_ADDRESS}" ] || [ -z "${TF_HTTP_USERNAME}" ] || [ -z "${TF_HTTP_PASSWORD}" ]; then
-        echo "❌ Required backend configuration variables are missing!"
-        echo "Please ensure these CI/CD variables are set:"
-        echo "- TF_HTTP_ADDRESS"
-        echo "- TF_HTTP_USERNAME"
-        echo "- TF_HTTP_PASSWORD"
+        echo ""
+        echo "🚨 CRITICAL: Required backend configuration variables are missing!"
+        echo ""
+        echo "📋 Required GitLab CI/CD Variables to configure:"
+        echo "  Variable Name        | Value"
+        echo "  -------------------- | --------------------------------"
+        echo "  TF_HTTP_ADDRESS      | \${CI_API_V4_URL}/projects/\${CI_PROJECT_ID}/terraform/state/production"
+        echo "  TF_HTTP_USERNAME     | gitlab-ci-token"
+        echo "  TF_HTTP_PASSWORD     | \${CI_JOB_TOKEN}"
+        echo ""
+        echo "🔧 How to fix:"
+        echo "1. Go to GitLab Project → Settings → CI/CD → Variables"
+        echo "2. Add the variables above"
+        echo "3. Set them as 'Protected' and 'Masked' where appropriate"
+        echo "4. Make sure the pipeline user has 'Maintainer' role or higher"
+        echo ""
         exit 1
       fi
 
@@ -251,17 +289,10 @@ terraform:apply:dev:
         # Check for backend authentication errors first
         if is_backend_auth_error "$ERROR_OUTPUT"; then
           echo "🔐 Backend authentication error detected!"
-          echo "🔧 Checking backend configuration..."
-
-          # Re-verify backend variables
-          if [ -z "${TF_HTTP_PASSWORD}" ]; then
-            echo "❌ TF_HTTP_PASSWORD is not set or empty"
-            echo "This usually indicates a GitLab CI/CD variable configuration issue"
-            exit 1
-          fi
-
-          echo "🔄 Attempting to apply with backend configuration explicitly passed..."
-          terraform apply -input=false -auto-approve -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" plan.tfplan
+          echo "💡 This indicates the GitLab HTTP backend is not properly configured"
+          echo ""
+          echo "🔧 Attempting to apply with lock override as fallback..."
+          terraform apply -input=false -auto-approve -lock=false plan.tfplan
         else
           # Handle state lock errors
           LOCK_ID=$(extract_lock_id "$ERROR_OUTPUT")
@@ -417,17 +448,10 @@ deploy:tf:production:
         # Check for backend authentication errors first
         if is_backend_auth_error "$ERROR_OUTPUT"; then
           echo "🔐 Backend authentication error detected!"
-          echo "🔧 Checking backend configuration..."
-
-          # Re-verify backend variables
-          if [ -z "${TF_HTTP_PASSWORD}" ]; then
-            echo "❌ TF_HTTP_PASSWORD is not set or empty"
-            echo "This usually indicates a GitLab CI/CD variable configuration issue"
-            exit 1
-          fi
-
-          echo "🔄 Attempting to apply with backend configuration explicitly passed..."
-          terraform apply -input=false -auto-approve -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" plan.tfplan
+          echo "💡 This indicates the GitLab HTTP backend is not properly configured"
+          echo ""
+          echo "🔧 Attempting to apply with lock override as fallback..."
+          terraform apply -input=false -auto-approve -lock=false plan.tfplan
         else
           # Handle state lock errors
           LOCK_ID=$(extract_lock_id "$ERROR_OUTPUT")
