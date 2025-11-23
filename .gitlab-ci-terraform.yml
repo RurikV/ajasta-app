@@ -126,6 +126,19 @@ terraform:apply:dev:
       # Try to apply the plan, but handle common errors
       if terraform apply -input=false -auto-approve plan.tfplan; then
         echo "✅ Terraform apply successful"
+      else
+        echo "❌ Terraform apply failed, attempting force unlock..."
+
+        # Try to force unlock if there's a lock issue
+        if terraform force-unlock -lock-id=$(terraform force-unlock -help 2>/dev/null | grep "Lock ID:" | awk '{print $4}' | head -1) 2>/dev/null || echo "No lock ID found"; then
+          echo "✅ Successfully force-unlocked state"
+          terraform apply -input=false -auto-approve plan.tfplan
+        else
+          echo "⚠️  Could not force unlock, retrying apply..."
+          sleep 5
+          terraform apply -input=false -auto-approve plan.tfplan
+        fi
+      fi
 
         # Create outputs file only on success
         cat > terraform_outputs.env << EOF
@@ -228,6 +241,19 @@ deploy:tf:production:
       # Try to apply the plan, but handle common errors
       if terraform apply -input=false plan.tfplan; then
         echo "✅ Terraform apply successful"
+      else
+        echo "❌ Terraform apply failed, attempting force unlock..."
+
+        # Try to force unlock if there's a lock issue
+        if terraform force-unlock -lock-id=$(terraform force-unlock -help 2>/dev/null | grep "Lock ID:" | awk '{print $4}' | head -1) 2>/dev/null || echo "No lock ID found"; then
+          echo "✅ Successfully force-unlocked state"
+          terraform apply -input=false -auto-approve plan.tfplan
+        else
+          echo "⚠️  Could not force unlock, retrying apply..."
+          sleep 5
+          terraform apply -input=false -auto-approve plan.tfplan
+        fi
+      fi
 
         # Create outputs file only on success
         cat > terraform_outputs.env << EOF
