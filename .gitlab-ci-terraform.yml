@@ -60,6 +60,10 @@ variables:
     - terraform --version
     - jq --version
 
+    # Clear any cached provider data that might reference non-existent providers
+    - rm -rf ${TF_ROOT}/.terraform ${TF_ROOT}/.terraform.lock.hcl || true
+    - rm -rf ${CI_PROJECT_DIR}/.terraform.d || true
+
     # Initialize Terraform
     - terraform init -input=false -backend=true
       -backend-config="address=${TF_HTTP_ADDRESS}"
@@ -70,11 +74,8 @@ variables:
       -backend-config="lock_method=POST"
       -backend-config="unlock_method=POST"
       -backend-config="retry_wait_min=5"
-  cache:
-    key: terraform-${CI_COMMIT_REF_SLUG}
-    paths:
-      - terraform/.terraform/
-      - terraform/.terraform.lock.hcl
+  # Note: Cache disabled to prevent provider cache corruption from previous runs
+  # Terraform will download providers fresh each time
 
 # Terraform validation stage
 terraform:validate:
