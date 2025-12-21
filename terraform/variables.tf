@@ -1,3 +1,16 @@
+# Environment-specific variables
+variable "environment" {
+  description = "Environment name (staging, production)"
+  type        = string
+  default     = "development"
+}
+
+variable "prefix" {
+  description = "Prefix for resource names"
+  type        = string
+  default     = "ajasta"
+}
+
 variable "yc_network_name" {
   description = "External VPC network name"
   type        = string
@@ -129,4 +142,70 @@ variable "worker_vm_disk_size" {
   description = "Worker boot disk size in GB"
   type        = number
   default     = 30
+}
+
+# New environment management variables
+variable "worker_count" {
+  description = "Number of worker nodes"
+  type        = number
+  default     = 3
+}
+
+variable "preemptible" {
+  description = "Whether VMs should be preemptible"
+  type        = bool
+  default     = true
+}
+
+variable "boot_disk_type" {
+  description = "Boot disk type (network-hdd or network-ssd)"
+  type        = string
+  default     = "network-hdd"
+}
+
+variable "master_core_fraction" {
+  description = "Master CPU core fraction (5, 20, 50, 100)"
+  type        = number
+  default     = 20
+}
+
+variable "worker_core_fraction" {
+  description = "Worker CPU core fraction (5, 20, 50, 100)"
+  type        = number
+  default     = 20
+}
+
+variable "labels" {
+  description = "Labels to apply to all resources"
+  type        = map(string)
+  default     = {}
+}
+
+# Application-specific variables
+variable "app_environment" {
+  description = "Application environment (will be passed to deployed app)"
+  type        = string
+  default     = "development"
+}
+
+variable "app_replicas" {
+  description = "Number of application replicas to deploy"
+  type        = number
+  default     = 1
+}
+
+variable "app_resources" {
+  description = "Application resource constraints"
+  type = object({
+    cpu_limit    = string
+    memory_limit = string
+    cpu_request  = string
+    memory_request = string
+  })
+  default = {
+    cpu_limit    = "1000m"
+    memory_limit = "1Gi"
+    cpu_request  = "500m"
+    memory_request = "512Mi"
+  }
 }
