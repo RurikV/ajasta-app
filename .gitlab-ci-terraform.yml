@@ -273,7 +273,7 @@ terraform:apply:staging:
     expire_in: "1 week"
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop"'
-      when: on_success  # Automatic after successful plan
+      when: manual  # Manual approval required for staging
   environment:
     name: staging
     url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
