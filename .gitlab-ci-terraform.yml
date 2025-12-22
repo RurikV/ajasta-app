@@ -1,55 +1,39 @@
 ---
-# GitLab CI/CD Pipeline for Terraform Operations (Shell Runner Compatible)
-# This file handles Terraform infrastructure deployment for Kubernetes cluster
+# GitLab CI/CD Pipeline for Multi-Environment Terraform Deployment
+# This file handles Terraform infrastructure deployment for Staging and Production
+# Reference: https://gitlab.com/NickOsipov/terraform-gitlab-practice
 
 variables:
   # Terraform configuration
   TF_ROOT: "${CI_PROJECT_DIR}/terraform"
-  TF_STATE_NAME: "production-${CI_PIPELINE_ID}"
+  TF_CLI_ARGS: "-no-color"
+  TF_IN_AUTOMATION: "true"
 
-  # GitLab Terraform HTTP backend configuration
-  TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
-  TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-  TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-  TF_HTTP_USERNAME: "gitlab-ci-token"
-  TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
-
-  # Terraform CLI cache directories
-  TF_PLUGIN_CACHE_DIR: "${CI_PROJECT_DIR}/.terraform.d/plugin-cache"
-
-  # Yandex Cloud variables - use existing CI variables
+  # Yandex Cloud variables - configure in GitLab CI/CD Variables
   TF_VAR_yc_cloud_id: "${YC_CLOUD_ID}"
   TF_VAR_yc_folder_id: "${YC_FOLDER_ID}"
   TF_VAR_yc_token: "${YC_TOKEN}"
   TF_VAR_ssh_username: "ajasta"
   SSH_PRIVATE_KEY: "${YC_SSH_PRIVATE_KEY}"
 
-# Base configuration for Terraform jobs (Shell Runner)
-.terraform_base: &terraform_base
+stages:
+  - validate
+  - plan
+  - apply
+  - destroy
+
+# ============================================================================
+# BASE TEMPLATES
+# ============================================================================
+
+# Base template for all Terraform jobs
+.terraform_base:
   before_script:
     # Create plugin cache directory
-    - mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+    - mkdir -p "${CI_PROJECT_DIR}/.terraform.d/plugin-cache"
 
-    # Make setup script executable and run it from project root
-    - chmod +x scripts/terraform-setup.sh
-
-    # Run external terraform setup script from project root
-    - scripts/terraform-setup.sh
-
-    # Navigate to terraform directory for terraform operations
-    - cd ${TF_ROOT}
-
-    # Clean up any existing Terraform state and lock files to prevent authentication issues
-    - echo "🧹 Cleaning up any existing Terraform state files..."
-    - rm -f .terraform/terraform.tfstate .terraform.lock.hcl || true
-    - rm -f terraform.tfstate* || true
-    - rm -f .terraform/environment || true
-    - echo "✅ State cleanup completed"
-
-    # Setup Terraform CLI config
+    # Setup Terraform CLI config for Yandex Cloud mirror
     - export TF_CLI_CONFIG_FILE="${CI_PROJECT_DIR}/.terraformrc"
-
-    # Create .terraformrc file
     - |
       cat > ${CI_PROJECT_DIR}/.terraformrc << 'EOF'
       provider_installation {
@@ -63,142 +47,92 @@ variables:
       }
       EOF
 
+    # Navigate to terraform directory
+    - cd ${TF_ROOT}
+
+    # Clean up any existing Terraform state files
+    - rm -f .terraform/terraform.tfstate .terraform.lock.hcl || true
+    - rm -f terraform.tfstate* || true
+    - rm -f .terraform/environment || true
+
     # Show versions
     - terraform --version
-    - jq --version
 
-    # Create plugin cache directory to avoid CLI warnings
-    - mkdir -p ${CI_PROJECT_DIR}/.terraform.d/plugin-cache
+# ============================================================================
+# VALIDATION STAGE
+# ============================================================================
 
-    # Clear any cached provider data that might reference non-existent providers
-    - echo "🗑️  Clearing Terraform cache and provider data..."
-    - rm -rf ${TF_ROOT}/.terraform ${TF_ROOT}/.terraform.lock.hcl || true
+# Terraform format and validation - runs on all branches
+terraform:fmt:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - terraform fmt -check -recursive || (terraform fmt -recursive -write=true && exit 1)
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  allow_failure: false
 
-    # Verify cleanup completed successfully
-    - echo "🔍 Verifying cleanup..."
-    - ls -la .terraform* 2>/dev/null || echo "✅ No .terraform files found - cleanup successful"
+# Terraform validate
+terraform:validate:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - terraform init -backend=false
+    - terraform validate
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  needs: [terraform:fmt]
 
-    # Debug: Show backend configuration variables (without sensitive data)
+# Security scan with tfsec
+terraform:security-scan:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - terraform init -backend=false
     - |
-      echo "🔧 Backend Configuration Debug:"
-      echo "TF_STATE_NAME: ${TF_STATE_NAME:-[NOT_SET]}"
-      echo "TF_HTTP_ADDRESS: ${TF_HTTP_ADDRESS:-[NOT_SET]}"
-      echo "TF_HTTP_LOCK_ADDRESS: ${TF_HTTP_LOCK_ADDRESS:-[NOT_SET]}"
-      echo "TF_HTTP_UNLOCK_ADDRESS: ${TF_HTTP_UNLOCK_ADDRESS:-[NOT_SET]}"
-      echo "TF_HTTP_USERNAME: ${TF_HTTP_USERNAME:-[NOT_SET]}"
-      echo "TF_HTTP_PASSWORD: ${TF_HTTP_PASSWORD:+[SET]}"
-      echo "CI_PROJECT_ID: ${CI_PROJECT_ID:-[NOT_SET]}"
-      echo "CI_API_V4_URL: ${CI_API_V4_URL:-[NOT_SET]}"
-      echo "CI_JOB_TOKEN: ${CI_JOB_TOKEN:+[SET]}"
-
-      # Verify the URLs contain the correct state name
-      if [[ "${TF_HTTP_ADDRESS}" == *"production-${CI_PIPELINE_ID}"* ]]; then
-        echo "✅ TF_HTTP_ADDRESS correctly references production-${CI_PIPELINE_ID}"
-      else
-        echo "❌ TF_HTTP_ADDRESS does not contain production-${CI_PIPELINE_ID} - there might be variable caching"
-        echo "🔄 Recalculating TF_HTTP_ADDRESS..."
-        export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
-        export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-        export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-        echo "📍 Updated TF_HTTP_ADDRESS: ${TF_HTTP_ADDRESS}"
+      # Install tfsec if not present
+      if ! command -v tfsec >/dev/null 2>&1; then
+        curl -sSL https://github.com/aquasecurity/tfsec/releases/latest/download/tfsec-linux-amd64 -o /tmp/tfsec
+        chmod +x /tmp/tfsec
+        export PATH=/tmp:$PATH
       fi
+    - tfsec --format json --out tfsec-report.json . || true
+    - tfsec --format text . || true
+  artifacts:
+    reports:
+      sast: tfsec-report.json
+    paths:
+      - terraform/tfsec-report.json
+    expire_in: "1 week"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  allow_failure: true
+  needs: [terraform:validate]
 
-    # Verify required backend variables are set and provide detailed feedback
-    - |
-      echo "🔍 Verifying backend configuration variables..."
+# ============================================================================
+# PLAN STAGE - STAGING
+# ============================================================================
 
-      if [ -z "${TF_HTTP_ADDRESS}" ]; then
-        echo "❌ TF_HTTP_ADDRESS is not set"
-        echo "💡 This should be auto-generated from: \${CI_API_V4_URL}/projects/\${CI_PROJECT_ID}/terraform/state/\${TF_STATE_NAME}"
-      fi
-
-      if [ -z "${TF_HTTP_USERNAME}" ]; then
-        echo "❌ TF_HTTP_USERNAME is not set"
-        echo "💡 This should be set to: gitlab-ci-token"
-      fi
-
-      if [ -z "${TF_HTTP_PASSWORD}" ]; then
-        echo "❌ TF_HTTP_PASSWORD is not set"
-        echo "💡 This should be set to: \${CI_JOB_TOKEN}"
-      fi
-
-      if [ -z "${CI_PROJECT_ID}" ]; then
-        echo "❌ CI_PROJECT_ID is not set (GitLab environment variable issue)"
-      fi
-
-      if [ -z "${CI_API_V4_URL}" ]; then
-        echo "❌ CI_API_V4_URL is not set (GitLab environment variable issue)"
-      fi
-
-      if [ -z "${TF_HTTP_ADDRESS}" ] || [ -z "${TF_HTTP_USERNAME}" ] || [ -z "${TF_HTTP_PASSWORD}" ]; then
-        echo ""
-        echo "🚨 CRITICAL: Required backend configuration variables are missing!"
-        echo ""
-        echo "📋 Required GitLab CI/CD Variables to configure:"
-        echo "  Variable Name        | Value"
-        echo "  -------------------- | --------------------------------"
-        echo "  TF_HTTP_ADDRESS      | \${CI_API_V4_URL}/projects/\${CI_PROJECT_ID}/terraform/state/production-\${CI_PIPELINE_ID}"
-        echo "  TF_HTTP_USERNAME     | gitlab-ci-token"
-        echo "  TF_HTTP_PASSWORD     | \${CI_JOB_TOKEN}"
-        echo ""
-        echo "🔧 How to fix:"
-        echo "1. Go to GitLab Project → Settings → CI/CD → Variables"
-        echo "2. Add the variables above"
-        echo "3. Set them as 'Protected' and 'Masked' where appropriate"
-        echo "4. Make sure the pipeline user has 'Maintainer' role or higher"
-        echo ""
-        exit 1
-      fi
-
-    # Initialize Terraform - Force use of updated backend variables
-    - |
-      echo "🚀 Initializing Terraform with updated backend configuration..."
-
-      # Explicitly export the backend variables to override any cached values
-      export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
-      export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-      export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-
-      echo "📍 Final backend configuration:"
-      echo "   TF_HTTP_ADDRESS: ${TF_HTTP_ADDRESS}"
-      echo "   TF_HTTP_LOCK_ADDRESS: ${TF_HTTP_LOCK_ADDRESS}"
-      echo "   TF_HTTP_UNLOCK_ADDRESS: ${TF_HTTP_UNLOCK_ADDRESS}"
-
-      # Test the GitLab API endpoint first to verify authentication
-      echo "🔐 Testing GitLab API authentication..."
-      HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${CI_JOB_TOKEN}" "${TF_HTTP_ADDRESS}")
-      if [[ "$HTTP_STATUS" == "200" ]]; then
-        echo "✅ GitLab API authentication successful - existing state found"
-      elif [[ "$HTTP_STATUS" == "404" ]]; then
-        echo "✅ GitLab API authentication successful - no existing state (expected)"
-        echo "🆕 Creating new Terraform state: ${TF_STATE_NAME}"
-      else
-        echo "⚠️  GitLab API returned status $HTTP_STATUS"
-        echo "🔍 This may indicate permission issues or existing state conflicts"
-        echo "📝 Continuing with init - Terraform will handle state creation..."
-      fi
-
-      # Force terraform to use the exported variables
-      echo "🔧 Attempting Terraform init for new state creation..."
-
-      # Try to create an empty state file first via GitLab API
-      echo "📝 Creating empty state file via GitLab API..."
-      STATE_CREATE_RESPONSE=$(curl -s -X POST \
-        -H "Authorization: Bearer ${CI_JOB_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d '{"name":"'"${TF_STATE_NAME}"'"}' \
-        "${TF_HTTP_ADDRESS}" 2>/dev/null || echo "")
-
-      if echo "$STATE_CREATE_RESPONSE" | grep -q '"id"'; then
-        echo "✅ State file created successfully via API"
-      elif echo "$STATE_CREATE_RESPONSE" | grep -q "already exists"; then
-        echo "ℹ️  State file already exists"
-      else
-        echo "ℹ️  State creation attempt completed (may not be needed)"
-      fi
-
-      # Now try terraform init - it should work since the state exists or we can create it
-      if terraform init -input=false -backend=true \
+# Plan for staging environment (automatic on develop branch)
+terraform:plan:staging:
+  stage: plan
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "staging"
+    TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
+    TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    TF_HTTP_USERNAME: "gitlab-ci-token"
+    TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
+  script:
+    # Select or create staging workspace
+    - terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
         -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
         -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
@@ -206,571 +140,316 @@ variables:
         -backend-config="password=${TF_HTTP_PASSWORD}" \
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5" \
-        -lock=false; then
-        echo "✅ Terraform init successful"
-      else
-        echo "❌ Terraform init failed even with API pre-creation"
-        echo "🔄 Trying complete initialization without backend..."
+        -backend-config="retry_wait_min=5"
 
-        # Last resort: try without any backend configuration
-        rm -rf .terraform .terraform.lock.hcl || true
-        terraform init -input=false -backend=false
-
-        echo "📝 Backend will be configured manually in terraform plan/apply steps"
-      fi
-
-    # Check for existing state locks and attempt to force unlock if needed
+    # Load staging variables
     - |
-      echo "🔍 Checking for existing state locks..."
-      # Try to get current state lock info
-      if terraform force-unlock -help 2>/dev/null | grep -q "Lock ID:"; then
-        echo "⚠️  State lock detection capability available"
-        # Continue with normal operations - will handle locks during apply/plan
+      if [ -f "staging.tfvars" ]; then
+        echo "Loading staging variables from staging.tfvars"
+        # Copy staging variables to default location
+        cp staging.tfvars terraform.tfvars
       else
-        echo "ℹ️  No force-unlock capability detected"
+        echo "Warning: staging.tfvars not found, using CI variables only"
       fi
 
-    # Ensure backend is properly configured before proceeding with plan
-    - |
-      echo "🔧 Verifying backend configuration before plan..."
+    # Create plan
+    - terraform plan -out=plan.tfplan -input=false
 
-      # More reliable check for backend configuration
-      # Try to run terraform show, if it fails with backend error, we need reconfiguration
-      if terraform show 2>&1 | grep -q "Backend initialization required\|No backend"; then
-        echo "🔄 Backend needs reconfiguration..."
-
-        # Reconfigure with backend
-        if terraform init -input=false -backend=true -reconfigure \
-          -backend-config="address=${TF_HTTP_ADDRESS}" \
-          -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-          -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-          -backend-config="username=${TF_HTTP_USERNAME}" \
-          -backend-config="password=${TF_HTTP_PASSWORD}" \
-          -backend-config="lock_method=POST" \
-          -backend-config="unlock_method=POST" \
-          -backend-config="retry_wait_min=5" \
-          -lock=false; then
-          echo "✅ Backend reconfiguration successful"
-        else
-          echo "❌ Backend reconfiguration failed"
-          exit 1
-        fi
-      else
-        echo "✅ Backend is properly configured"
-      fi
-  # Note: Cache disabled to prevent provider cache corruption from previous runs
-  # Terraform will download providers fresh each time
-
-# Terraform validation stage
-terraform:validate:
-  <<: *terraform_base
-  stage: plan
-  script:
-    - terraform fmt -check -recursive
-    - terraform validate -no-color
-    - echo "Terraform validation completed successfully"
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main"
-    - if: $CI_COMMIT_BRANCH == "develop"
-  allow_failure: true  # Don't block pipeline if Terraform validation fails
-
-# Terraform planning stage
-terraform:plan:
-  <<: *terraform_base
-  stage: plan
-  script:
-    - |
-      echo "🎯 Starting Terraform plan with state lock handling..."
-
-      # Ensure we have the correct backend configuration
-      echo "🔧 Verifying backend variables before plan..."
-      export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
-      export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-      export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-
-      # Function to check if this is a new state that needs initialization
-      handle_state_refresh() {
-        echo "🔍 Checking state status for initial deployment..."
-
-        # Try to fetch current state - if 404, this is a new deployment
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-          -H "Authorization: Bearer ${CI_JOB_TOKEN}" "${TF_HTTP_ADDRESS}")
-
-        if [[ "$HTTP_STATUS" == "404" ]]; then
-          echo "🆕 No existing state found - this is a fresh deployment"
-          return 0  # Indicate this is a new state
-        elif [[ "$HTTP_STATUS" == "200" ]]; then
-          echo "📂 Existing state found - proceeding with normal plan"
-          return 1  # Indicate existing state
-        else
-          echo "⚠️  Unexpected HTTP status: $HTTP_STATUS"
-          echo "🔄 Assuming fresh deployment for safety..."
-          return 0
-        fi
-      }
-
-      # Check if we need to handle initial state creation
-      IS_NEW_STATE=false
-      if handle_state_refresh; then
-        IS_NEW_STATE=true
-        echo "🎯 This is a new deployment - using special backend handling"
-      fi
-
-      # Configure backend based on state status
-      if [ "$IS_NEW_STATE" = true ]; then
-        echo "🔄 Configuring backend for new state (skip refresh)..."
-        # For new state, try to configure backend without state refresh
-        rm -rf .terraform .terraform.lock.hcl || true
-
-        # Initialize without backend first
-        terraform init -input=false -backend=false
-
-        # Then configure backend with minimal options
-        terraform init -input=false -backend=true -migrate-state \
-          -backend-config="address=${TF_HTTP_ADDRESS}" \
-          -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-          -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-          -backend-config="username=${TF_HTTP_USERNAME}" \
-          -backend-config="password=${TF_HTTP_PASSWORD}" \
-          -backend-config="lock_method=POST" \
-          -backend-config="unlock_method=POST" \
-          -backend-config="retry_wait_min=5" \
-          -lock=false || \
-
-        # Fallback: try reconfigure if migration fails
-        terraform init -input=false -backend=true -reconfigure \
-          -backend-config="address=${TF_HTTP_ADDRESS}" \
-          -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-          -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-          -backend-config="username=${TF_HTTP_USERNAME}" \
-          -backend-config="password=${TF_HTTP_PASSWORD}" \
-          -backend-config="lock_method=POST" \
-          -backend-config="unlock_method=POST" \
-          -backend-config="retry_wait_min=5" \
-          -lock=false
-      else
-        echo "🔄 Configuring backend for existing state..."
-        terraform init -input=false -backend=true -reconfigure \
-          -backend-config="address=${TF_HTTP_ADDRESS}" \
-          -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-          -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-          -backend-config="username=${TF_HTTP_USERNAME}" \
-          -backend-config="password=${TF_HTTP_PASSWORD}" \
-          -backend-config="lock_method=POST" \
-          -backend-config="unlock_method=POST" \
-          -backend-config="retry_wait_min=5" \
-          -lock=false
-      fi
-
-      echo "✅ Backend configuration completed for plan"
-
-      # Function to extract lock ID from error output
-      extract_lock_id() {
-        local error_output="$1"
-        echo "$error_output" | grep -o 'ID: [a-f0-9-]*' | head -1 | sed 's/ID: //' | tr -d ' '
-      }
-
-      # Try to create plan, with special handling for new state
-      PLAN_ERROR=""
-      if [ "$IS_NEW_STATE" = true ]; then
-        echo "🆕 Running plan for new state (skip refresh)..."
-        if ! terraform plan -input=false -out=plan.tfplan -refresh=false 2>&1; then
-          PLAN_ERROR="${PIPESTATUS[0]}"
-          echo "❌ New state terraform plan failed with exit code: $PLAN_ERROR"
-        else
-          echo "✅ New state terraform plan created successfully"
-        fi
-      else
-        echo "📂 Running plan for existing state..."
-        if ! terraform plan -input=false -out=plan.tfplan 2>&1; then
-          PLAN_ERROR="${PIPESTATUS[0]}"
-          echo "❌ Terraform plan failed with exit code: $PLAN_ERROR"
-        else
-          echo "✅ Terraform plan created successfully"
-        fi
-      fi
-
-      # Handle any plan errors
-      if [ -n "$PLAN_ERROR" ] && [ "$PLAN_ERROR" != "0" ]; then
-        echo "🔄 Plan failed, trying fallback approaches..."
-
-        if [ "$IS_NEW_STATE" = true ]; then
-          echo "🆕 New state plan failed, trying with lock disabled..."
-          terraform plan -input=false -out=plan.tfplan -refresh=false -lock=false
-        else
-          echo "📂 Existing state plan failed, checking for locks..."
-          # Try to get the actual error output
-          ERROR_OUTPUT=$(terraform plan -input=false -out=plan.tfplan 2>&1 || true)
-
-          # Try to extract lock ID from error message
-          LOCK_ID=$(extract_lock_id "$ERROR_OUTPUT")
-
-          if [ ! -z "$LOCK_ID" ]; then
-            echo "🔓 Found state lock ID: $LOCK_ID"
-            echo "🔧 Attempting to force unlock..."
-
-            if terraform force-unlock -force "$LOCK_ID"; then
-              echo "✅ Successfully force-unlocked state"
-
-              # Retry the plan
-              if terraform plan -input=false -out=plan.tfplan; then
-                echo "✅ Terraform plan created after force unlock"
-              else
-                echo "❌ Plan still failed after unlock, trying with lock override..."
-                terraform plan -input=false -out=plan.tfplan -lock=false
-              fi
-            else
-              echo "❌ Failed to force unlock state, trying with lock override..."
-              terraform plan -input=false -out=plan.tfplan -lock=false
-            fi
-          else
-            echo "⚠️  Could not extract lock ID, trying with lock override..."
-            terraform plan -input=false -out=plan.tfplan -lock=false
-          fi
-        fi
-      else
-        echo "✅ Terraform plan completed successfully"
-      fi
-
-      terraform show -no-color plan.tfplan > plan.txt
-      echo "📄 Plan files created:"
-      ls -la plan.tfplan plan.txt
+    # Show plan summary
+    - terraform show -no-color plan.tfplan > plan.txt
   artifacts:
     paths:
       - terraform/plan.tfplan
       - terraform/plan.txt
     expire_in: "1 week"
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
-    - if: $CI_COMMIT_BRANCH == "develop"
-  needs: [terraform:validate]
-
-
-# Terraform apply job for development (automatic)
-terraform:apply:dev:
-  <<: *terraform_base
-  stage: deploy
+    - if: '$CI_COMMIT_BRANCH == "develop"'
   environment:
-    name: terraform-dev
-    on_stop: terraform:cleanup:dev
+    name: staging
+    action: prepare
+
+# ============================================================================
+# PLAN STAGE - PRODUCTION
+# ============================================================================
+
+# Plan for production environment (manual on main branch)
+terraform:plan:production:
+  stage: plan
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "production"
+    TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
+    TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    TF_HTTP_USERNAME: "gitlab-ci-token"
+    TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
+    # Select or create production workspace
+    - terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load production variables
     - |
-      # Function to extract lock ID from error output
-      extract_lock_id() {
-        local error_output="$1"
-        echo "$error_output" | grep -o 'ID: [a-f0-9-]*' | head -1 | sed 's/ID: //' | tr -d ' '
-      }
-
-      # Function to check for backend auth errors
-      is_backend_auth_error() {
-        local error_output="$1"
-        echo "$error_output" | grep -q "HTTP remote state endpoint requires auth"
-      }
-
-      echo "🚀 Starting Terraform apply for development..."
-
-      # Try to apply the plan, but handle backend authentication and state lock errors
-      if ! terraform apply -input=false -auto-approve plan.tfplan 2>&1; then
-        ERROR_OUTPUT="${PIPESTATUS[0]}"
-        echo "❌ Terraform apply failed with exit code: $ERROR_OUTPUT"
-
-        # Get the actual error output
-        ERROR_OUTPUT=$(terraform apply -input=false -auto-approve plan.tfplan 2>&1 || true)
-
-        # Check for backend authentication errors first
-        if is_backend_auth_error "$ERROR_OUTPUT"; then
-          echo "🔐 Backend authentication error detected!"
-          echo "💡 This indicates the GitLab HTTP backend is not properly configured"
-          echo ""
-          echo "🔧 Attempting to apply with lock override as fallback..."
-          terraform apply -input=false -auto-approve -lock=false plan.tfplan
-        else
-          # Handle state lock errors
-          LOCK_ID=$(extract_lock_id "$ERROR_OUTPUT")
-
-          if [ ! -z "$LOCK_ID" ]; then
-            echo "🔓 Found state lock ID: $LOCK_ID"
-            echo "🔧 Attempting to force unlock..."
-
-            # Try force unlock with backend config
-            if terraform force-unlock -force "$LOCK_ID"; then
-              echo "✅ Successfully force-unlocked state"
-
-              # Retry the apply
-              if terraform apply -input=false -auto-approve plan.tfplan; then
-                echo "✅ Terraform apply successful after force unlock"
-              else
-                echo "❌ Apply still failed after unlock, trying with lock override..."
-                terraform apply -input=false -auto-approve plan.tfplan -lock=false
-              fi
-            else
-              echo "❌ Failed to force unlock, trying with lock override..."
-              sleep 5
-              terraform apply -input=false -auto-approve plan.tfplan -lock=false
-            fi
-          else
-            echo "⚠️  Could not extract lock ID, trying with lock override..."
-            sleep 5
-            terraform apply -input=false -auto-approve plan.tfplan -lock=false
-          fi
-        fi
+      if [ -f "production.tfvars" ]; then
+        echo "Loading production variables from production.tfvars"
+        # Copy production variables to default location
+        cp production.tfvars terraform.tfvars
       else
-        echo "✅ Terraform apply successful"
+        echo "Warning: production.tfvars not found, using CI variables only"
       fi
 
-        # Create outputs file only on success
-        cat > terraform_outputs.env << EOF
-      TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip 2>/dev/null || echo "")
-      TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips 2>/dev/null || echo "{}")
-      TERRAFORM_CLUSTER_READY=true
-      FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null || echo "")
-      BACKEND_API_URL=$(terraform output -raw backend_api_url 2>/dev/null || echo "")
-      APP_DEPLOYMENT_STATUS=$(terraform output -raw app_deployment_status 2>/dev/null || echo "")
-      EOF
+    # Create plan
+    - terraform plan -out=plan.tfplan -input=false
 
-        echo "📄 Terraform outputs:"
-        cat terraform_outputs.env
+    # Show plan summary
+    - terraform show -no-color plan.tfplan > plan.txt
 
-        echo "🎉 Development Ajasta Application Deployment Complete!"
-        echo "🌐 Application Access:"
-        echo "   Frontend: $(terraform output -raw frontend_url 2>/dev/null || echo 'Not available')"
-        echo "   Backend API: $(terraform output -raw backend_api_url 2>/dev/null || echo 'Not available')"
-        echo "🚀 Application is ready for use!"
-
-      else
-        echo "❌ Terraform apply failed"
-
-        # Create outputs file with failure status
-        cat > terraform_outputs.env << EOF
-      TERRAFORM_MASTER_IP=""
-      TERRAFORM_WORKER_IPS={}
-      TERRAFORM_CLUSTER_READY=false
-      TERRAFORM_ERROR=true
-      EOF
-
-        echo "🚨 Error details:"
-        echo "This usually means:"
-        echo "1. Resources already exist (run terraform:cleanup:dev job)"
-        echo "2. Quota limits exceeded (check Yandex Cloud console)"
-        echo "3. State is out of sync (run terraform:cleanup:dev job)"
-
-        exit 1
-      fi
+    # Display plan in job output
+    - cat plan.txt
   artifacts:
     paths:
-      - terraform/terraform_outputs.env
-    reports:
-      dotenv: terraform/terraform_outputs.env
-    expire_in: "1 week"
-  rules:
-    - if: $CI_COMMIT_BRANCH == "develop"
-  needs: [terraform:plan]
-
-# Terraform cleanup job for development (manual)
-terraform:cleanup:dev:
-  <<: *terraform_base
-  stage: deploy
-  environment:
-    name: terraform-dev
-    action: stop
-  script:
-    - |
-      echo "🧹 Starting Terraform cleanup for development..."
-
-      # Make cleanup scripts executable
-      chmod +x ../scripts/terraform-destroy-all.sh
-      chmod +x ../scripts/cleanup-yandex-resources.sh
-
-      # Try complete destruction first
-      if ../scripts/terraform-destroy-all.sh --force; then
-        echo "✅ Terraform destruction completed"
-      else
-        echo "⚠️  Terraform destruction had issues, trying manual cleanup..."
-
-        # Fall back to manual cleanup
-        ../scripts/cleanup-yandex-resources.sh cleanup
-      fi
-
-      # Create cleanup completion marker
-      echo "TERRAFORM_CLEANUP_COMPLETED=true" > terraform_cleanup.env
-      echo "CLEANUP_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> terraform_cleanup.env
-
-    - cat terraform_cleanup.env
-  artifacts:
-    reports:
-      dotenv: terraform/terraform_cleanup.env
-  rules:
-    - if: $CI_COMMIT_BRANCH == "develop"
-      when: manual
-  allow_failure: true
-
-# Terraform apply job for production (manual deployment)
-deploy:tf:production:
-  <<: *terraform_base
-  stage: deploy
-  environment:
-    name: terraform-production
-    url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
-    on_stop: terraform:destroy:production
-  script:
-    - |
-      # Function to extract lock ID from error output
-      extract_lock_id() {
-        local error_output="$1"
-        echo "$error_output" | grep -o 'ID: [a-f0-9-]*' | head -1 | sed 's/ID: //' | tr -d ' '
-      }
-
-      # Function to check for backend auth errors
-      is_backend_auth_error() {
-        local error_output="$1"
-        echo "$error_output" | grep -q "HTTP remote state endpoint requires auth"
-      }
-
-      echo "🚀 Starting Terraform apply for production..."
-
-      # Try to apply the plan, but handle backend authentication and state lock errors
-      if ! terraform apply -input=false -auto-approve plan.tfplan 2>&1; then
-        ERROR_OUTPUT="${PIPESTATUS[0]}"
-        echo "❌ Terraform apply failed with exit code: $ERROR_OUTPUT"
-
-        # Get the actual error output
-        ERROR_OUTPUT=$(terraform apply -input=false -auto-approve plan.tfplan 2>&1 || true)
-
-        # Check for backend authentication errors first
-        if is_backend_auth_error "$ERROR_OUTPUT"; then
-          echo "🔐 Backend authentication error detected!"
-          echo "💡 This indicates the GitLab HTTP backend is not properly configured"
-          echo ""
-          echo "🔧 Attempting to apply with lock override as fallback..."
-          terraform apply -input=false -auto-approve -lock=false plan.tfplan
-        else
-          # Handle state lock errors
-          LOCK_ID=$(extract_lock_id "$ERROR_OUTPUT")
-
-          if [ ! -z "$LOCK_ID" ]; then
-            echo "🔓 Found state lock ID: $LOCK_ID"
-            echo "🔧 Attempting to force unlock..."
-
-            # Try force unlock with backend config
-            if terraform force-unlock -force "$LOCK_ID"; then
-              echo "✅ Successfully force-unlocked state"
-
-              # Retry the apply
-              if terraform apply -input=false -auto-approve plan.tfplan; then
-                echo "✅ Terraform apply successful after force unlock"
-              else
-                echo "❌ Apply still failed after unlock, trying with lock override..."
-                terraform apply -input=false -auto-approve plan.tfplan -lock=false
-              fi
-            else
-              echo "❌ Failed to force unlock, trying with lock override..."
-              sleep 5
-              terraform apply -input=false -auto-approve plan.tfplan -lock=false
-            fi
-          else
-            echo "⚠️  Could not extract lock ID, trying with lock override..."
-            sleep 5
-            terraform apply -input=false -auto-approve plan.tfplan -lock=false
-          fi
-        fi
-      else
-        echo "✅ Terraform apply successful"
-      fi
-
-        # Create outputs file only on success
-        cat > terraform_outputs.env << EOF
-      TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip 2>/dev/null || echo "")
-      TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips 2>/dev/null || echo "{}")
-      TERRAFORM_CLUSTER_READY=true
-      FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null || echo "")
-      BACKEND_API_URL=$(terraform output -raw backend_api_url 2>/dev/null || echo "")
-      APP_DEPLOYMENT_STATUS=$(terraform output -raw app_deployment_status 2>/dev/null || echo "")
-      EOF
-
-        echo "📄 Terraform outputs:"
-        cat terraform_outputs.env
-
-        echo "🎉 Production Ajasta Application Deployment Complete!"
-        echo "🌐 Application Access:"
-        echo "   Frontend: $(terraform output -raw frontend_url 2>/dev/null || echo 'Not available')"
-        echo "   Backend API: $(terraform output -raw backend_api_url 2>/dev/null || echo 'Not available')"
-        echo "🚀 Application is ready for use!"
-
-      else
-        echo "❌ Terraform apply failed"
-
-        # Create outputs file with failure status
-        cat > terraform_outputs.env << EOF
-      TERRAFORM_MASTER_IP=""
-      TERRAFORM_WORKER_IPS={}
-      TERRAFORM_CLUSTER_READY=false
-      TERRAFORM_ERROR=true
-      EOF
-
-        echo "🚨 Production deployment failed!"
-        echo "This usually means:"
-        echo "1. Resources already exist (check Yandex Cloud console)"
-        echo "2. Quota limits exceeded (request quota increase)"
-        echo "3. State is out of sync (contact administrator)"
-
-        exit 1
-      fi
-  artifacts:
-    paths:
-      - terraform/terraform_outputs.env
-    reports:
-      dotenv: terraform/terraform_outputs.env
+      - terraform/plan.tfplan
+      - terraform/plan.txt
     expire_in: "1 month"
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
-  needs: [terraform:plan]
+  environment:
+    name: production
+    action: prepare
+
+# ============================================================================
+# APPLY STAGE - STAGING
+# ============================================================================
+
+# Apply to staging (automatic on develop branch)
+terraform:apply:staging:
+  stage: apply
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "staging"
+    TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
+    TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    TF_HTTP_USERNAME: "gitlab-ci-token"
+    TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
+  script:
+    # Initialize backend
+    - terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load staging variables
+    - |
+      if [ -f "staging.tfvars" ]; then
+        cp staging.tfvars terraform.tfvars
+      fi
+
+    # Apply the plan
+    - terraform apply -input=false -auto-approve plan.tfplan
+
+    # Output results
+    - terraform output -json > outputs.json
+    - |
+      echo "Staging deployment completed successfully!"
+      echo ""
+      echo "Infrastructure outputs:"
+      terraform output -raw || true
+  artifacts:
+    paths:
+      - terraform/outputs.json
+    reports:
+      dotenv: terraform/terraform-outputs.env
+    expire_in: "1 week"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: on_success  # Automatic after successful plan
+  environment:
+    name: staging
+    url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
+    on_stop: terraform:destroy:staging
+  needs: [terraform:plan:staging]
+  allow_failure: false
+
+# ============================================================================
+# APPLY STAGE - PRODUCTION
+# ============================================================================
+
+# Apply to production (manual on main branch)
+terraform:apply:production:
+  stage: apply
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "production"
+    TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
+    TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    TF_HTTP_USERNAME: "gitlab-ci-token"
+    TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
+  script:
+    # Initialize backend
+    - terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load production variables
+    - |
+      if [ -f "production.tfvars" ]; then
+        cp production.tfvars terraform.tfvars
+      fi
+
+    # Apply the plan
+    - terraform apply -input=false -auto-approve plan.tfplan
+
+    # Output results
+    - terraform output -json > outputs.json
+    - |
+      echo "Production deployment completed successfully!"
+      echo ""
+      echo "Infrastructure outputs:"
+      terraform output -raw || true
+
+      # Create outputs file for GitLab environment
+      cat > terraform-outputs.env << EOF
+      TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip 2>/dev/null || echo "")
+      TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips 2>/dev/null || echo "{}")
+      FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null || echo "")
+      BACKEND_API_URL=$(terraform output -raw backend_api_url 2>/dev/null || echo "")
+      EOF
+  artifacts:
+    paths:
+      - terraform/outputs.json
+      - terraform/terraform-outputs.env
+    reports:
+      dotenv: terraform/terraform-outputs.env
+    expire_in: "1 month"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual  # Manual approval required for production
+  environment:
+    name: production
+    url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
+    on_stop: terraform:destroy:production
+  needs: [terraform:plan:production]
   timeout: 30m
 
-# Update kubeconfig after Terraform deployment
-k8s:update-kubeconfig:
-  stage: deploy
-  image: alpine:latest
-  before_script:
-    - apk add --no-cache openssh-client curl jq
-    - chmod +x scripts/update-kubeconfig.sh
-  script:
-    # Wait a bit for the cluster to be ready
-    - echo "⏳ Waiting 60 seconds for Kubernetes cluster to initialize..."
-    - sleep 60
-    # Run the kubeconfig update script
-    - scripts/update-kubeconfig.sh "$TERRAFORM_MASTER_IP"
-    # Verify the connection
-    - export KUBECONFIG="$HOME/.kube/config"
-    - kubectl cluster-info
-    - kubectl get nodes
-    - echo "✅ Kubeconfig updated and verified successfully"
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main"
-      when: manual
-  needs: [deploy:tf:production]
-  dependencies:
-    - deploy:tf:production
-  timeout: 10m
-  environment:
-    name: terraform-production
-    url: http://${TERRAFORM_MASTER_IP:-$YC_VM_EXTERNAL_IP}
+# ============================================================================
+# DESTROY STAGE
+# ============================================================================
 
-# Terraform destroy job for production (manual cleanup)
-terraform:destroy:production:
-  <<: *terraform_base
-  stage: deploy
-  environment:
-    name: terraform-production
-    action: stop
+# Destroy staging resources (manual)
+terraform:destroy:staging:
+  stage: destroy
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "staging"
+    TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
+    TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    TF_HTTP_USERNAME: "gitlab-ci-token"
+    TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
-    - terraform plan -destroy -out=destroy.tfplan
+    # Initialize backend
+    - terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load staging variables
+    - |
+      if [ -f "staging.tfvars" ]; then
+        cp staging.tfvars terraform.tfvars
+      fi
+
+    # Create destroy plan
+    - terraform plan -destroy -out=destroy.tfplan -input=false
+
+    # Show destroy plan
+    - terraform show -no-color destroy.tfplan
+
+    # Apply destroy
     - terraform apply -input=false -auto-approve destroy.tfplan
-    - echo "Production infrastructure destroyed successfully"
+
+    - echo "Staging infrastructure destroyed successfully"
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: '$CI_COMMIT_BRANCH == "develop"'
       when: manual
+      allow_failure: true
+  environment:
+    name: staging
+    action: stop
   needs: []
   timeout: 15m
-  allow_failure: true
+
+# Destroy production resources (manual, protected)
+terraform:destroy:production:
+  stage: destroy
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "production"
+    TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
+    TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    TF_HTTP_USERNAME: "gitlab-ci-token"
+    TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
+  script:
+    # Initialize backend
+    - terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load production variables
+    - |
+      if [ -f "production.tfvars" ]; then
+        cp production.tfvars terraform.tfvars
+      fi
+
+    # Create destroy plan
+    - terraform plan -destroy -out=destroy.tfplan -input=false
+
+    # Show destroy plan
+    - terraform show -no-color destroy.tfplan
+
+    # Apply destroy
+    - terraform apply -input=false -auto-approve destroy.tfplan
+
+    - echo "Production infrastructure destroyed successfully"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: true
+  environment:
+    name: production
+    action: stop
+  needs: []
+  timeout: 15m
