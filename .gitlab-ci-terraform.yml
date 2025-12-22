@@ -16,11 +16,8 @@ variables:
   TF_VAR_ssh_username: "ajasta"
   SSH_PRIVATE_KEY: "${YC_SSH_PRIVATE_KEY}"
 
-stages:
-  - validate
-  - plan
-  - apply
-  - destroy
+# Note: Stages are inherited from main .gitlab-ci.yml
+# Available stages: validate, plan, build, test, package, deploy
 
 # ============================================================================
 # BASE TEMPLATES
@@ -226,12 +223,12 @@ terraform:plan:production:
     action: prepare
 
 # ============================================================================
-# APPLY STAGE - STAGING
+# DEPLOY STAGE - STAGING
 # ============================================================================
 
 # Apply to staging (automatic on develop branch)
 terraform:apply:staging:
-  stage: apply
+  stage: deploy
   extends: .terraform_base
   variables:
     TF_STATE_NAME: "staging"
@@ -285,12 +282,12 @@ terraform:apply:staging:
   allow_failure: false
 
 # ============================================================================
-# APPLY STAGE - PRODUCTION
+# DEPLOY STAGE - PRODUCTION
 # ============================================================================
 
 # Apply to production (manual on main branch)
 terraform:apply:production:
-  stage: apply
+  stage: deploy
   extends: .terraform_base
   variables:
     TF_STATE_NAME: "production"
@@ -353,12 +350,12 @@ terraform:apply:production:
   timeout: 30m
 
 # ============================================================================
-# DESTROY STAGE
+# CLEANUP STAGE (uses deploy stage)
 # ============================================================================
 
 # Destroy staging resources (manual)
 terraform:destroy:staging:
-  stage: destroy
+  stage: deploy
   extends: .terraform_base
   variables:
     TF_STATE_NAME: "staging"
@@ -407,7 +404,7 @@ terraform:destroy:staging:
 
 # Destroy production resources (manual, protected)
 terraform:destroy:production:
-  stage: destroy
+  stage: deploy
   extends: .terraform_base
   variables:
     TF_STATE_NAME: "production"
