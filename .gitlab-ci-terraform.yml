@@ -116,7 +116,7 @@ terraform:security-scan:
 # PLAN STAGE - STAGING
 # ============================================================================
 
-# Plan for staging environment (automatic on develop branch)
+# Plan for staging environment (available on develop and main branches)
 terraform:plan:staging:
   stage: plan
   extends: .terraform_base
@@ -160,7 +160,12 @@ terraform:plan:staging:
       - terraform/plan.txt
     expire_in: "1 week"
   rules:
+    # Run automatically on develop branch
     - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: on_success
+    # Available manually on main branch for testing
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
   environment:
     name: staging
     action: prepare
@@ -226,7 +231,7 @@ terraform:plan:production:
 # DEPLOY STAGE - STAGING
 # ============================================================================
 
-# Apply to staging (automatic on develop branch)
+# Apply to staging (manual on both develop and main branches)
 terraform:apply:staging:
   stage: deploy
   extends: .terraform_base
@@ -272,8 +277,14 @@ terraform:apply:staging:
       dotenv: terraform/terraform-outputs.env
     expire_in: "1 week"
   rules:
+    # Available on develop branch (manual)
     - if: '$CI_COMMIT_BRANCH == "develop"'
-      when: manual  # Manual approval required for staging
+      when: manual
+      allow_failure: false
+    # Available on main branch (manual for testing)
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: false
   environment:
     name: staging
     url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
