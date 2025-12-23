@@ -153,7 +153,16 @@ terraform:plan:staging:
     TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
     # Initialize backend
-    - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5"
+    - >-
+      terraform init -backend=true
+      -backend-config="address=${TF_HTTP_ADDRESS}"
+      -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}"
+      -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}"
+      -backend-config="username=${TF_HTTP_USERNAME}"
+      -backend-config="password=${TF_HTTP_PASSWORD}"
+      -backend-config="lock_method=POST"
+      -backend-config="unlock_method=POST"
+      -backend-config="retry_wait_min=5"
 
     # Load staging variables
     - |
@@ -195,7 +204,16 @@ terraform:plan:production:
     TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
     # Initialize backend
-    - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5"
+    - >-
+      terraform init -backend=true
+      -backend-config="address=${TF_HTTP_ADDRESS}"
+      -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}"
+      -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}"
+      -backend-config="username=${TF_HTTP_USERNAME}"
+      -backend-config="password=${TF_HTTP_PASSWORD}"
+      -backend-config="lock_method=POST"
+      -backend-config="unlock_method=POST"
+      -backend-config="retry_wait_min=5"
 
     # Load production variables
     - |
@@ -239,7 +257,16 @@ terraform:apply:staging:
     TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
     # Initialize backend
-    - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5"
+    - >-
+      terraform init -backend=true
+      -backend-config="address=${TF_HTTP_ADDRESS}"
+      -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}"
+      -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}"
+      -backend-config="username=${TF_HTTP_USERNAME}"
+      -backend-config="password=${TF_HTTP_PASSWORD}"
+      -backend-config="lock_method=POST"
+      -backend-config="unlock_method=POST"
+      -backend-config="retry_wait_min=5"
 
     # Load staging variables
     - |
@@ -292,7 +319,16 @@ terraform:apply:production:
     TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
     # Initialize backend
-    - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5"
+    - >-
+      terraform init -backend=true
+      -backend-config="address=${TF_HTTP_ADDRESS}"
+      -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}"
+      -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}"
+      -backend-config="username=${TF_HTTP_USERNAME}"
+      -backend-config="password=${TF_HTTP_PASSWORD}"
+      -backend-config="lock_method=POST"
+      -backend-config="unlock_method=POST"
+      -backend-config="retry_wait_min=5"
 
     # Load production variables
     - |
@@ -421,7 +457,16 @@ terraform:destroy:staging:
     TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
     # Initialize backend
-    - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5"
+    - >-
+      terraform init -backend=true
+      -backend-config="address=${TF_HTTP_ADDRESS}"
+      -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}"
+      -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}"
+      -backend-config="username=${TF_HTTP_USERNAME}"
+      -backend-config="password=${TF_HTTP_PASSWORD}"
+      -backend-config="lock_method=POST"
+      -backend-config="unlock_method=POST"
+      -backend-config="retry_wait_min=5"
 
     # Load staging variables
     - |
@@ -462,7 +507,16 @@ terraform:destroy:production:
     TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
     # Initialize backend
-    - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5"
+    - >-
+      terraform init -backend=true
+      -backend-config="address=${TF_HTTP_ADDRESS}"
+      -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}"
+      -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}"
+      -backend-config="username=${TF_HTTP_USERNAME}"
+      -backend-config="password=${TF_HTTP_PASSWORD}"
+      -backend-config="lock_method=POST"
+      -backend-config="unlock_method=POST"
+      -backend-config="retry_wait_min=5"
 
     # Load production variables
     - |
