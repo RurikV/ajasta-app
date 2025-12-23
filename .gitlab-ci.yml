@@ -6,9 +6,10 @@
 # When pushing to main/develop, run the branch pipeline (not the MR pipeline)
 workflow:
   rules:
-    - if: '$CI_COMMIT_BRANCH'  # Allow branch pipelines first
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_OPEN_MERGE_REQUESTS'
-      when: never  # Block MR pipeline when branch commit exists
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+      when: always
 
 variables:
   # Docker Registry Configuration
@@ -184,8 +185,11 @@ terraform:plan:staging:
     expire_in: "1 week"
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: on_success
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
+  allow_failure: true
+  needs: []
 
 # Plan for production environment (manual on main branch)
 terraform:plan:production:
@@ -235,6 +239,8 @@ terraform:plan:production:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
+  allow_failure: true
+  needs: []
 
 # Apply to staging (manual on both develop and main branches)
 terraform:apply:staging:
