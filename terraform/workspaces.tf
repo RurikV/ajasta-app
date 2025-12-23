@@ -11,17 +11,17 @@ locals {
       # VM Configuration for staging
       master_core_fraction = 20
       worker_core_fraction = 20
-      master_memory = 4
-      worker_memory = 4
-      master_cores = 2
-      worker_cores = 2
+      master_memory        = 4
+      worker_memory        = 4
+      master_cores         = 2
+      worker_cores         = 2
 
       # Network configuration
       external_network_cidr = "172.16.18.0/28"
       internal_network_cidr = "10.10.1.0/24"
 
       # Cost optimization for staging
-      preemptible = true
+      preemptible    = true
       boot_disk_size = 20
 
       # Tags
@@ -36,17 +36,17 @@ locals {
       # VM Configuration for production
       master_core_fraction = 50
       worker_core_fraction = 50
-      master_memory = 8
-      worker_memory = 8
-      master_cores = 4
-      worker_cores = 4
+      master_memory        = 8
+      worker_memory        = 8
+      master_cores         = 4
+      worker_cores         = 4
 
       # Network configuration
       external_network_cidr = "172.16.19.0/28"
       internal_network_cidr = "10.10.2.0/24"
 
       # Production settings
-      preemptible = false
+      preemptible    = false
       boot_disk_size = 50
 
       # Tags
@@ -61,9 +61,9 @@ locals {
   # Common tags for all resources
   common_tags = merge(
     {
-      project     = "ajasta-app"
-      managed_by  = "terraform"
-      workspace   = terraform.workspace
+      project    = "ajasta-app"
+      managed_by = "terraform"
+      workspace  = terraform.workspace
     },
     local.current_env.tags
   )

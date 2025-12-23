@@ -197,15 +197,15 @@ variable "app_replicas" {
 variable "app_resources" {
   description = "Application resource constraints"
   type = object({
-    cpu_limit    = string
-    memory_limit = string
-    cpu_request  = string
+    cpu_limit      = string
+    memory_limit   = string
+    cpu_request    = string
     memory_request = string
   })
   default = {
-    cpu_limit    = "1000m"
-    memory_limit = "1Gi"
-    cpu_request  = "500m"
+    cpu_limit      = "1000m"
+    memory_limit   = "1Gi"
+    cpu_request    = "500m"
     memory_request = "512Mi"
   }
 }
