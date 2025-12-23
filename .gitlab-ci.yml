@@ -1,6 +1,16 @@
 ---
 # GitLab CI/CD Pipeline for Ajasta App
 
+# Prevent duplicate pipelines - prefer merge request pipelines over branch pipelines
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+      when: always
+
 variables:
   # Docker Registry Configuration
   DOCKER_REGISTRY: $CI_REGISTRY
