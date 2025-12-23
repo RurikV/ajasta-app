@@ -1,6 +1,15 @@
 ---
 # GitLab CI/CD Pipeline for Ajasta App
 
+# Workflow rules - prefer MR pipelines over branch pipelines
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+      when: never
+
 variables:
   # Docker Registry Configuration
   DOCKER_REGISTRY: $CI_REGISTRY
