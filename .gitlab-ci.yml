@@ -186,9 +186,6 @@ terraform:plan:staging:
     - if: '$CI_COMMIT_BRANCH == "develop"'
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
-  environment:
-    name: staging
-    action: prepare
 
 # Plan for production environment (manual on main branch)
 terraform:plan:production:
@@ -238,9 +235,6 @@ terraform:plan:production:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
-  environment:
-    name: production
-    action: prepare
 
 # Apply to staging (manual on both develop and main branches)
 terraform:apply:staging:
