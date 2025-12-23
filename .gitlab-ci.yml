@@ -1,6 +1,16 @@
 ---
 # GitLab CI/CD Pipeline for Ajasta App
 
+# Workflow rules to prevent duplicate pipelines
+# When there's an open MR, only run the MR pipeline (not the branch pipeline)
+# When there's no MR, run the branch pipeline
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+
 variables:
   # Docker Registry Configuration
   DOCKER_REGISTRY: $CI_REGISTRY
@@ -180,8 +190,9 @@ terraform:plan:staging:
     - if: '$CI_COMMIT_BRANCH == "develop"'
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME == "main"'
       when: manual
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME == "develop"'
   environment:
     name: staging
     action: prepare
@@ -234,7 +245,7 @@ terraform:plan:production:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME == "main"'
       when: manual
   environment:
     name: production
