@@ -171,7 +171,7 @@ terraform:plan:staging:
       fi
 
     # Create plan with automatic lock retry
-    - ${CI_PROJECT_DIR}/scripts/terraform-with-retry.sh plan -out=plan.tfplan -input=false
+    - ${CI_PROJECT_DIR}/terraform/scripts/terraform-with-retry.sh plan -out=plan.tfplan -input=false
 
     # Show plan summary
     - terraform show -no-color plan.tfplan > plan.txt
@@ -219,7 +219,7 @@ terraform:plan:production:
       fi
 
     # Create plan with automatic lock retry
-    - ${CI_PROJECT_DIR}/scripts/terraform-with-retry.sh plan -out=plan.tfplan -input=false
+    - ${CI_PROJECT_DIR}/terraform/scripts/terraform-with-retry.sh plan -out=plan.tfplan -input=false
 
     # Show plan summary
     - terraform show -no-color plan.tfplan > plan.txt
@@ -266,7 +266,7 @@ terraform:apply:staging:
       fi
 
     # Apply the plan with automatic lock retry
-    - ${CI_PROJECT_DIR}/scripts/terraform-with-retry.sh apply -input=false -auto-approve plan.tfplan
+    - ${CI_PROJECT_DIR}/terraform/scripts/terraform-with-retry.sh apply -input=false -auto-approve plan.tfplan
 
     # Output results
     - terraform output -json > outputs.json
@@ -325,7 +325,7 @@ terraform:apply:production:
       fi
 
     # Apply the plan with automatic lock retry
-    - ${CI_PROJECT_DIR}/scripts/terraform-with-retry.sh apply -input=false -auto-approve plan.tfplan
+    - ${CI_PROJECT_DIR}/terraform/scripts/terraform-with-retry.sh apply -input=false -auto-approve plan.tfplan
 
     # Output results
     - terraform output -json > outputs.json
@@ -460,13 +460,13 @@ terraform:destroy:staging:
       fi
 
     # Create destroy plan
-    - ${CI_PROJECT_DIR}/scripts/terraform-with-retry.sh plan -destroy -out=destroy.tfplan -input=false
+    - ${CI_PROJECT_DIR}/terraform/scripts/terraform-with-retry.sh plan -destroy -out=destroy.tfplan -input=false
 
     # Show destroy plan
     - terraform show -no-color destroy.tfplan
 
     # Apply destroy
-    - ${CI_PROJECT_DIR}/scripts/terraform-with-retry.sh apply -input=false -auto-approve destroy.tfplan
+    - ${CI_PROJECT_DIR}/terraform/scripts/terraform-with-retry.sh apply -input=false -auto-approve destroy.tfplan
 
     - echo "Staging infrastructure destroyed successfully"
   rules:
@@ -507,13 +507,13 @@ terraform:destroy:production:
       fi
 
     # Create destroy plan
-    - ${CI_PROJECT_DIR}/scripts/terraform-with-retry.sh plan -destroy -out=destroy.tfplan -input=false
+    - ${CI_PROJECT_DIR}/terraform/scripts/terraform-with-retry.sh plan -destroy -out=destroy.tfplan -input=false
 
     # Show destroy plan
     - terraform show -no-color destroy.tfplan
 
     # Apply destroy
-    - ${CI_PROJECT_DIR}/scripts/terraform-with-retry.sh apply -input=false -auto-approve destroy.tfplan
+    - ${CI_PROJECT_DIR}/terraform/scripts/terraform-with-retry.sh apply -input=false -auto-approve destroy.tfplan
 
     - echo "Production infrastructure destroyed successfully"
   rules:
