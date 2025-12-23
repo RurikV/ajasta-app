@@ -14,7 +14,6 @@ yc_zone      = "ru-central1-b"
 master_core_fraction = 20
 worker_core_fraction = 20
 master_memory        = 4
-worker_memory        = 4
 master_cores         = 2
 worker_cores         = 2
 worker_count         = 1 # Reduced for staging
@@ -39,18 +38,3 @@ labels = {
   managed_by  = "terraform"
   cost_center = "development"
 }
-
-# Application settings for staging
-app_environment = "staging"
-app_replicas    = 1
-app_resources = {
-  cpu_limit      = "500m"
-  memory_limit   = "512Mi"
-  cpu_request    = "200m"
-  memory_request = "256Mi"
-}
-
-# Database settings for staging
-db_instance_class = "db.t3.micro"
-db_storage_size   = 20
-db_multi_az       = false

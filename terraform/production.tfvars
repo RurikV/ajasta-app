@@ -14,7 +14,6 @@ yc_zone      = "ru-central1-b"
 master_core_fraction = 50
 worker_core_fraction = 50
 master_memory        = 8
-worker_memory        = 8
 master_cores         = 4
 worker_cores         = 4
 worker_count         = 3 # Full cluster for production
@@ -40,19 +39,3 @@ labels = {
   cost_center         = "business"
   data_classification = "confidential"
 }
-
-# Application settings for production
-app_environment = "production"
-app_replicas    = 3
-app_resources = {
-  cpu_limit      = "2000m"
-  memory_limit   = "2Gi"
-  cpu_request    = "1000m"
-  memory_request = "1Gi"
-}
-
-# Database settings for production
-db_instance_class       = "db.t3.medium"
-db_storage_size         = 100
-db_multi_az             = true
-backup_retention_period = 30
