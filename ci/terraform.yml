@@ -1,27 +1,9 @@
----
-# GitLab CI/CD Pipeline for Multi-Environment Terraform Deployment
-# This file handles Terraform infrastructure deployment for Staging and Production
-# Reference: https://gitlab.com/NickOsipov/terraform-gitlab-practice
-
-variables:
-  # Terraform configuration
-  TF_ROOT: "${CI_PROJECT_DIR}/terraform"
-  TF_CLI_ARGS: "-no-color"
-  TF_IN_AUTOMATION: "true"
-
-  # Yandex Cloud variables - configure in GitLab CI/CD Variables
-  TF_VAR_yc_cloud_id: "${YC_CLOUD_ID}"
-  TF_VAR_yc_folder_id: "${YC_FOLDER_ID}"
-  TF_VAR_yc_token: "${YC_TOKEN}"
-  TF_VAR_ssh_username: "ajasta"
-  SSH_PRIVATE_KEY: "${YC_SSH_PRIVATE_KEY}"
-
-# Note: Stages are inherited from main .gitlab-ci.yml
-# Available stages: validate, plan, build, test, package, deploy
-
 # ============================================================================
-# BASE TEMPLATES
+# TERRAFORM JOBS - Included in .gitlab-ci.yml
 # ============================================================================
+# Note: This file is included via include: directive
+# All variables and stages are inherited from main .gitlab-ci.yml
+# This file only contains job definitions - NOT a standalone pipeline!
 
 # Base template for all Terraform jobs
 .terraform_base:

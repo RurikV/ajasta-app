@@ -11,6 +11,18 @@ variables:
   DOCKER_IMAGE_TAG: $CI_COMMIT_SHA
   DOCKER_LATEST_TAG: "latest"
 
+  # Terraform Configuration
+  TF_ROOT: "${CI_PROJECT_DIR}/terraform"
+  TF_CLI_ARGS: "-no-color"
+  TF_IN_AUTOMATION: "true"
+
+  # Yandex Cloud variables - configure in GitLab CI/CD Variables
+  TF_VAR_yc_cloud_id: "${YC_CLOUD_ID}"
+  TF_VAR_yc_folder_id: "${YC_FOLDER_ID}"
+  TF_VAR_yc_token: "${YC_TOKEN}"
+  TF_VAR_ssh_username: "ajasta"
+  SSH_PRIVATE_KEY: "${YC_SSH_PRIVATE_KEY}"
+
   # Application Configuration
   # Convert CI_PROJECT_PATH to lowercase for Docker registry compatibility
   # Note: Lowercase conversion is done in job scripts for shell compatibility
