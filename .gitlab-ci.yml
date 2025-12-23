@@ -1,14 +1,6 @@
 ---
 # GitLab CI/CD Pipeline for Ajasta App
 
-# Prevent duplicate pipelines - prefer branch pipelines over merge request pipelines
-workflow:
-  rules:
-    - if: '$CI_COMMIT_BRANCH'
-      when: always
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-      when: never
-
 variables:
   # Docker Registry Configuration
   DOCKER_REGISTRY: $CI_REGISTRY
@@ -191,6 +183,10 @@ terraform:plan:staging:
     # Available manually on main branch for testing
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
+    # Available on merge requests
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+  needs: []
   environment:
     name: staging
     action: prepare
@@ -243,6 +239,9 @@ terraform:plan:production:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+  needs: []
   environment:
     name: production
     action: prepare
