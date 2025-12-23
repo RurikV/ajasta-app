@@ -1,5 +1,7 @@
 # Terraform Workspace Configuration
 # This file configures different environments (staging, production)
+# Note: With GitLab CI/CD HTTP backend, we use state files instead of workspaces
+# This configuration provides fallback for local development
 
 locals {
   # Environment-specific configuration
@@ -25,8 +27,10 @@ locals {
       boot_disk_size = 20
 
       # Tags
-      environment = "staging"
-      cost_center = "development"
+      tags = {
+        environment = "staging"
+        cost_center = "development"
+      }
     }
 
     production = {
@@ -50,13 +54,16 @@ locals {
       boot_disk_size = 50
 
       # Tags
-      environment = "production"
-      cost_center = "business"
+      tags = {
+        environment = "production"
+        cost_center = "business"
+      }
     }
   }
 
   # Current environment configuration
-  current_env = local.environments[terraform.workspace]
+  # Use lookup() to handle "default" workspace (fallback to staging)
+  current_env = lookup(local.environments, terraform.workspace, local.environments["staging"])
 
   # Common tags for all resources
   common_tags = merge(

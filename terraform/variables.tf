@@ -182,12 +182,6 @@ variable "labels" {
 }
 
 # Application-specific variables
-variable "app_environment" {
-  description = "Application environment (will be passed to deployed app)"
-  type        = string
-  default     = "development"
-}
-
 variable "app_replicas" {
   description = "Number of application replicas to deploy"
   type        = number
