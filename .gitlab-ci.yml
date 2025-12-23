@@ -2,14 +2,13 @@
 # GitLab CI/CD Pipeline for Ajasta App
 
 # Workflow rules to prevent duplicate pipelines
-# When there's an open MR, only run the MR pipeline (not the branch pipeline)
-# When there's no MR, run the branch pipeline
+# Prefer branch pipelines over MR pipelines
+# When pushing to main/develop, run the branch pipeline (not the MR pipeline)
 workflow:
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
-      when: never
-    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH'  # Allow branch pipelines first
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_OPEN_MERGE_REQUESTS'
+      when: never  # Block MR pipeline when branch commit exists
 
 variables:
   # Docker Registry Configuration
@@ -98,7 +97,6 @@ terraform:fmt:
   script:
     - terraform fmt -check -recursive || (terraform fmt -recursive -write=true && exit 1)
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "develop"'
     - if: '$CI_COMMIT_BRANCH == "main"'
   allow_failure: false
@@ -111,7 +109,6 @@ terraform:validate:
     - terraform init -backend=false
     - terraform validate
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "develop"'
     - if: '$CI_COMMIT_BRANCH == "main"'
   needs: [terraform:fmt]
@@ -138,7 +135,6 @@ terraform:security-scan:
       - terraform/tfsec-report.json
     expire_in: "1 week"
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "develop"'
     - if: '$CI_COMMIT_BRANCH == "main"'
   allow_failure: true
@@ -190,9 +186,6 @@ terraform:plan:staging:
     - if: '$CI_COMMIT_BRANCH == "develop"'
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME == "main"'
-      when: manual
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME == "develop"'
   environment:
     name: staging
     action: prepare
@@ -244,8 +237,6 @@ terraform:plan:production:
     expire_in: "1 month"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
-      when: manual
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_COMMIT_REF_NAME == "main"'
       when: manual
   environment:
     name: production
