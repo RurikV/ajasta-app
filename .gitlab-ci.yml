@@ -1,6 +1,13 @@
 ---
 # GitLab CI/CD Pipeline for Ajasta App
 
+# Workflow rules - prevent duplicate pipelines but allow all jobs
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
 variables:
   # Docker Registry Configuration
   DOCKER_REGISTRY: $CI_REGISTRY
@@ -186,7 +193,9 @@ terraform:plan:staging:
     # Available on merge requests
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       when: manual
-  needs: []
+  needs:
+    - job: terraform:validate
+      optional: true
   environment:
     name: staging
     action: prepare
@@ -241,7 +250,9 @@ terraform:plan:production:
       when: manual
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       when: manual
-  needs: []
+  needs:
+    - job: terraform:validate
+      optional: true
   environment:
     name: production
     action: prepare
