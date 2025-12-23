@@ -3,7 +3,7 @@
 
 # Include Terraform CI/CD configuration
 include:
-  - local: 'ci/terraform.yml'
+  - local: '.gitlab/include/terraform.yml'
 
 variables:
   # Docker Registry Configuration
