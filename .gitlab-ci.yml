@@ -170,8 +170,8 @@ terraform:plan:staging:
         echo "Warning: staging.tfvars not found, using CI variables only"
       fi
 
-    # Create plan
-    - terraform plan -out=plan.tfplan -input=false
+    # Create plan with automatic lock retry
+    - ../scripts/terraform-with-retry.sh plan -out=plan.tfplan -input=false
 
     # Show plan summary
     - terraform show -no-color plan.tfplan > plan.txt
@@ -218,8 +218,8 @@ terraform:plan:production:
         echo "Warning: production.tfvars not found, using CI variables only"
       fi
 
-    # Create plan
-    - terraform plan -out=plan.tfplan -input=false
+    # Create plan with automatic lock retry
+    - ../scripts/terraform-with-retry.sh plan -out=plan.tfplan -input=false
 
     # Show plan summary
     - terraform show -no-color plan.tfplan > plan.txt
@@ -265,8 +265,8 @@ terraform:apply:staging:
         cp staging.tfvars terraform.tfvars
       fi
 
-    # Apply the plan
-    - terraform apply -input=false -auto-approve plan.tfplan
+    # Apply the plan with automatic lock retry
+    - ../scripts/terraform-with-retry.sh apply -input=false -auto-approve plan.tfplan
 
     # Output results
     - terraform output -json > outputs.json
@@ -324,8 +324,8 @@ terraform:apply:production:
         cp production.tfvars terraform.tfvars
       fi
 
-    # Apply the plan
-    - terraform apply -input=false -auto-approve plan.tfplan
+    # Apply the plan with automatic lock retry
+    - ../scripts/terraform-with-retry.sh apply -input=false -auto-approve plan.tfplan
 
     # Output results
     - terraform output -json > outputs.json
@@ -460,13 +460,13 @@ terraform:destroy:staging:
       fi
 
     # Create destroy plan
-    - terraform plan -destroy -out=destroy.tfplan -input=false
+    - ../scripts/terraform-with-retry.sh plan -destroy -out=destroy.tfplan -input=false
 
     # Show destroy plan
     - terraform show -no-color destroy.tfplan
 
     # Apply destroy
-    - terraform apply -input=false -auto-approve destroy.tfplan
+    - ../scripts/terraform-with-retry.sh apply -input=false -auto-approve destroy.tfplan
 
     - echo "Staging infrastructure destroyed successfully"
   rules:
@@ -507,13 +507,13 @@ terraform:destroy:production:
       fi
 
     # Create destroy plan
-    - terraform plan -destroy -out=destroy.tfplan -input=false
+    - ../scripts/terraform-with-retry.sh plan -destroy -out=destroy.tfplan -input=false
 
     # Show destroy plan
     - terraform show -no-color destroy.tfplan
 
     # Apply destroy
-    - terraform apply -input=false -auto-approve destroy.tfplan
+    - ../scripts/terraform-with-retry.sh apply -input=false -auto-approve destroy.tfplan
 
     - echo "Production infrastructure destroyed successfully"
   rules:
