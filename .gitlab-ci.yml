@@ -1,11 +1,6 @@
 ---
 # GitLab CI/CD Pipeline for Ajasta App
 
-# Workflow: Always create pipeline for any branch, tag, or MR
-# This ensures all jobs are available and runnable
-workflow:
-  always: true
-
 variables:
   # Docker Registry Configuration
   DOCKER_REGISTRY: $CI_REGISTRY
