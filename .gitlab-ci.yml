@@ -144,15 +144,17 @@ terraform:security-scan:
 terraform:plan:staging:
   stage: plan
   extends: .terraform_base
-  variables:
-    TF_STATE_NAME: "staging"
-    TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
-    TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
-    TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
-    TF_HTTP_USERNAME: "gitlab-ci-token"
-    TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
-    # Initialize backend
+    # Debug: Verify environment variables are set
+    - echo "CI_API_V4_URL: ${CI_API_V4_URL}"
+    - echo "CI_PROJECT_ID: ${CI_PROJECT_ID}"
+    - echo "CI_JOB_TOKEN length: ${#CI_JOB_TOKEN}"
+    # Initialize backend using environment variables
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - export TF_HTTP_USERNAME="gitlab-ci-token"
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
     - |
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
@@ -195,15 +197,17 @@ terraform:plan:staging:
 terraform:plan:production:
   stage: plan
   extends: .terraform_base
-  variables:
-    TF_STATE_NAME: "production"
-    TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
-    TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
-    TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
-    TF_HTTP_USERNAME: "gitlab-ci-token"
-    TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
-    # Initialize backend
+    # Debug: Verify environment variables are set
+    - echo "CI_API_V4_URL: ${CI_API_V4_URL}"
+    - echo "CI_PROJECT_ID: ${CI_PROJECT_ID}"
+    - echo "CI_JOB_TOKEN length: ${#CI_JOB_TOKEN}"
+    # Initialize backend using environment variables
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - export TF_HTTP_USERNAME="gitlab-ci-token"
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
     - |
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
@@ -248,15 +252,13 @@ terraform:plan:production:
 terraform:apply:staging:
   stage: deploy
   extends: .terraform_base
-  variables:
-    TF_STATE_NAME: "staging"
-    TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
-    TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
-    TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
-    TF_HTTP_USERNAME: "gitlab-ci-token"
-    TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
-    # Initialize backend
+    # Initialize backend using environment variables
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - export TF_HTTP_USERNAME="gitlab-ci-token"
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
     - |
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
@@ -310,15 +312,13 @@ terraform:apply:staging:
 terraform:apply:production:
   stage: deploy
   extends: .terraform_base
-  variables:
-    TF_STATE_NAME: "production"
-    TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
-    TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
-    TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
-    TF_HTTP_USERNAME: "gitlab-ci-token"
-    TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
-    # Initialize backend
+    # Initialize backend using environment variables
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - export TF_HTTP_USERNAME="gitlab-ci-token"
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
     - |
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
@@ -448,15 +448,13 @@ k8s:update-kubeconfig:
 terraform:destroy:staging:
   stage: deploy
   extends: .terraform_base
-  variables:
-    TF_STATE_NAME: "staging"
-    TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
-    TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
-    TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
-    TF_HTTP_USERNAME: "gitlab-ci-token"
-    TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
-    # Initialize backend
+    # Initialize backend using environment variables
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - export TF_HTTP_USERNAME="gitlab-ci-token"
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
     - |
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
@@ -498,15 +496,13 @@ terraform:destroy:staging:
 terraform:destroy:production:
   stage: deploy
   extends: .terraform_base
-  variables:
-    TF_STATE_NAME: "production"
-    TF_HTTP_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
-    TF_HTTP_LOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
-    TF_HTTP_UNLOCK_ADDRESS: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
-    TF_HTTP_USERNAME: "gitlab-ci-token"
-    TF_HTTP_PASSWORD: "${CI_JOB_TOKEN}"
   script:
-    # Initialize backend
+    # Initialize backend using environment variables
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - export TF_HTTP_USERNAME="gitlab-ci-token"
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
     - |
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
