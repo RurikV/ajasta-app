@@ -703,7 +703,11 @@ validate:docker:
         chmod +x /usr/local/bin/hadolint
       else
         echo "Unknown OS, trying to download hadolint to /tmp"
-        wget -O /tmp/hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 2>/dev/null || curl -o /tmp/hadolint -L https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+        wget -O /tmp/hadolint \
+          https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 \
+          2>/dev/null || \
+          curl -o /tmp/hadolint -L \
+            https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
         chmod +x /tmp/hadolint
         export PATH=/tmp:$PATH
       fi
