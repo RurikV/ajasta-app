@@ -1,0 +1,225 @@
+---
+# Local override of containerd_config role (keeps ./other-k8s unchanged)
+# Ensures containerd is installed and configured for Kubernetes before
+# generating the default config and starting the service.
+
+- name: Check if containerd is available
+  ansible.builtin.command: command -v containerd
+  register: containerd_cmd
+  changed_when: false
+  failed_when: false
+
+# ----- RedHat family installation path -----
+- name: Install containerd on RedHat family
+  when:
+    - containerd_cmd.rc != 0
+    - ansible_os_family == 'RedHat'
+  block:
+    - name: Ensure dnf skips unavailable mirrors (avoid failing on unreachable mirrorlists)
+      ansible.builtin.lineinfile:
+        path: /etc/dnf/dnf.conf
+        regexp: '^skip_if_unavailable='
+        line: 'skip_if_unavailable=True'
+        insertafter: '^\[main\]'
+        create: true
+      failed_when: false
+
+    - name: Tune dnf.conf for reliability (non-fatal)
+      ansible.builtin.lineinfile:
+        path: /etc/dnf/dnf.conf
+        regexp: '^{{ item.key }}='
+        line: '{{ item.key }}={{ item.value }}'
+        insertafter: '^\[main\]'
+        create: true
+      loop: "{{ dnf_conf_tunables | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}={{ item.value }}"
+      failed_when: false
+
+    - name: Configure alternative CentOS Stream 9 mirrors (BaseOS/AppStream/CRB)
+      ansible.builtin.copy:
+        dest: /etc/yum.repos.d/ajasta-centos-stream-alt.repo
+        mode: '0644'
+        content: |
+          [ajasta-baseos]
+          name=CentOS Stream 9 - BaseOS (alt mirror)
+          baseurl={{ centos_stream_mirror_base }}/BaseOS/$basearch/os/
+          enabled=1
+          gpgcheck=0
+
+          [ajasta-appstream]
+          name=CentOS Stream 9 - AppStream (alt mirror)
+          baseurl={{ centos_stream_mirror_base }}/AppStream/$basearch/os/
+          enabled=1
+          gpgcheck=0
+
+          [ajasta-crb]
+          name=CentOS Stream 9 - CRB (alt mirror)
+          baseurl={{ centos_stream_mirror_base }}/CRB/$basearch/os/
+          enabled=1
+          gpgcheck=0
+      when: centos_stream_mirror_base is defined
+
+    - name: Disable default CentOS Stream repos (BaseOS/AppStream/CRB)
+      when: centos_disable_default_repos | default(false)
+      block:
+        - name: Disable BaseOS repo
+          ansible.builtin.lineinfile:
+            path: /etc/yum.repos.d/CentOS-Stream-BaseOS.repo
+            regexp: '^enabled='
+            line: 'enabled=0'
+          failed_when: false
+
+        - name: Disable AppStream repo
+          ansible.builtin.lineinfile:
+            path: /etc/yum.repos.d/CentOS-Stream-AppStream.repo
+            regexp: '^enabled='
+            line: 'enabled=0'
+          failed_when: false
+
+        - name: Disable CRB repo
+          ansible.builtin.lineinfile:
+            path: /etc/yum.repos.d/CentOS-Stream-CRB.repo
+            regexp: '^enabled='
+            line: 'enabled=0'
+          failed_when: false
+
+    - name: dnf makecache (non-fatal, 30s timeout)
+      ansible.builtin.shell: timeout 30 dnf -y makecache || true
+      args:
+        executable: /bin/bash
+      register: dnf_makecache_out
+      changed_when: false
+      failed_when: false
+
+    - name: Install prerequisite packages (dnf path) with timeout/retries
+      ansible.builtin.shell: |
+        set -euo pipefail
+        PKGS="yum-utils ca-certificates curl gnupg2"
+        for i in {1..3}; do
+          timeout {{ dnf_install_timeout | default(120) }} dnf -y install $PKGS && exit 0
+          echo "[containerd_config] dnf install attempt $i failed, retrying in 5s..." >&2
+          sleep 5
+        done
+        exit 1
+      args:
+        executable: /bin/bash
+      register: dnf_prereq_install
+      changed_when: dnf_prereq_install.rc == 0
+      failed_when: dnf_prereq_install.rc != 0
+
+    - name: Add Docker CE repo (CentOS/RHEL compatible)
+      ansible.builtin.command:
+        cmd: dnf -y config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+      register: add_repo_rh
+      changed_when: add_repo_rh.rc == 0
+      failed_when: false
+
+    - name: Install containerd.io package with timeout/retries
+      ansible.builtin.shell: |
+        set -euo pipefail
+        for i in {1..3}; do
+          timeout {{ dnf_install_timeout | default(180) }} dnf -y install containerd.io && exit 0
+          echo "[containerd_config] dnf install containerd.io attempt $i failed, retrying in 5s..." >&2
+          sleep 5
+        done
+        exit 1
+      args:
+        executable: /bin/bash
+      register: dnf_containerd_install
+      changed_when: dnf_containerd_install.rc == 0
+      failed_when: dnf_containerd_install.rc != 0
+
+# ----- Debian/Ubuntu family installation path -----
+- name: Install containerd on Debian/Ubuntu family
+  when:
+    - containerd_cmd.rc != 0
+    - ansible_os_family == 'Debian'
+  block:
+    - name: Install prerequisite packages (apt path)
+      ansible.builtin.apt:
+        update_cache: yes
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - apt-transport-https
+          - software-properties-common
+        state: present
+
+    - name: Ensure keyrings directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Install Docker APT GPG key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/{{ 'ubuntu' if (ansible_distribution | lower) == 'ubuntu' else 'debian' }}/gpg
+        dest: /etc/apt/keyrings/docker.gpg
+        mode: '0644'
+
+    - name: Determine apt architecture mapping
+      ansible.builtin.set_fact:
+        docker_arch: "{{ 'arm64' if ansible_architecture in ['aarch64','arm64'] else 'amd64' }}"
+
+    - name: Add Docker APT repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.list
+        mode: '0644'
+        content: |
+          deb [arch={{ docker_arch }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/{{ 'ubuntu' if (ansible_distribution | lower) == 'ubuntu' else 'debian' }} {{ (ansible_lsb.codename | default(ansible_distribution_release)) | lower }} stable
+
+    - name: Update apt cache (post repo add)
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Install containerd.io package
+      ansible.builtin.apt:
+        name: containerd.io
+        state: present
+
+# ----- Common configuration steps -----
+- name: Ensure containerd configuration directory exists
+  ansible.builtin.file:
+    path: "{{ containerd_config_path | dirname }}"
+    state: directory
+    mode: '0755'
+
+- name: Stat containerd config path
+  ansible.builtin.stat:
+    path: "{{ containerd_config_path }}"
+  register: containerd_cfg
+
+- name: Generate default containerd config when missing
+  ansible.builtin.shell: "containerd config default > {{ containerd_config_path }}"
+  args:
+    executable: /bin/bash
+  when: not containerd_cfg.stat.exists
+
+- name: Ensure SystemdCgroup = true in containerd config
+  ansible.builtin.replace:
+    path: "{{ containerd_config_path }}"
+    regexp: '^\s*SystemdCgroup\s*=\s*false'
+    replace: '            SystemdCgroup = true'
+  register: systemdcgroup_change
+  notify: Restart containerd
+
+- name: Ensure pause sandbox_image is set to requested repo:version
+  ansible.builtin.replace:
+    path: "{{ containerd_config_path }}"
+    regexp: '^(\s*sandbox_image\s*=\s*").*(")'
+    replace: '\\1{{ containerd_pause_image_repo }}:{{ containerd_pause_image_version }}\\2'
+  register: pauseimg_change
+  notify: Restart containerd
+
+- name: Ensure containerd service is enabled and started
+  ansible.builtin.service:
+    name: "{{ containerd_service }}"
+    state: started
+    enabled: true
+
+- name: Wait for containerd socket
+  ansible.builtin.wait_for:
+    path: /run/containerd/containerd.sock
+    timeout: 120

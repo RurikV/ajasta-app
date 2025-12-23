@@ -89,7 +89,7 @@
         <h2>Order Details</h2>
         <p>Order ID: <span th:text="${orderId}"></span></p>
         <p>Order Date: <span th:text="${orderDate}"></span></p>
-        <p>Delivery Address: <span th:text="${deliveryAddress}"></span></p>
+        <p>Address: <span th:text="${address}"></span></p>
         <p>Total Items: <span th:text="${totalItems}"></span></p>
 
         <div class="order-items" th:utext="${orderItemsHtml}">

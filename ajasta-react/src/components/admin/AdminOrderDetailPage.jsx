@@ -111,38 +111,63 @@ const AdminOrderDetailPage = () => {
 
                 <div className="order-items">
                     <h3>Order Items</h3>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Item</th>
-                                <th>Price</th>
-                                <th>Quantity</th>
-                                <th>Subtotal</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {order.orderItems.map(item => (
-                                <tr key={item.id}>
-                                    <td>
-                                        <div className="item-details">
-                                            <img
-                                                src={item.menu.imageUrl}
-                                                alt={item.menu.name}
-                                                className="item-image"
-                                            />
-                                            <div>
-                                                <div className="item-name">{item.menu.name}</div>
-                                                <div className="item-description">{item.menu.description}</div>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td>${item.pricePerUnit.toFixed(2)}</td>
-                                    <td>{item.quantity}</td>
-                                    <td>${item.subtotal.toFixed(2)}</td>
+                    {order.orderItems && order.orderItems.length > 0 ? (
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Item</th>
+                                    <th>Price</th>
+                                    <th>Quantity</th>
+                                    <th>Subtotal</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {order.orderItems.map(item => (
+                                    <tr key={item.id}>
+                                        <td>
+                                            <div className="item-details">
+                                                <img
+                                                    src={item.itemImageUrl}
+                                                    alt={item.itemName}
+                                                    className="item-image"
+                                                />
+                                                <div>
+                                                    <div className="item-name">{item.itemName}</div>
+                                                    <div className="item-description">{item.itemDescription}</div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td>${item.pricePerUnit.toFixed(2)}</td>
+                                        <td>{item.quantity}</td>
+                                        <td>${item.subtotal.toFixed(2)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : (
+                        (order.booking || order.bookingDetails) && (
+                            <div className="booking-details-card" style={{ border: '1px solid #eee', borderRadius: 8, padding: 16 }}>
+                                <div className="info-row">
+                                    <span className="label">Type:</span>
+                                    <span className="value">Booking</span>
+                                </div>
+                                {order.resourceId != null && (
+                                    <div className="info-row">
+                                        <span className="label">Resource ID:</span>
+                                        <span className="value">{order.resourceId}</span>
+                                    </div>
+                                )}
+                                <div className="info-row">
+                                    <span className="label">Title:</span>
+                                    <span className="value">{order.bookingTitle || 'Booking'}</span>
+                                </div>
+                                <div className="info-row" style={{ alignItems: 'flex-start' }}>
+                                    <span className="label">Details:</span>
+                                    <pre className="value" style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{order.bookingDetails || 'Booking details not available'}</pre>
+                                </div>
+                            </div>
+                        )
+                    )}
                 </div>
 
                 <div className="order-actions">
@@ -154,8 +179,6 @@ const AdminOrderDetailPage = () => {
                     >
                         <option value="INITIALIZED">Initialized</option>
                         <option value="CONFIRMED">Confirmed</option>
-                        <option value="ON_THE_WAY">On the way</option>
-                        <option value="DELIVERED">Delivered</option>
                         <option value="CANCELLED">Cancelled</option>
                         <option value="FAILED">Failed</option>
                     </select>

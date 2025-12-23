@@ -1,0 +1,96 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ajasta-frontend
+  namespace: ajasta
+  labels:
+    app: ajasta
+    component: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ajasta
+      component: frontend
+  template:
+    metadata:
+      labels:
+        app: ajasta
+        component: frontend
+    spec:
+      # Schedule on worker nodes (avoid master/control-plane nodes)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane
+                operator: DoesNotExist
+      volumes:
+      - name: webroot
+        emptyDir: {}
+      initContainers:
+      - name: fix-api-base-url
+        image: vladimirryrik/ajasta-frontend:alpine
+        env:
+        - name: FRONTEND_API_BASE
+          value: "/api"
+        command: ["/bin/sh","-c"]
+        args:
+          - |
+            set -e
+            rm -rf /work && mkdir -p /work
+            cp -r /usr/share/nginx/html/* /work/
+            # Use relative path for Ingress routing (browser makes requests to same origin)
+            BASE="${FRONTEND_API_BASE:-/api}"
+            # Rewrite all absolute URLs to use relative path routed by Ingress
+            find /work -type f \( -name "*.js" -o -name "*.html" -o -name "*.map" -o -name "*.css" \) -exec sed -i \
+              -e "s#http://\${external_ip}:8090/api#${BASE}#gI" \
+              -e "s#https://\${external_ip}:8090/api#${BASE}#gI" \
+              -e "s#http://\${external_ip}:8090##gI" \
+              -e "s#https://\${external_ip}:8090##gI" \
+              -e "s#http://localhost:8090/api#${BASE}#gI" \
+              -e "s#https://localhost:8090/api#${BASE}#gI" \
+              -e "s#http://localhost:8090##gI" \
+              -e "s#https://localhost:8090##gI" \
+              -e "s#http://ajasta-backend:8090/api#${BASE}#gI" \
+              -e "s#https://ajasta-backend:8090/api#${BASE}#gI" \
+              -e "s#http://ajasta-backend:8090##gI" \
+              -e "s#https://ajasta-backend:8090##gI" \
+              -e "s#\${external_ip}##gI" {} + || true
+        volumeMounts:
+        - name: webroot
+          mountPath: /work
+      containers:
+      - name: frontend
+        image: vladimirryrik/ajasta-frontend:alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: webroot
+          mountPath: /usr/share/nginx/html
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"

@@ -1,0 +1,238 @@
+---
+# Role: yc_open_sg_http
+# Purpose: Open inbound TCP ports (80/443, optional NodePort) in Yandex Cloud
+#          Security Group(s) attached to the master VM.
+
+- name: Check yc CLI availability
+  ansible.builtin.command: yc --version
+  register: _yc_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if yc CLI is not available
+  ansible.builtin.fail:
+    msg: >-
+      yc CLI not found. Please install and authenticate the Yandex Cloud CLI on the Ansible runner.
+      Docs: https://cloud.yandex.com/en-ru/docs/cli/quickstart
+  when: _yc_check.rc != 0
+
+- name: Set effective master public IP
+  ansible.builtin.set_fact:
+    _master_ip_effective: "{{ master_public_ip if (master_public_ip | length) > 0 else (hostvars[groups['k8s_master'][0]].ansible_host | default('')) }}"
+
+- name: Set KUBECONFIG environment (for optional NodePort detection)
+  ansible.builtin.set_fact:
+    _env_kube:
+      KUBECONFIG: "{{ kubeconfig_path }}"
+
+- name: Optionally auto-detect ingress-nginx HTTP NodePort
+  when: sg_add_nodeport | bool and (sg_nodeport | length) == 0
+  ansible.builtin.shell: |
+    kubectl -n ingress-nginx get svc ingress-nginx-controller \
+      -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}' 2>/dev/null | tr -d '\n'
+  environment: "{{ _env_kube }}"
+  register: _auto_nodeport
+  changed_when: false
+  failed_when: false
+
+- name: Set effective nodePort (if any)
+  ansible.builtin.set_fact:
+    _nodeport_effective: "{{ (sg_nodeport if (sg_nodeport | length) > 0 else (_auto_nodeport.stdout | default(''))) | trim }}"
+
+# --- Robust SG discovery section ---
+# 1) Prefer discovery by master public IP (matches instance NAT address)
+- name: Discover instance ID by matching master public IP (best effort)
+  when: (sg_id | length) == 0 and (_master_ip_effective | length) > 0
+  ansible.builtin.shell: |
+    set -e
+    python3 - <<'PY'
+    import sys, json, subprocess
+    ip = "{{ _master_ip_effective }}"
+    # Get instances JSON via yc CLI
+    data = json.loads(subprocess.check_output(["yc", "compute", "instance", "list", "--format", "json"]))
+    def nat_ips(inst):
+        nis = inst.get("networkInterfaces", inst.get("network_interfaces", []))
+        out = []
+        for n in nis:
+            p4 = n.get("primaryV4Address", n.get("primary_v4_address", {}))
+            nat = p4.get("oneToOneNat", p4.get("one_to_one_nat", {}))
+            a = nat.get("address")
+            if a:
+                out.append(a)
+        return out
+    match = [i for i in data if ip in nat_ips(i)]
+    print(match[0].get("id", "") if match else "")
+    PY
+  register: _inst_id_by_ip
+  changed_when: false
+  failed_when: false
+
+- name: Discover SG IDs from instance ID (by public IP)
+  when: (sg_id | length) == 0 and (_inst_id_by_ip.stdout | length) > 0
+  ansible.builtin.shell: >-
+    yc compute instance get {{ _inst_id_by_ip.stdout | trim }} --format json | python3 -c 'import sys,json; j=json.load(sys.stdin); sgs=[]; 
+    nis=j.get("networkInterfaces", j.get("network_interfaces", []));
+    [sgs.extend(n.get("securityGroupIds", n.get("security_group_ids", []))) for n in nis];
+    print(" ".join(sorted(set(sgs))))'
+  register: _sg_ids_from_inst_by_ip
+  changed_when: false
+  failed_when: false
+
+# 2) Fallback: discover by instance name (existing behavior)
+- name: Discover Security Group IDs from instance name (fallback)
+  when: (sg_id | length) == 0
+  ansible.builtin.shell: >-
+    yc compute instance get {{ instance_name | quote }} --format json | python3 -c 'import sys,json; j=json.load(sys.stdin); sgs=[]; ni=j.get("networkInterfaces", j.get("network_interfaces", [])); [sgs.extend(n.get("securityGroupIds", n.get("security_group_ids", []))) for n in ni]; print(" ".join(sorted(set(sgs))))'
+  register: _sg_ids_from_instance
+  changed_when: false
+  failed_when: false
+
+- name: Normalize SG IDs from discovery (strings)
+  ansible.builtin.set_fact:
+    _sg_ids_by_ip_str: "{{ (_sg_ids_from_inst_by_ip.stdout | default('') | trim) if (_sg_ids_from_inst_by_ip is defined) else '' }}"
+    _sg_ids_by_name_str: "{{ (_sg_ids_from_instance.stdout | default('') | trim) if (_sg_ids_from_instance is defined) else '' }}"
+
+- name: Parse SG ID lists
+  ansible.builtin.set_fact:
+    _sg_ids_by_ip_list: "{{ _sg_ids_by_ip_str.split() if (_sg_ids_by_ip_str | length) > 0 else [] }}"
+    _sg_ids_by_name_list: "{{ _sg_ids_by_name_str.split() if (_sg_ids_by_name_str | length) > 0 else [] }}"
+
+- name: Compute effective SG IDs
+  ansible.builtin.set_fact:
+    _sg_ids_effective: "{{ ([sg_id] if (sg_id | length) > 0 else (_sg_ids_by_ip_list if (_sg_ids_by_ip_list | length) > 0 else _sg_ids_by_name_list)) }}"
+
+# 3) Optional last resort: if only one SG exists in folder, suggest using it
+- name: Suggest default SG when only one exists in folder (diagnostic only)
+  when: (_sg_ids_effective | length) == 0
+  ansible.builtin.shell: >-
+    yc vpc security-group list --format json | python3 -c 'import sys,json; s=json.load(sys.stdin); 
+    print(s[0]["id"] if isinstance(s,list) and len(s)==1 else "")'
+  register: _single_sg_in_folder
+  changed_when: false
+  failed_when: false
+
+- name: Debug SG discovery summary
+  ansible.builtin.debug:
+    msg:
+      - "Master public IP used for discovery: {{ _master_ip_effective | default('') }}"
+      - "Instance ID matched by IP: {{ _inst_id_by_ip.stdout | default('') | trim }}"
+      - "SG IDs (by IP): {{ _sg_ids_from_inst_by_ip.stdout | default('') }}"
+      - "SG IDs (by instance name): {{ _sg_ids_from_instance.stdout | default('') }}"
+      - "Effective SG IDs: {{ _sg_ids_effective | default([]) }}"
+      - "Single SG in folder (diagnostic): {{ _single_sg_in_folder.stdout | default('') }}"
+  changed_when: false
+
+- name: Stop softly if no Security Groups could be discovered
+  when: (_sg_ids_effective | length) == 0 and not (auto_create_sg | default(false) | bool)
+  ansible.builtin.debug:
+    msg:
+      - "No Security Group IDs discovered."
+      - "Provide sg_id explicitly (e.g., -e sg_id=XXXX) or ensure instance_name is correct."
+      - "Tip: You appear to have {{ 'one' if (_single_sg_in_folder.stdout | length) > 0 else 'multiple' }} SG(s) in the folder. {{ 'Consider using -e sg_id=' + _single_sg_in_folder.stdout if (_single_sg_in_folder.stdout | length) > 0 else '' }}"
+  changed_when: false
+
+# --- Auto-create a Security Group and attach it when none were found ---
+- name: Auto-create SG when none discovered (prepare instance and NIC info)
+  when: (_sg_ids_effective | length) == 0 and (auto_create_sg | default(false) | bool)
+  ansible.builtin.shell: >-
+    yc compute instance get {{ ( _inst_id_by_ip.stdout | default('') | trim ) if (_inst_id_by_ip is defined and (_inst_id_by_ip.stdout | default('') | trim) | length > 0) else (instance_name | quote) }} --format json
+  register: _inst_get_json
+  changed_when: false
+  failed_when: false
+
+- name: Parse NIC ID and network ID from instance JSON
+  when: (_sg_ids_effective | length) == 0 and (auto_create_sg | default(false) | bool) and (_inst_get_json.stdout | default('') | length) > 0
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import sys, json
+    j=json.loads(sys.stdin.read())
+    nis=j.get('networkInterfaces', j.get('network_interfaces', []))
+    if not nis:
+      print('::')
+      raise SystemExit(0)
+    ni=nis[0]
+    nid=ni.get('index', 0)
+    nic_id=ni.get('id', '')
+    net_id=ni.get('networkId', ni.get('network_id',''))
+    sgs=ni.get('securityGroupIds', ni.get('security_group_ids', []))
+    print(f"{nic_id}:{net_id}:{nid}:{' '.join(sgs)}")
+    PY
+  args:
+    stdin: "{{ _inst_get_json.stdout }}"
+  register: _nic_and_net
+  changed_when: false
+  failed_when: false
+
+- name: Set parsed NIC facts
+  when: (_sg_ids_effective | length) == 0 and (auto_create_sg | default(false) | bool)
+  ansible.builtin.set_fact:
+    _parsed_nic_id: "{{ (_nic_and_net.stdout | default('') ).split(':')[0] | default('') }}"
+    _parsed_net_id: "{{ (_nic_and_net.stdout | default('') ).split(':')[1] | default('') }}"
+    _parsed_nic_index: "{{ (_nic_and_net.stdout | default('') ).split(':')[2] | default('0') }}"
+    _parsed_existing_sg: "{{ (_nic_and_net.stdout | default('') ).split(':')[3] | default('') }}"
+
+- name: Try re-use existing SG named ajasta-http-sg (if present)
+  when: (_sg_ids_effective | length) == 0 and (auto_create_sg | default(false) | bool)
+  ansible.builtin.shell: |
+    yc vpc security-group list --format json | python3 - <<'PY'
+    import sys, json
+    s=json.load(sys.stdin)
+    print("" if not isinstance(s,list) else next((i.get("id","") for i in s if i.get("name")=="ajasta-http-sg"),""))
+    PY
+  register: _existing_sg_id
+  changed_when: false
+  failed_when: false
+
+- name: Create Security Group ajasta-http-sg if missing
+  when: (_sg_ids_effective | length) == 0 and (auto_create_sg | default(false) | bool) and ((_existing_sg_id.stdout | default('') | trim) | length) == 0
+  ansible.builtin.shell: >-
+    yc vpc security-group create --name ajasta-http-sg {{ ('--network-id ' + _parsed_net_id) if (_parsed_net_id | length) > 0 else '' }} --format json | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))'
+  register: _created_sg_id
+  changed_when: true
+  failed_when: false
+
+- name: Compute SG ID to attach
+  when: (_sg_ids_effective | length) == 0 and (auto_create_sg | default(false) | bool)
+  ansible.builtin.set_fact:
+    _new_sg_id: "{{ (_existing_sg_id.stdout | default('') | trim) if ((_existing_sg_id.stdout | default('') | trim) | length) > 0 else (_created_sg_id.stdout | default('') | trim) }}"
+
+- name: Attach SG to master NIC (preserving existing SGs)
+  when: (_sg_ids_effective | length) == 0 and (auto_create_sg | default(false) | bool) and ((_new_sg_id | default('') | length) > 0)
+  ansible.builtin.shell: >-
+    yc compute instance update-network-interface {{ ( _inst_id_by_ip.stdout | default('') | trim ) if (_inst_id_by_ip is defined and (_inst_id_by_ip.stdout | default('') | trim) | length > 0) else (instance_name | quote) }} \
+    --network-interface-index {{ _parsed_nic_index | default('0') }} \
+    --security-group-ids {{ ((_parsed_existing_sg.split() if (_parsed_existing_sg | default('') | length) > 0 else []) + [_new_sg_id]) | unique | join(' ') }}
+  register: _attach_sg
+  changed_when: true
+  failed_when: false
+
+- name: Seed effective SG IDs with created/attached
+  when: (_sg_ids_effective | length) == 0 and (auto_create_sg | default(false) | bool) and ((_new_sg_id | default('') | length) > 0)
+  ansible.builtin.set_fact:
+    _sg_ids_effective: "{{ ((_parsed_existing_sg.split() if (_parsed_existing_sg | default('') | length) > 0 else []) + [_new_sg_id]) | unique }}"
+
+- name: Add ingress rules for required ports (ignore duplicates)
+  when: (_sg_ids_effective | length) > 0
+  ansible.builtin.shell: |
+    yc vpc security-group update --id {{ item.0 }} \
+      --add-rule "direction=ingress,protocol=tcp,ports={{ item.1 }}-{{ item.1 }},v4-cidr-blocks={{ sg_cidrs | join(',') }}" || true
+  loop: "{{ _sg_ids_effective | product((sg_ports + ([(_nodeport_effective | int)] if (sg_add_nodeport | bool) and (_nodeport_effective | length) > 0 else []))) | list }}"
+  register: _sg_update_try
+  changed_when: false
+  failed_when: false
+
+- name: Show SG update attempts
+  when: (_sg_ids_effective | length) > 0
+  ansible.builtin.debug:
+    msg:
+      - "Security Group IDs: {{ _sg_ids_effective | join(', ') }}"
+      - "Tried to ensure ports: {{ sg_ports + ([(_nodeport_effective | int)] if (sg_add_nodeport | bool) and (_nodeport_effective | length) > 0 else []) }}"
+      - "Results (non-fatal):"
+      - "{{ _sg_update_try.results | map(attribute='stdout') | list }}"
+
+- name: Final hint if nothing was changed
+  when: (_sg_ids_effective | length) == 0 and fail_soft | bool
+  ansible.builtin.debug:
+    msg:
+      - "No SG IDs were detected or provided."
+      - "Please run again with -e sg_id=YOUR_SG_ID or set instance_name correctly."

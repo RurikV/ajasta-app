@@ -57,4 +57,11 @@ public class UserController {
         return ResponseEntity.ok(userService.addSavedEmail(email));
     }
 
+    @PutMapping("/{id}/roles")
+    @PreAuthorize("hasAuthority('ADMIN')")
+    public ResponseEntity<Response<UserDTO>> updateUserRoles(@PathVariable("id") Long userId,
+                                                             @RequestBody List<String> roles) {
+        return ResponseEntity.ok(userService.updateUserRoles(userId, roles));
+    }
+
 }

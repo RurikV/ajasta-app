@@ -15,11 +15,13 @@ import top.ajasta.AjastaApp.security.JwtUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -30,6 +32,8 @@ public class AuthServiceImpl implements AuthService{
     private final PasswordEncoder passwordEncoder;
     private final JwtUtils jwtUtils;
     private final RoleRepository roleRepository;
+    private final jakarta.servlet.http.HttpServletRequest request;
+    private final jakarta.servlet.http.HttpServletResponse response;
 
 
     @Override
@@ -98,17 +102,33 @@ public class AuthServiceImpl implements AuthService{
             throw new BadRequestException("Invalid Password");
         }
 
-        // Generate a token
-        String token = jwtUtils.generateToken(user.getEmail());
+        // Generate a token bound to current User-Agent and a per-session cookie to prevent token pasting
+        String ua = request != null ? request.getHeader("User-Agent") : null;
+        String uaHash = jwtUtils.hashUserAgent(ua);
+        String sessionId = UUID.randomUUID().toString();
+
+        // Issue HttpOnly session cookie (AJASTA_SID) used to bind JWT to this browser session
+        try {
+            ResponseCookie sidCookie = ResponseCookie.from("AJASTA_SID", sessionId)
+                    .httpOnly(true)
+                    .secure(false) // set to true when serving over HTTPS
+                    .path("/")
+                    .sameSite("Lax")
+                    .maxAge(30L * 24 * 60 * 60) // 30 days in seconds (align with JWT)
+                    .build();
+            if (response != null) {
+                response.addHeader("Set-Cookie", sidCookie.toString());
+            }
+        } catch (Exception ignored) {}
+
+        String token = jwtUtils.generateToken(user.getEmail(), uaHash, sessionId);
 
         // Extract role names as a list
         List<String> roleNames = user.getRoles().stream()
                 .map(Role::getName)
                 .toList();
 
-
         LoginResponse loginResponse = new LoginResponse();
-
         loginResponse.setToken(token);
         loginResponse.setRoles(roleNames);
 

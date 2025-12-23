@@ -1,7 +1,6 @@
 package top.ajasta.AjastaApp.order.entity;
 
 
-import top.ajasta.AjastaApp.menu.entity.Menu;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -26,9 +25,11 @@ public class OrderItem {
     @JoinColumn(name = "order_id")
     private Order order;
 
-    @ManyToOne
-    @JoinColumn(name = "menu_id")
-    private Menu menu;
+    // Snapshot fields retained after removal of Menu entity
+    private String itemName;
+    @Column(length = 2000)
+    private String itemDescription;
+    private String itemImageUrl;
 
     private int quantity;
 

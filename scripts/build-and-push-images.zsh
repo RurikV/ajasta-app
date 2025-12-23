@@ -81,9 +81,10 @@ echo "⚛️ Building frontend image for amd64 platform and external access via 
 log "Building $DOCKERHUB_USER/ajasta-frontend:alpine"
 cd ajasta-react
 
-# Build frontend with dynamic API URL that will work with the external IP
-# The API_BASE_URL will be set to work with the external IP on port 8090
-docker build --platform linux/amd64 --build-arg API_BASE_URL="http://\${EXTERNAL_IP}:8090/api" -t "$DOCKERHUB_USER/ajasta-frontend:alpine" .
+# Build frontend with relative API URL for Kubernetes Ingress routing
+# The API_BASE_URL uses relative path "/api" which works with Ingress
+# For VM deployments with external IPs, the initContainer in K8s manifests handles URL rewriting
+docker build --platform linux/amd64 --build-arg API_BASE_URL="/api" -t "$DOCKERHUB_USER/ajasta-frontend:alpine" .
 cd ..
 
 # List built images

@@ -1,0 +1,715 @@
+---
+# Local override of kubeadm_init from ./other-k8s
+# Goal: make API readiness reliable by ensuring the kubeconfig points to a
+# locally reachable endpoint (127.0.0.1) instead of the cloud public IP.
+# Keep this role idempotent and minimal.
+
+- name: Check if kubeadm admin.conf already exists
+  ansible.builtin.stat:
+    path: "{{ kubeconfig_path }}"
+  register: kube_admin_conf
+
+- name: Check if kube-apiserver manifest exists
+  ansible.builtin.stat:
+    path: "/etc/kubernetes/manifests/kube-apiserver.yaml"
+  register: apiserver_manifest
+
+# Ensure swap is disabled (required by kubelet/kubeadm)
+- name: Disable swap at runtime
+  ansible.builtin.command: swapoff -a
+  changed_when: false
+  failed_when: false
+
+- name: Remove active swap entries from /etc/fstab (idempotent)
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^\s*[^#].*\s+swap\s+'
+    state: absent
+  register: fstab_swap_change
+  failed_when: false
+
+# Pre-pull Kubernetes images using a mirror with fallback to avoid long waits/failures
+- name: Try to pre-pull Kubernetes images from primary mirror (non-fatal)
+  ansible.builtin.command:
+    cmd: kubeadm config images pull --image-repository={{ kubeadm_image_repository_primary }}
+  register: kubeadm_images_pull_primary
+  changed_when: false
+  failed_when: false
+  when: (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
+
+- name: Try to pre-pull Kubernetes images from fallback repo if primary failed (non-fatal)
+  ansible.builtin.command:
+    cmd: kubeadm config images pull --image-repository={{ kubeadm_image_repository_fallback }}
+  register: kubeadm_images_pull_fallback
+  changed_when: false
+  failed_when: false
+  when: ((not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)) and kubeadm_images_pull_primary.rc != 0
+
+- name: Choose image repository for kubeadm init
+  ansible.builtin.set_fact:
+    kubeadm_repo_chosen: >-
+      {{ (kubeadm_images_pull_primary.rc == 0) | ternary(kubeadm_image_repository_primary,
+         (kubeadm_images_pull_fallback.rc | default(1)) == 0 | ternary(kubeadm_image_repository_fallback,
+         kubeadm_image_repository_fallback)) }}
+  when: (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
+
+- name: Detect and validate advertise address before kubeadm init
+  ansible.builtin.shell: |
+    set -euo pipefail
+    # Get the default internal IP for API server advertise address
+    INTERNAL_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/ {for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}' || echo "")
+    if [ -z "$INTERNAL_IP" ]; then
+      # Fallback: get first non-loopback IPv4
+      INTERNAL_IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' | head -n1)
+    fi
+    
+    # Validate we got an IP
+    if [ -z "$INTERNAL_IP" ]; then
+      echo "ERROR: Could not detect internal IP address" >&2
+      exit 1
+    fi
+    
+    # Validate IP format
+    if ! echo "$INTERNAL_IP" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
+      echo "ERROR: Invalid IP format: $INTERNAL_IP" >&2
+      exit 1
+    fi
+    
+    # Check if IP is actually bound to an interface
+    if ! ip addr show | grep -q "inet $INTERNAL_IP/"; then
+      echo "WARNING: IP $INTERNAL_IP is not bound to any local interface" >&2
+      echo "Available IPs:" >&2
+      ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' >&2
+    fi
+    
+    echo "$INTERNAL_IP"
+  args:
+    executable: /bin/bash
+  register: detected_advertise_address
+  changed_when: false
+  when: (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
+
+- name: Show detected advertise address
+  ansible.builtin.debug:
+    msg: "Detected advertise address: {{ detected_advertise_address.stdout | default('N/A') }}"
+  when: detected_advertise_address is defined
+
+- name: Check if previous kubeadm init failed and needs cleanup
+  ansible.builtin.stat:
+    path: /etc/kubernetes/manifests/kube-apiserver.yaml
+  register: old_apiserver_manifest
+  when: (not kube_admin_conf.stat.exists) and (not apiserver_manifest.stat.exists)
+
+- name: Cleanup failed kubeadm init if admin.conf missing but manifests exist
+  ansible.builtin.shell: |
+    set -euo pipefail
+    echo "Detected incomplete kubeadm init (manifests exist but no admin.conf)"
+    echo "Resetting kubeadm to allow fresh initialization..."
+    kubeadm reset -f
+    rm -rf /etc/cni/net.d
+    rm -rf /var/lib/kubelet/*
+    rm -rf /etc/kubernetes/
+    systemctl restart containerd
+    systemctl restart kubelet
+  args:
+    executable: /bin/bash
+  register: kubeadm_reset_output
+  when: 
+    - (not kube_admin_conf.stat.exists)
+    - old_apiserver_manifest is defined
+    - old_apiserver_manifest.stat.exists
+
+- name: Show kubeadm reset output
+  ansible.builtin.debug:
+    var: kubeadm_reset_output.stdout_lines
+  when: kubeadm_reset_output is defined and kubeadm_reset_output.stdout_lines is defined
+
+- name: Pause after reset to allow cleanup
+  ansible.builtin.pause:
+    seconds: 10
+  when: kubeadm_reset_output is defined and kubeadm_reset_output.changed
+
+- name: Pre-flight checks before kubeadm init
+  ansible.builtin.shell: |
+    set -euo pipefail
+    EXIT_CODE=0
+    
+    echo "=== Pre-flight Checks for kubeadm init ==="
+    
+    # Check 1: Memory (minimum 2GB recommended)
+    MEM_MB=$(free -m | awk '/^Mem:/ {print $2}')
+    echo "Available memory: ${MEM_MB}MB"
+    if [ "$MEM_MB" -lt 1800 ]; then
+      echo "WARNING: Less than 2GB memory available. Kubernetes may fail to start." >&2
+      EXIT_CODE=1
+    fi
+    
+    # Check 2: Disk space for /var/lib/kubelet (minimum 10GB free)
+    DISK_GB=$(df -BG /var/lib 2>/dev/null | awk 'NR==2 {gsub(/G/,"",$4); print $4}')
+    echo "Available disk space on /var/lib: ${DISK_GB}GB"
+    if [ "$DISK_GB" -lt 10 ]; then
+      echo "WARNING: Less than 10GB free on /var/lib. May cause image pull or pod startup issues." >&2
+      EXIT_CODE=1
+    fi
+    
+    # Check 3: Port 6443 should NOT be in use
+    if ss -tlnp 2>/dev/null | grep -q ':6443' || netstat -tlnp 2>/dev/null | grep -q ':6443'; then
+      echo "ERROR: Port 6443 is already in use!" >&2
+      ss -tlnp 2>/dev/null | grep ':6443' || netstat -tlnp 2>/dev/null | grep ':6443' >&2
+      EXIT_CODE=1
+    else
+      echo "Port 6443: Available"
+    fi
+    
+    # Check 4: Port 2379 (etcd) should NOT be in use (unless etcd already running)
+    if ss -tlnp 2>/dev/null | grep -q ':2379' || netstat -tlnp 2>/dev/null | grep -q ':2379'; then
+      # This is okay if etcd container is already running from previous init
+      echo "Port 2379: Already in use (etcd may be running from previous init)"
+    else
+      echo "Port 2379: Available"
+    fi
+    
+    # Check 5: Required directories writable
+    for dir in /etc/kubernetes /var/lib/kubelet /etc/cni; do
+      if [ ! -d "$dir" ]; then
+        mkdir -p "$dir" 2>/dev/null || {
+          echo "ERROR: Cannot create directory $dir" >&2
+          EXIT_CODE=1
+        }
+      fi
+      if [ ! -w "$dir" ]; then
+        echo "ERROR: Directory $dir is not writable" >&2
+        EXIT_CODE=1
+      else
+        echo "Directory $dir: Writable"
+      fi
+    done
+    
+    # Check 6: Container runtime accessible
+    if ! crictl version >/dev/null 2>&1; then
+      echo "ERROR: crictl not working. Container runtime may not be ready." >&2
+      EXIT_CODE=1
+    else
+      echo "Container runtime: Accessible"
+    fi
+    
+    echo "=== Pre-flight checks complete ==="
+    exit $EXIT_CODE
+  args:
+    executable: /bin/bash
+  register: preflight_checks
+  changed_when: false
+  failed_when: false
+  when: (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
+
+- name: Show pre-flight check results
+  ansible.builtin.debug:
+    var: preflight_checks.stdout_lines
+  when:
+    - preflight_checks is defined
+    - preflight_checks is not skipped
+
+- name: Fail if critical pre-flight checks failed
+  ansible.builtin.fail:
+    msg: |
+      Pre-flight checks failed! Fix the issues above before kubeadm init can succeed.
+      Common issues:
+      - Insufficient memory (need at least 2GB)
+      - Insufficient disk space (need at least 10GB free in /var/lib)
+      - Port 6443 already in use by another process
+      - Container runtime not accessible
+      
+      Review the pre-flight check output above for specific failures.
+  when:
+    - preflight_checks is defined
+    - preflight_checks is not skipped
+    - preflight_checks.rc != 0
+
+- name: Initialize control plane with kubeadm when not initialized or manifests missing
+  ansible.builtin.shell: |
+    set -euo pipefail
+    INTERNAL_IP="{{ detected_advertise_address.stdout }}"
+    echo "[kubeadm_init] Using advertise address: $INTERNAL_IP"
+    
+    # Show system resources before init
+    echo "[kubeadm_init] System resources:"
+    free -h | head -2
+    df -h / | tail -1
+    
+    kubeadm init \
+      --pod-network-cidr={{ pod_cidr }} \
+      --image-repository={{ kubeadm_repo_chosen | default(kubeadm_image_repository_fallback) }} \
+      --apiserver-advertise-address="$INTERNAL_IP" \
+      --apiserver-bind-port=6443 \
+      --v=5
+  args:
+    executable: /bin/bash
+  register: kubeadm_init_output
+  when: (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
+
+- name: Show kubeadm init output for debugging
+  ansible.builtin.debug:
+    var: kubeadm_init_output.stdout_lines
+  when: kubeadm_init_output is defined and kubeadm_init_output.stdout_lines is defined
+
+- name: Ensure kubelet service is enabled and started
+  ansible.builtin.service:
+    name: kubelet
+    enabled: true
+    state: started
+
+- name: Ensure root kubeconfig directory exists
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Copy admin.conf for root kubectl convenience (idempotent)
+  ansible.builtin.copy:
+    src: "{{ kubeconfig_path }}"
+    dest: /root/.kube/config
+    owner: root
+    group: root
+    mode: '0600'
+    remote_src: true
+  failed_when: false
+
+- name: Verify kubeconfig uses internal IP (kubeadm should have set this correctly)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    grep 'server:' {{ kubeconfig_path }} || echo "No server entry found"
+  args:
+    executable: /bin/bash
+  register: kubeconfig_server_check
+  changed_when: false
+  failed_when: false
+
+- name: Show kubeconfig server endpoint
+  ansible.builtin.debug:
+    var: kubeconfig_server_check.stdout_lines
+
+- name: Restart kubelet to reconcile static pods (best-effort)
+  ansible.builtin.service:
+    name: kubelet
+    state: restarted
+  failed_when: false
+
+- name: Pause to allow kubelet to start pulling static pod images
+  ansible.builtin.pause:
+    seconds: 10
+
+- name: Wait for etcd static pod manifest to exist
+  ansible.builtin.wait_for:
+    path: /etc/kubernetes/manifests/etcd.yaml
+    timeout: 60
+  register: etcd_manifest_wait
+  failed_when: false
+
+- name: Check if etcd manifest exists
+  ansible.builtin.stat:
+    path: /etc/kubernetes/manifests/etcd.yaml
+  register: etcd_manifest_stat
+
+- name: Wait for etcd container to be created and running (up to 3 minutes)
+  ansible.builtin.shell: |
+    set -o pipefail
+    # Check if etcd container exists and is running
+    crictl ps 2>/dev/null | grep etcd | grep -q Running
+  args:
+    executable: /bin/bash
+  register: etcd_container_check
+  changed_when: false
+  retries: 36
+  delay: 5
+  until: etcd_container_check.rc == 0
+  failed_when: false
+  when: etcd_manifest_stat.stat.exists
+
+- name: Check etcd container status
+  ansible.builtin.shell: |
+    set -o pipefail
+    echo "=== All etcd containers ==="
+    crictl ps -a 2>/dev/null | grep etcd || echo "No etcd containers found"
+  args:
+    executable: /bin/bash
+  register: etcd_status_check
+  changed_when: false
+  failed_when: false
+
+- name: Show etcd container status
+  ansible.builtin.debug:
+    var: etcd_status_check.stdout_lines
+
+- name: Get etcd container logs if exists
+  ansible.builtin.shell: |
+    set -o pipefail
+    CONTAINER_ID=$(crictl ps -a 2>/dev/null | grep etcd | awk '{print $1}' | head -n1)
+    if [ -n "$CONTAINER_ID" ]; then
+      echo "=== etcd container ID: $CONTAINER_ID ==="
+      crictl logs --tail=50 "$CONTAINER_ID" 2>&1 || echo "Failed to get etcd logs"
+    else
+      echo "No etcd container found"
+    fi
+  args:
+    executable: /bin/bash
+  register: etcd_logs
+  changed_when: false
+  failed_when: false
+
+- name: Show etcd logs
+  ansible.builtin.debug:
+    var: etcd_logs.stdout_lines
+
+- name: Wait for etcd to be healthy on port 2379 (up to 2 minutes)
+  ansible.builtin.shell: |
+    set -o pipefail
+    # Check if etcd is listening on port 2379
+    ss -tlnp 2>/dev/null | grep -q ':2379' || netstat -tlnp 2>/dev/null | grep -q ':2379'
+  args:
+    executable: /bin/bash
+  register: etcd_port_check
+  changed_when: false
+  retries: 24
+  delay: 5
+  until: etcd_port_check.rc == 0
+  failed_when: false
+
+- name: Show etcd port status
+  ansible.builtin.shell: |
+    set -o pipefail
+    echo "=== Ports 2379 and 2380 status ==="
+    ss -tlnp 2>/dev/null | grep -E ':(2379|2380)' || netstat -tlnp 2>/dev/null | grep -E ':(2379|2380)' || echo "etcd ports not listening"
+  args:
+    executable: /bin/bash
+  register: etcd_port_status
+  changed_when: false
+  failed_when: false
+
+- name: Show etcd port binding
+  ansible.builtin.debug:
+    var: etcd_port_status.stdout_lines
+
+- name: Pause briefly to let etcd stabilize before API server checks
+  ansible.builtin.pause:
+    seconds: 10
+
+- name: Wait for etcd to actually accept connections (health check)
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      # Try to connect to etcd using netcat or curl to verify it's accepting connections
+      # First try: simple TCP connection test using bash built-in
+      (echo > /dev/tcp/127.0.0.1/2379) 2>/dev/null && exit 0
+      # Second try: HTTP health check (etcd v3 health endpoint)
+      timeout 2 curl -s http://127.0.0.1:2379/health 2>/dev/null | grep -q 'true' && exit 0
+      # Third try: etcdctl if available
+      if command -v etcdctl >/dev/null 2>&1; then
+        ETCDCTL_API=3 etcdctl --endpoints=http://127.0.0.1:2379 endpoint health 2>/dev/null | grep -q 'healthy' && exit 0
+      fi
+      exit 1
+    executable: /bin/bash
+  register: etcd_health_check
+  changed_when: false
+  retries: 36
+  delay: 5
+  until: etcd_health_check.rc == 0
+
+- name: Show etcd health check result
+  ansible.builtin.debug:
+    msg: "etcd health check {{ 'PASSED' if etcd_health_check.rc == 0 else 'FAILED after retries' }}"
+
+- name: Fail if etcd is not healthy
+  ansible.builtin.fail:
+    msg: |
+      etcd failed to become healthy after {{ 36 * 5 }} seconds (36 retries × 5 seconds).
+      The etcd container may be failing to start or accept connections.
+      
+      Common etcd issues:
+      - etcd container image pull failures
+      - Insufficient resources (CPU/memory)
+      - Disk I/O issues or slow storage
+      - Network issues preventing container startup
+      - Certificate or TLS configuration problems
+      
+      Review the etcd container logs above for specific error messages.
+      You can also check etcd status manually on the host:
+        crictl ps -a | grep etcd
+        crictl logs <container-id>
+        journalctl -u kubelet | grep etcd
+  when: etcd_health_check.rc != 0
+
+# Diagnostic tasks to understand API server startup
+- name: Check kubelet service status
+  ansible.builtin.command: systemctl status kubelet --no-pager -l
+  register: kubelet_status_check
+  changed_when: false
+  failed_when: false
+
+- name: Show kubelet status
+  ansible.builtin.debug:
+    var: kubelet_status_check.stdout_lines
+
+- name: Get recent kubelet logs (last 50 lines)
+  ansible.builtin.command: journalctl -u kubelet -n 50 --no-pager
+  register: kubelet_logs
+  changed_when: false
+  failed_when: false
+
+- name: Show kubelet logs
+  ansible.builtin.debug:
+    var: kubelet_logs.stdout_lines
+
+- name: Check if static pod manifests exist
+  ansible.builtin.shell: ls -la /etc/kubernetes/manifests/
+  register: manifests_check
+  changed_when: false
+  failed_when: false
+
+- name: Show static pod manifests
+  ansible.builtin.debug:
+    var: manifests_check.stdout_lines
+
+- name: Check if kube-apiserver container is running (crictl)
+  ansible.builtin.shell: |
+    set -o pipefail
+    crictl ps 2>/dev/null | grep kube-apiserver || echo "No kube-apiserver container found"
+  args:
+    executable: /bin/bash
+  register: apiserver_container_check
+  changed_when: false
+  failed_when: false
+
+- name: Show API server container status
+  ansible.builtin.debug:
+    var: apiserver_container_check.stdout_lines
+
+- name: Get kube-apiserver container logs if it exists
+  ansible.builtin.shell: |
+    set -o pipefail
+    CONTAINER_ID=$(crictl ps -a 2>/dev/null | grep kube-apiserver | awk '{print $1}' | head -n1)
+    if [ -n "$CONTAINER_ID" ]; then
+      echo "=== Container ID: $CONTAINER_ID ==="
+      crictl logs --tail=100 "$CONTAINER_ID" 2>&1 || echo "Failed to get logs"
+    else
+      echo "No kube-apiserver container found"
+    fi
+  args:
+    executable: /bin/bash
+  register: apiserver_logs
+  changed_when: false
+  failed_when: false
+
+- name: Show API server container logs
+  ansible.builtin.debug:
+    var: apiserver_logs.stdout_lines
+
+- name: Check if port 6443 is listening
+  ansible.builtin.shell: |
+    set -o pipefail
+    ss -tlnp | grep :6443 || netstat -tlnp | grep :6443 || echo "Port 6443 not listening"
+  args:
+    executable: /bin/bash
+  register: port_check
+  changed_when: false
+  failed_when: false
+
+- name: Show port 6443 status
+  ansible.builtin.debug:
+    var: port_check.stdout_lines
+
+# Pre-checks before attempting API server wait - fail fast if fundamentals are broken
+- name: Quick re-check that etcd is still healthy before API server wait
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      # Quick TCP check to etcd
+      (echo > /dev/tcp/127.0.0.1/2379) 2>/dev/null && exit 0
+      # Fallback: check if etcd port is listening
+      ss -tlnp 2>/dev/null | grep -q ':2379' || netstat -tlnp 2>/dev/null | grep -q ':2379'
+    executable: /bin/bash
+  register: etcd_precheck
+  changed_when: false
+  failed_when: false
+
+- name: Fail early if etcd is not healthy
+  ansible.builtin.fail:
+    msg: |
+      etcd is no longer responding on port 2379 before API server readiness check.
+      The API server cannot start without a healthy etcd backend.
+      
+      Check etcd status:
+        crictl ps -a | grep etcd
+        crictl logs <etcd-container-id>
+        journalctl -u kubelet | grep etcd
+  when: etcd_precheck.rc != 0
+
+- name: Verify API server container exists before waiting
+  ansible.builtin.shell: |
+    set -o pipefail
+    crictl ps -a 2>/dev/null | grep kube-apiserver | grep -qE 'Running|Created|Exited'
+  args:
+    executable: /bin/bash
+  register: apiserver_exists_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail early if API server container doesn't exist
+  ansible.builtin.fail:
+    msg: |
+      kube-apiserver container does not exist yet.
+      This usually means kubelet hasn't started the static pod or the manifest is missing.
+      
+      Check:
+        ls -la /etc/kubernetes/manifests/kube-apiserver.yaml
+        journalctl -u kubelet -n 50 | grep apiserver
+        crictl ps -a
+  when: apiserver_exists_check.rc != 0
+
+# Wait until API returns healthy; try readyz first, then nodes
+- block:
+    - name: Wait for API server to respond (readyz or get nodes)
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl --kubeconfig={{ kubeconfig_path }} --request-timeout=5s get --raw=/readyz >/dev/null 2>&1 \
+          || kubectl --kubeconfig={{ kubeconfig_path }} --request-timeout=5s get nodes --no-headers >/dev/null 2>&1
+      args:
+        executable: /bin/bash
+      register: apiserver_wait
+      changed_when: false
+      retries: "{{ apiserver_wait_retries }}"
+      delay: "{{ apiserver_wait_delay }}"
+      until: apiserver_wait.rc == 0
+  rescue:
+    - name: API wait failed - collect final diagnostics
+      ansible.builtin.debug:
+        msg: "API server failed to respond after {{ apiserver_wait_retries }} retries. Collecting final diagnostics..."
+
+    - name: Final check - kubelet status
+      ansible.builtin.command: systemctl status kubelet --no-pager -l
+      register: final_kubelet_status
+      changed_when: false
+      failed_when: false
+
+    - name: Show final kubelet status
+      ansible.builtin.debug:
+        var: final_kubelet_status.stdout_lines
+
+    - name: Final check - kubelet logs (last 100 lines)
+      ansible.builtin.command: journalctl -u kubelet -n 100 --no-pager
+      register: final_kubelet_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Show final kubelet logs
+      ansible.builtin.debug:
+        var: final_kubelet_logs.stdout_lines
+
+    - name: Final check - API server container
+      ansible.builtin.shell: |
+        set -o pipefail
+        echo "=== All containers ==="
+        crictl ps -a 2>/dev/null || echo "crictl not available"
+        echo ""
+        echo "=== kube-apiserver container ==="
+        crictl ps -a 2>/dev/null | grep kube-apiserver || echo "No kube-apiserver container"
+      args:
+        executable: /bin/bash
+      register: final_container_check
+      changed_when: false
+      failed_when: false
+
+    - name: Show final container status
+      ansible.builtin.debug:
+        var: final_container_check.stdout_lines
+
+    - name: Final check - API server logs
+      ansible.builtin.shell: |
+        set -o pipefail
+        CONTAINER_ID=$(crictl ps -a 2>/dev/null | grep kube-apiserver | awk '{print $1}' | head -n1)
+        if [ -n "$CONTAINER_ID" ]; then
+          echo "=== kube-apiserver logs (last 200 lines) ==="
+          crictl logs --tail=200 "$CONTAINER_ID" 2>&1
+        else
+          echo "No kube-apiserver container found for logs"
+        fi
+      args:
+        executable: /bin/bash
+      register: final_apiserver_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Show final API server logs
+      ansible.builtin.debug:
+        var: final_apiserver_logs.stdout_lines
+
+    - name: Final check - port 6443
+      ansible.builtin.shell: |
+        set -o pipefail
+        echo "=== Listening ports ==="
+        ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || echo "No port info available"
+      args:
+        executable: /bin/bash
+      register: final_port_check
+      changed_when: false
+      failed_when: false
+
+    - name: Show final port status
+      ansible.builtin.debug:
+        var: final_port_check.stdout_lines
+
+    - name: Fail with detailed error message
+      ansible.builtin.fail:
+        msg: |
+          API server failed to become ready after {{ apiserver_wait_retries * apiserver_wait_delay }} seconds ({{ apiserver_wait_retries }} retries).
+          Note: Timeout reduced from 10 minutes to 2.5 minutes to fail fast on persistent issues.
+          
+          Pre-checks that PASSED:
+          ✓ etcd is healthy and accepting connections on port 2379
+          ✓ kube-apiserver container exists (checked by kubelet)
+          
+          The API server container exists but is not responding to readiness checks.
+          Review the diagnostic output above for specific errors.
+          
+          Common causes and what to check:
+          1. Container crash loop:
+             - Check API server logs above for panic, fatal errors, or exit codes
+             - Look for "Error" or "failed" in the container logs
+          
+          2. Certificate/TLS issues:
+             - API server logs: "certificate", "TLS", "x509", "unauthorized"
+             - Check: /etc/kubernetes/pki/ certificate files exist and are valid
+          
+          3. etcd connection problems (even though etcd port is listening):
+             - API server logs: "etcdserver", "context deadline exceeded"
+             - Verify: curl http://127.0.0.1:2379/health
+          
+          4. Resource constraints:
+             - Container logs: "OOMKilled" or memory errors
+             - Check: crictl stats (memory/CPU usage)
+          
+          5. Configuration errors in API server manifest:
+             - Check: /etc/kubernetes/manifests/kube-apiserver.yaml
+             - Verify: all referenced files/paths exist
+          
+          Manual troubleshooting:
+            crictl ps -a | grep apiserver
+            crictl logs <container-id>
+            journalctl -u kubelet -n 100
+            kubectl --kubeconfig=/etc/kubernetes/admin.conf get --raw=/readyz
+
+- name: Generate a reusable join command token (best-effort)
+  ansible.builtin.shell: kubeadm token create --print-join-command
+  register: join_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Save join command to /root/join-worker.sh (best-effort)
+  ansible.builtin.copy:
+    dest: /root/join-worker.sh
+    mode: '0755'
+    owner: root
+    group: root
+    content: "{{ (join_cmd.stdout | default('')) | trim }}\n"
+  when: (join_cmd.stdout | default('') | trim | length) > 0

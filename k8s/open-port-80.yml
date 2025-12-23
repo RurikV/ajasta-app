@@ -1,0 +1,18 @@
+---
+- name: Open port 80 on k8s-master (VM firewall)
+  hosts: k8s_master
+  gather_facts: false
+  become: true
+
+  vars:
+    # Open only TCP/80
+    open_ports: [80]
+    # auto | firewalld | iptables (auto will prefer firewalld if installed)
+    firewall_backend: "auto"
+    # Also bind a local listener on 0.0.0.0:80 that forwards to ingress NodePort
+    enable_local_port80_proxy: true
+    # And verify localhost curl
+    open_web_ports_check_local: true
+
+  roles:
+    - role: roles/open_web_ports

@@ -9,17 +9,28 @@ const AdminResourcesPage = () => {
   const [resources, setResources] = useState([]);
   const { ErrorDisplay, showError } = useError();
   const navigate = useNavigate();
+  const isAdmin = ApiService.isAdmin();
 
   const fetchResources = useCallback(async () => {
     try {
-      const response = await ApiService.getAllResources();
-      if (response.statusCode === 200) {
-        setResources(response.data || []);
+      const [resListResp, profileResp] = await Promise.all([
+        ApiService.getAllResources(),
+        ApiService.myProfile()
+      ]);
+      const all = resListResp?.statusCode === 200 ? (resListResp.data || []) : [];
+      if (isAdmin) {
+        setResources(all);
+      } else {
+        const userId = profileResp?.data?.id;
+        const filtered = (userId != null)
+          ? all.filter(r => Array.isArray(r.managerIds) && r.managerIds.includes(userId))
+          : [];
+        setResources(filtered);
       }
     } catch (error) {
       showError(error.response?.data?.message || error.message);
     }
-  }, [showError]);
+  }, [showError, isAdmin]);
 
   useEffect(() => {
     fetchResources();
@@ -51,9 +62,11 @@ const AdminResourcesPage = () => {
       <ErrorDisplay />
       <div className="content-header">
         <h1>Resources Management</h1>
-        <button className="add-btn" onClick={handleAdd}>
-          <FontAwesomeIcon icon={faPlus} /> Add Resource
-        </button>
+        {isAdmin && (
+          <button className="add-btn" onClick={handleAdd}>
+            <FontAwesomeIcon icon={faPlus} /> Add Resource
+          </button>
+        )}
       </div>
 
       <div className="menu-items-grid">

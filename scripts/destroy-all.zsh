@@ -16,6 +16,7 @@
 #   ajasta_VM_NAME=ajasta-host
 #   VM1_NAME=vm1-host
 #   VM2_NAME=vm2-host
+#   VM3_NAME=vm3-host
 #   YC_ADDRESS_NAME=ajasta-static-ip
 #   EXT_NET_NAME=external-ajasta-network
 #   EXT_SUBNET_NAME=ajasta-external-segment
@@ -36,6 +37,7 @@ require_cmd yc jq
 ajasta_VM_NAME=${ajasta_VM_NAME:-ajasta-host}
 VM1_NAME=${VM1_NAME:-vm1-host}
 VM2_NAME=${VM2_NAME:-vm2-host}
+VM3_NAME=${VM3_NAME:-vm3-host}
 YC_ADDRESS_NAME=${YC_ADDRESS_NAME:-ajasta-static-ip}
 EXT_NET_NAME=${EXT_NET_NAME:-external-ajasta-network}
 EXT_SUBNET_NAME=${EXT_SUBNET_NAME:-ajasta-external-segment}
@@ -59,6 +61,10 @@ wait_instance_absent "$VM1_NAME" 60 5 || true
 log "Ensuring instance '$VM2_NAME' is deleted..."
 delete_instance_by_name "$VM2_NAME" || true
 wait_instance_absent "$VM2_NAME" 60 5 || true
+
+log "Ensuring instance '$VM3_NAME' is deleted..."
+delete_instance_by_name "$VM3_NAME" || true
+wait_instance_absent "$VM3_NAME" 60 5 || true
 
 # 2) Delete static IP address
 log "Ensuring static address '$YC_ADDRESS_NAME' is deleted..."

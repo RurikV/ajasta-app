@@ -1,0 +1,19 @@
+{{- if .Values.backend.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ajasta-app.backend.serviceName" . }}
+  namespace: {{ include "ajasta-app.namespace" . }}
+  labels:
+    {{- include "ajasta-app.backend.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.backend.service.type }}
+  ports:
+  - port: {{ .Values.backend.service.port }}
+    targetPort: {{ .Values.backend.service.targetPort }}
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "ajasta-app.backend.selectorLabels" . | nindent 4 }}
+{{- end }}

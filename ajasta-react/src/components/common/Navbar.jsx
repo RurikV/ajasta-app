@@ -1,17 +1,29 @@
 import { useNavigate, Link } from "react-router-dom";
 import { useTranslation } from 'react-i18next';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ApiService from "../../services/ApiService";
 
 const Navbar = () => {
     const { t, i18n } = useTranslation();
     const [showLanguageDropdown, setShowLanguageDropdown] = useState(false);
 
+    const navigate = useNavigate();
+
+    // Force re-render when roles change; also bootstrap roles on mount if authenticated
+    // eslint-disable-next-line no-unused-vars
+    const [roleTick, setRoleTick] = useState(0);
+    useEffect(() => {
+        const unsubscribe = ApiService.onRolesChange(() => setRoleTick(t => t + 1));
+        if (ApiService.isAuthenticated()) {
+            ApiService.bootstrapRoles();
+        }
+        return unsubscribe;
+    }, []);
+
     const isAuthenticated = ApiService.isAuthenticated();
     const isAdmin = ApiService.isAdmin();
     const isCustomer = ApiService.isCustomer();
-    const isDeliveryPerson = ApiService.isDeliveryPerson();
-    const navigate = useNavigate();
+    const isResourceManager = ApiService.isResourceManager();
 
     const languages = [
         { code: 'en', name: t('english'), flag: '🇺🇸' },
@@ -47,10 +59,9 @@ const Navbar = () => {
             </div>
 
             <div className="desktop-nav">
-                <Link to="/home" className="nav-link">{t('home')}</Link>
-                <Link to="/menu" className="nav-link">{t('menu')}</Link>
+                <Link to="/" className="nav-link">{t('home')}</Link>
                 <Link to="/resources" className="nav-link">{t('resources')}</Link>
-                <Link to="/categories" className="nav-link">{t('categories')}</Link>
+                <Link to="/cms" className="nav-link">CMS</Link>
 
                 {/* Language Dropdown */}
                 <div className="language-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
@@ -120,13 +131,9 @@ const Navbar = () => {
                         {isCustomer && (
                             <>
                                 <Link to="/my-order-history" className="nav-link">{t('orders')}</Link>
-                                <Link to="/cart" className="nav-link">{t('cart')}</Link>
                             </>
                         )}
-                        {isDeliveryPerson && (
-                            <Link to="/deliveries" className="nav-link">{t('deliveries')}</Link>
-                        )}
-                        {isAdmin && (
+                        {(isAdmin || isResourceManager) && (
                             <Link to="/admin" className="nav-link">{t('admin')}</Link>
                         )}
                         <Link to="/profile" className="nav-link">{t('profile')}</Link>

@@ -1,0 +1,181 @@
+---
+# Expose Rancher (cattle-system/rancher) externally by:
+# 1) Detecting current HTTPS NodePort of the Service
+# 2) Opening the VM firewall for that NodePort
+# 3) Opening Yandex Cloud Security Group for that NodePort (if yc CLI available)
+# 4) Verifying reachability and printing the effective URL
+
+- name: Detect Rancher NodePort and open VM firewall
+  hosts: k8s_master
+  gather_facts: false
+  become: true
+
+  vars:
+    kubeconfig_path: "/etc/kubernetes/admin.conf"
+
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+  tasks:
+    - name: Ensure kubectl is available
+      command: kubectl version --client
+      register: _kubectl
+      changed_when: false
+
+    - name: Fail if kubectl is not available on master
+      fail:
+        msg: "kubectl is not available on the master node"
+      when: _kubectl.rc != 0
+
+    - name: Get Rancher Service (cattle-system/rancher) basic info
+      shell: kubectl -n cattle-system get svc rancher -o wide
+      register: rancher_svc_wide
+      changed_when: false
+      failed_when: false
+
+    - name: Detect Rancher HTTPS NodePort by name
+      shell: |
+        kubectl -n cattle-system get svc rancher \
+          -o jsonpath='{.spec.ports[?(@.name=="https")].nodePort}' 2>/dev/null | tr -d '\n'
+      register: rancher_nodeport_by_name
+      changed_when: false
+      failed_when: false
+
+    - name: Detect Rancher HTTPS NodePort by port number fallback (443)
+      shell: |
+        kubectl -n cattle-system get svc rancher \
+          -o jsonpath='{.spec.ports[?(@.port==443)].nodePort}' 2>/dev/null | tr -d '\n'
+      register: rancher_nodeport_by_port
+      changed_when: false
+      failed_when: false
+
+    - name: Compute effective Rancher NodePort
+      set_fact:
+        rancher_nodeport: "{{
+          (rancher_nodeport_by_name.stdout | default('') | trim)
+          if (rancher_nodeport_by_name.stdout | default('') | trim) | length > 0
+          else (rancher_nodeport_by_port.stdout | default('') | trim)
+        }}"
+
+    - name: Show Rancher Service summary
+      debug:
+        msg:
+          - "=== cattle-system/rancher Service ==="
+          - "{{ rancher_svc_wide.stdout_lines | default(['n/a']) }}"
+          - "Detected HTTPS NodePort: {{ rancher_nodeport | default('') }}"
+          - "If empty, Rancher may not be exposed via NodePort. Check the Service type."
+
+    - name: Fail if Rancher NodePort not detected
+      fail:
+        msg: |
+          Could not detect Rancher HTTPS NodePort.
+          Service output:
+          {{ rancher_svc_wide.stdout }}
+      when: (rancher_nodeport | default('') | length) == 0
+
+    - name: Open Rancher NodePort on VM firewall (firewalld/iptables)
+      vars:
+        open_ports: ["{{ rancher_nodeport | int }}"]
+        firewall_backend: "auto"
+        # Do a local curl check to 127.0.0.1:<nodeport> after opening
+        open_web_ports_check_local: true
+        # Do not bind a local port80 proxy here
+        enable_local_port80_proxy: false
+      import_role:
+        name: roles/open_web_ports
+
+    - name: Determine master public and private IPs
+      set_fact:
+        _master_public_ip: "{{ hostvars[inventory_hostname].ansible_host | default('') }}"
+        _master_private_ip: "{{ ansible_default_ipv4.address | default('') if (ansible_default_ipv4 is defined) else '' }}"
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+      failed_when: false
+
+    - name: Best-effort curl tests to Rancher (local/private/public)
+      shell: |
+        set -e
+        NP={{ rancher_nodeport }}
+        echo "-- curl localhost:${NP} (HTTPS, insecure) --"
+        (curl -k --connect-timeout 3 --max-time 8 -sS -o /dev/null -w "HTTP %{http_code}\n" https://127.0.0.1:${NP}/) || echo curl_failed
+        echo "-- curl master-private-ip:${NP} (HTTPS, insecure) --"
+        PRI="{{ _master_private_ip }}"; if [ -n "$PRI" ]; then (curl -k --connect-timeout 3 --max-time 8 -sS -o /dev/null -w "HTTP %{http_code}\n" https://$PRI:${NP}/) || echo curl_failed; else echo no_private_ip; fi
+        echo "-- curl master-public-ip:${NP} (HTTPS, insecure; hairpin may fail) --"
+        PUB="{{ _master_public_ip }}"; if [ -n "$PUB" ]; then (curl -k --connect-timeout 3 --max-time 8 -sS -o /dev/null -w "HTTP %{http_code}\n" https://$PUB:${NP}/) || echo curl_failed; else echo no_public_ip; fi
+      register: rancher_local_curls
+      changed_when: false
+      failed_when: false
+
+    - name: Show curl results
+      debug:
+        msg: "{{ rancher_local_curls.stdout_lines }}"
+
+- name: Open Rancher NodePort in Yandex Cloud Security Group (runs locally)
+  hosts: local
+  gather_facts: false
+  become: false
+
+  vars:
+    # Values will be passed from first play via extra_vars when running this playbook normally with a single command
+    # If running this play alone, override sg_nodeport explicitly with -e
+    sg_ports: []                 # we open only the NodePort (no extra ports)
+    sg_cidrs: ["0.0.0.0/0"]
+    sg_add_nodeport: true
+    sg_nodeport: ""             # must be provided via -e or by the combined wrapper
+    sg_id: ""
+    instance_name: "k8s-master"
+    master_public_ip: ""
+    kubeconfig_path: "/etc/kubernetes/admin.conf"
+
+  tasks:
+    - name: Compute effective sg_nodeport for cloud SG
+      ansible.builtin.set_fact:
+        _sg_nodeport_effective: "{{ sg_nodeport if (sg_nodeport | length) > 0 else (hostvars[groups['k8s_master'][0]].rancher_nodeport | default('')) }}"
+
+    - name: Fail if sg_nodeport is not known
+      ansible.builtin.fail:
+        msg: "Rancher NodePort not known; pass -e sg_nodeport=<PORT> or run the first play in this file to detect it."
+      when: (_sg_nodeport_effective | default('') | string | length) == 0
+
+    - name: Open cloud SG for Rancher NodePort
+      ansible.builtin.include_role:
+        name: roles/yc_open_sg_http
+      vars:
+        sg_ports: []
+        sg_cidrs: "{{ sg_cidrs }}"
+        sg_add_nodeport: true
+        sg_nodeport: "{{ _sg_nodeport_effective }}"
+        sg_id: "{{ sg_id }}"
+        instance_name: "{{ instance_name }}"
+        # Pass a concrete value from inventory to avoid self-referential templating
+        master_public_ip: "{{ hostvars[groups['k8s_master'][0]].ansible_host | default('') }}"
+        kubeconfig_path: "{{ kubeconfig_path }}"
+
+- name: Final summary and suggested URL
+  hosts: k8s_master
+  gather_facts: false
+  become: true
+
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+  tasks:
+    - name: Re-detect Rancher NodePort for summary
+      shell: |
+        kubectl -n cattle-system get svc rancher \
+          -o jsonpath='{.spec.ports[?(@.name=="https")].nodePort}' 2>/dev/null | tr -d '\n'
+      register: _np
+      changed_when: false
+      failed_when: false
+
+    - name: Compute effective address
+      set_fact:
+        _master_public_ip: "{{ hostvars[inventory_hostname].ansible_host | default('') }}"
+        _rancher_np: "{{ (_np.stdout | default('') | trim) }}"
+
+    - name: Output Rancher URL and next steps
+      debug:
+        msg:
+          - "Rancher HTTPS NodePort: {{ _rancher_np | default('unknown') }}"
+          - "Try from your machine: https://{{ _master_public_ip | default('MASTER_PUBLIC_IP') }}:{{ _rancher_np | default('NODEPORT') }}/"
+          - "If unreachable, ensure cloud Security Group allows the NodePort and that your ISP/firewall permits outbound HTTPS to that port."

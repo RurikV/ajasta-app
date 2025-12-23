@@ -1,425 +1,467 @@
-# Ajasta App — Unified Deployment System
+# Ajasta App
 
-🚀 **Streamlined deployment orchestrator with Docker Compose integration**
+Ajasta App is a modern appointment booking and resource scheduling platform.
+This monorepo includes a Spring Boot backend, a React frontend served by Nginx, and infrastructure to run locally with Docker Compose or deploy to a cloud VM in one command.
 
-This repository contains a complete microservice application with both cloud VM and local development deployment options.
 
-## Application Architecture
+## Why Ajasta?
+- Unified developer experience for backend, frontend, and infrastructure
+- Batteries‑included local environment with DB admin and mail testing tools
+- Production‑ready images and a scripted VM deployment path
 
-**Services:**
-- **ajasta-backend** (Spring Boot, Java 21) - REST API server
-- **ajasta-react** (React + Nginx) - Frontend web application  
-- **PostgreSQL** (16-alpine) - Database server
 
-**Features:**
-- Unified deployment system for VM and local environments
-- Docker Compose integration for simplified local development
-- Comprehensive monitoring and management tools
-- Automated cloud infrastructure provisioning
+## Architecture at a Glance
 
----
+```mermaid
+flowchart LR
+  subgraph User[User]
+    B[Browser]
+  end
 
-## Quick Start
+  B -->|HTTP| N[Nginx - serves React SPA]
+  N -->|API calls| A[Ajasta Backend - Spring Boot]
+  A -->|JDBC| P[PostgreSQL]
+  A -.->|SMTP dev| M[Mailhog]
+  DevTools[[Adminer]] --> P
 
-### 🎯 One Command Deployment
+  classDef svc fill:#eef,stroke:#365,stroke-width:1px;
+  class N,A,P,M,DevTools svc;
+```
+
+### Typical Booking Flow
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as User (Browser)
+  participant F as Frontend (React)
+  participant S as Backend (Spring Boot)
+  participant DB as PostgreSQL
+  participant MH as Mail (Mailhog/dev or SMTP/prod)
+
+  U->>F: Open app / login
+  F->>S: POST /api/auth/login (credentials)
+  S-->>F: 200 OK (JWT)
+  U->>F: Create booking (pick resource, time)
+  F->>S: POST /api/bookings (JWT)
+  S->>S: Validate roles/availability
+  S->>DB: Insert booking
+  DB-->>S: OK
+  S-->>F: 201 Created (booking id)
+  S->>MH: Send confirmation email (async)
+```
+
+
+## Repository Structure
+- ajasta-backend — Spring Boot 3 (Java 21) REST API
+- ajasta-react — React application served by Nginx
+- ajasta-postgres — Database bootstrap/init scripts for local development
+- docker-compose.yml — Core services (PostgreSQL, Backend, Frontend)
+- docker-compose.override.yml — Local developer conveniences (Adminer, Mailhog, debug ports)
+- scripts — One‑command build, ship, and deploy tooling
+- VM_CONTAINER_MANAGEMENT.md — Manual VM container management notes
+- GITLAB_VARIABLES.md — CI/CD variables reference
+
+
+## Tech Stack
+- Backend: Spring Boot 3.5, JPA, Security (JWT), Mail, Stripe/AWS SDK hooks
+- Frontend: React SPA + Nginx static serving
+- Database: PostgreSQL 16
+- Local tools: Adminer (DB UI), Mailhog (email testing)
+- Orchestration: Docker Compose
+
+
+## Quick Start (Local)
+Prerequisites: Docker and Docker Compose
+
+Option A — plain docker compose:
 
 ```bash
-# Deploy to cloud VM (default)
-./scripts/deploy-all.zsh
+docker compose pull
+# or build from sources if images aren’t available yet
+# docker compose build
 
-# Deploy locally with Docker Compose  
+docker compose up -d
+```
+
+Option B — helper script with dev conveniences:
+
+```bash
 ./scripts/deploy-all.zsh --mode local
+# add --clean for a fresh start, --skip-build to reuse images
+```
 
-# Deploy to both VM and locally
+Once started, you can access:
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8090
+- PostgreSQL: localhost:15432 (db=ajastadb_dev, user=dev_user, pw=dev_password)
+- Adminer: http://localhost:8080
+- Mailhog: http://localhost:8025 (SMTP at localhost:1025)
+
+Environment values for local development are preconfigured via docker-compose.override.yml.
+
+
+## Deploy to a Cloud VM
+The repository includes a scripted path to provision Yandex Cloud resources and deploy the same containers on a VM.
+
+- One‑command script and full docs: scripts/README.md
+- Manual container operations on the VM: VM_CONTAINER_MANAGEMENT.md
+- CI/CD variables (if using GitLab): GITLAB_VARIABLES.md
+
+Examples:
+```bash
+# Deploy to VM (provisions resources if necessary)
+./scripts/deploy-all.zsh --mode vm
+
+# Deploy locally and to VM in one go
 ./scripts/deploy-all.zsh --mode both
 ```
 
-### 📋 Prerequisites
 
-**For VM Deployment:**
-- [Yandex Cloud CLI](https://cloud.yandex.com/docs/cli/) configured
-- Docker and Docker Compose
-- SSH client
+## Configuration Overview
+The core configuration is exposed via environment variables and docker‑compose:
+- DB_URL, DB_USERNAME, DB_PASSWORD (backend)
+- JWT_SECRET (backend auth)
+- Optional: STRIPE_PUBLIC_KEY/STRIPE_SECRET_KEY, AWS_ACCESS_KEY_ID/SECRET/REGION/S3_BUCKET
 
-**For Local Development:**
-- Docker and Docker Compose
-- Git
+See docker-compose.yml and docker-compose.override.yml for concrete wiring and defaults.
 
----
 
-## Deployment Options
+## Development Notes
+- Backend debugging: Java remote debug is exposed on port 5005 in local override
+- Live reload/devtools enabled for local profile
+- The frontend build output can be mounted for faster iteration (see override file)
 
-### ☁️ Cloud VM Deployment
+Useful entry points:
+- Backend code: ajasta-backend (Maven project)
+- Frontend code: ajasta-react
 
-Deploy to Yandex Cloud with full infrastructure automation:
 
-```bash
-# Basic deployment
-./scripts/deploy-all.zsh --mode vm
+## Project Status and Roadmap
+This codebase already supports user authentication (JWT), role initialization, resource and order management primitives, email notifications via Mailhog in dev, and database migrations/init scripts for local.
 
-# Clean deployment with custom DockerHub user
-./scripts/deploy-all.zsh --mode vm --clean --dockerhub-user myuser
+Planned evolutions typically include richer booking flows, payments, and production mail/storage providers. Contributions and issues are welcome.
 
-# Skip image building (use existing images)
-./scripts/deploy-all.zsh --mode vm --skip-build
+
+## Helpful Links
+- Deployment tooling and deep‑dive: scripts/README.md
+- VM container management: VM_CONTAINER_MANAGEMENT.md
+- GitLab CI variables: GITLAB_VARIABLES.md
+- Frontend README: ajasta-react/README.md
+
+
+## Kubernetes Deployment (Ansible + Longhorn)
+This repository includes an Ansible-based workflow to deploy Ajasta to a Kubernetes cluster with one master and three worker nodes, using Longhorn as the default StorageClass.
+
+Prerequisites
+- Ansible installed on your operator machine
+- A Kubernetes control plane node (k8s-master) with kubectl configured (KUBECONFIG=/etc/kubernetes/admin.conf)
+- SSH access to master and workers as defined in k8s/inventory.ini
+- Internet egress for the cluster nodes to pull images and Longhorn manifests
+
+Inventory
+- Edit k8s/inventory.ini to match your master and worker IPs and SSH user. Groups used by the playbooks:
+  - [k8s_master] — the control-plane node where kubectl runs
+  - [k8s_workers] — all worker nodes (Longhorn and workloads run here)
+
+Deploy full stack (ingress, Longhorn, PostgreSQL, backend, frontend)
+```
+ansible-playbook k8s/deploy-ajasta.yml -i k8s/inventory.ini -vv
 ```
 
-**What it creates:**
-- VM instance with Ubuntu 22.04
-- Static IP address  
-- VPC network and subnet
-- Service account with required permissions
-- Docker containers running your application
-
-**Access your application:**
-- Frontend: `http://YOUR_VM_IP` (port 80)
-- Backend API: `http://YOUR_VM_IP:8090`
-- Database: `YOUR_VM_IP:15432`
-
-### 🏠 Local Development
-
-Use Docker Compose for local development:
-
-```bash
-# Start local development environment
-./scripts/deploy-all.zsh --mode local
-
-# Start with clean state
-./scripts/deploy-all.zsh --mode local --clean
-
-# Start without rebuilding images
-./scripts/deploy-all.zsh --mode local --skip-build
+Deploy only from Backend phase (Backend, Frontend, Ingress)
+- Useful when cluster and PostgreSQL are already in place, or for quick app updates.
+```
+ansible-playbook k8s/deploy-backend.yml -i k8s/inventory.ini -vv
 ```
 
-**Includes development tools:**
-- **Adminer** - Database administration at `http://localhost:8080`
-- **Mailhog** - Email testing at `http://localhost:8025`
-- **Java debugging** - Debug port 5005
-- **Hot reloading** - Volume mounts for development
+Notes about workers and Ansible PLAY RECAP
+- The play targets the k8s_master host. Tasks that configure worker nodes (e.g., open-iscsi install, Longhorn checks) are executed via delegate_to to each worker.
+- Because of this delegation, Ansible’s PLAY RECAP lists k8s-master as the host for most tasks. Workers are still fully configured; they just don’t appear as separate recap hosts.
 
-**Access your application:**
-- Frontend: `http://localhost:3000`
-- Backend API: `http://localhost:8090` 
-- Database: `localhost:15432`
+Longhorn requirements and troubleshooting
+- The playbook installs Longhorn v1.5.x and sets StorageClass longhorn as default.
+- iSCSI initiator is required on workers. The playbook auto-installs it:
+  - CentOS/RHEL/Alma/Rocky: iscsi-initiator-utils
+  - Ubuntu/Debian: open-iscsi
+- If PostgreSQL PVC remains Pending, check Longhorn:
+  - kubectl -n longhorn-system get pods
+  - kubectl -n longhorn-system logs -l app=longhorn-manager --tail=100
+  - kubectl get storageclass
+- Common cause: missing iscsiadm on workers (manifests will log "Failed environment check ... iscsiadm: No such file or directory"). Ensure iscsid service is active on all workers.
 
----
+Backend readiness/liveness probes
+- The backend’s Spring Boot actuator endpoints are secured. Kubernetes HTTP probes to /actuator/health can return 401.
+- The deployment uses TCP probes on port 8090 to avoid false negatives.
 
-## Docker Compose Usage
+## Helpful Links
+- Deployment tooling and deep‑dive: scripts/README.md
+- VM container management: VM_CONTAINER_MANAGEMENT.md
+- GitLab CI variables: GITLAB_VARIABLES.md
+- Frontend README: ajasta-react/README.md
 
-### Basic Commands
+## License
+This repository may contain third‑party components with their own licenses. Unless stated otherwise, project code is provided as‑is for demonstration and development purposes.
 
-```bash
-# Start all services
-docker-compose up -d
 
-# View logs  
-docker-compose logs -f
+## Test the web app with curl (Kubernetes)
+This section shows quick ways to validate the deployment from both inside and outside the cluster using curl. It assumes you deployed to the `ajasta` namespace and applied the provided Ingress manifest.
 
-# Stop all services
-docker-compose down
+Resources created by the manifests:
+- Backend Service: `ajasta-backend` (ClusterIP, port 8090)
+- Frontend Service: `ajasta-frontend` (ClusterIP, port 80)
+- Ingress: `ajasta-ingress` (path-based rules: `/api` → backend, `/` → frontend)
 
-# Rebuild and start
-docker-compose up -d --build
-```
+Important note about backend health endpoint
+- The backend secures Spring Boot Actuator endpoints, so HTTP GET /actuator/health without authentication will typically return 401. This is expected. For readiness, we use TCP probes.
 
-### Environment Configuration
-
-1. **Copy the environment template:**
-   ```bash
-   cp .env.example .env
-   ```
-
-2. **Edit `.env` with your settings:**
-   ```bash
-   # Docker Configuration
-   DOCKERHUB_USER=vladimirryrik
-   
-   # Database Settings
-   POSTGRES_DB=ajastadb
-   POSTGRES_USER=admin  
-   POSTGRES_PASSWORD=adminpw
-   
-   # Application Settings
-   JWT_SECRET=your-secret-key
-   
-   # Yandex Cloud (for VM deployment)
-   YC_CLOUD_ID=your-cloud-id
-   YC_FOLDER_ID=your-folder-id
-   ```
-
-3. **Deploy:**
-   ```bash
-   ./scripts/deploy-all.zsh --mode local
-   ```
-
-### Development Override
-
-The `docker-compose.override.yml` automatically provides:
-
-- **Development database** with separate credentials
-- **Debug logging** enabled
-- **Java remote debugging** on port 5005  
-- **Volume mounts** for development files
-- **Additional services** (Adminer, Mailhog)
-
----
-
-## Management Tools
-
-### 🔍 Status Monitoring
-
-Check the health of your deployments:
+Inside the cluster (via a temporary curl pod)
+- Launch a throwaway curl pod in the `ajasta` namespace and test Services by their DNS names.
 
 ```bash
-# Check all deployments
-./scripts/status-all.zsh
+# Start a temporary curl pod (removed after exit)
+kubectl run -n ajasta -it curl --rm \
+  --image=curlimages/curl:8.10.1 --restart=Never -- sh
 
-# Check specific deployment
-./scripts/status-all.zsh --mode vm
-./scripts/status-all.zsh --mode local
+# From the shell inside the pod:
+# 1) Frontend Service (should return 200 and some HTML)
+curl -sS -o /dev/null -w "HTTP %{http_code}\n" http://ajasta-frontend/
 
-# Detailed status with logs
-./scripts/status-all.zsh --verbose --logs --health
+# 2) Backend over Service DNS (connectivity check). Expect 401/404 for unauthenticated endpoints.
+curl -sS -D- http://ajasta-backend:8090/api -o /dev/null
+
+# 3) Optional: check only that the port is open (TCP-level)
+#    curl will return a non-empty response or an HTTP status; success indicates connectivity.
+curl -sS -o /dev/null -w "TCP OK to 8090 (HTTP %{http_code})\n" http://ajasta-backend:8090/
 ```
 
-### 📋 Log Management
+Alternative (inside cluster): port-forward to your laptop
+```bash
+# Backend
+kubectl -n ajasta port-forward svc/ajasta-backend 18090:8090 >/dev/null 2>&1 &
+# Frontend
+kubectl -n ajasta port-forward svc/ajasta-frontend 18080:80   >/dev/null 2>&1 &
 
-Aggregate and monitor logs:
+# Then on your machine:
+curl -I http://localhost:18080/
+# Backend will require auth for most endpoints; this just checks connectivity
+curl -sS -D- http://localhost:18090/api -o /dev/null
+```
+
+Outside the cluster (through Ingress)
+- The provided Ingress is path-based and does not require a hostname. Get the external IP and curl it directly.
 
 ```bash
-# View logs from all services
-./scripts/logs-all.zsh
+# Get Ingress external IP
+INGRESS_IP=$(kubectl get ingress ajasta-ingress -n ajasta -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "Ingress IP: ${INGRESS_IP}"
 
-# Follow logs in real-time
-./scripts/logs-all.zsh --mode local --follow
+# Frontend root should return 200
+curl -sS -o /dev/null -w "HTTP %{http_code}\n" http://$INGRESS_IP/
 
-# Show backend logs from last hour
-./scripts/logs-all.zsh --service backend --since 1h
+# Backend via path /api (expect 401 for protected endpoints without auth)
+curl -sS -D- http://$INGRESS_IP/api -o /dev/null
 
-# Save logs to files
-./scripts/logs-all.zsh --save
+# Example: check static asset is served (adjust path if your frontend uses a different index)
+curl -I http://$INGRESS_IP/
 ```
 
-### 🧹 Cleanup and Maintenance
+Troubleshooting tips
+- If the Ingress has no external IP yet, wait a bit or check controller status:
+  - `kubectl -n ingress-nginx get pods`
+  - `kubectl -n ajasta describe ingress ajasta-ingress`
+- If Services don’t resolve inside the cluster, confirm the pod is in the same namespace or use fully-qualified DNS:
+  - `http://ajasta-backend.ajasta.svc.cluster.local:8090`
+  - `http://ajasta-frontend.ajasta.svc.cluster.local`
+- If backend curls return 401, that’s expected for secured endpoints. Use authenticated requests or just verify connectivity (status code presence) as shown above.
 
-Clean up resources when needed:
+
+
+### Get Ingress external address via Ansible (IP or hostname)
+Use the lightweight playbook to print the external address of the Ingress. Depending on your environment, Kubernetes may set either an IP or a hostname on `.status.loadBalancer.ingress[]`. The playbook now reports whichever appears first and provides diagnostics and a NodePort fallback if no address is assigned yet.
 
 ```bash
-# Interactive cleanup of both deployments
-./scripts/cleanup-all.zsh
-
-# Force cleanup VM without prompts
-./scripts/cleanup-all.zsh --mode vm --force
-
-# Clean containers but keep data and images
-./scripts/cleanup-all.zsh --keep-data --keep-images
-
-# Deep clean everything
-./scripts/cleanup-all.zsh --deep-clean
+ansible-playbook k8s/get-ingress-ip.yml -i k8s/inventory.ini -vv
 ```
 
----
-
-## Manual Docker Commands
-
-If you prefer manual container management:
-
-### Build Images
+Override variables as needed:
 
 ```bash
-# Build with platform targeting for compatibility
-docker build --platform linux/amd64 -t vladimirryrik/ajasta-backend:alpine ./ajasta-backend
-docker build --platform linux/amd64 -t vladimirryrik/ajasta-frontend:alpine ./ajasta-react  
-docker build --platform linux/amd64 -t vladimirryrik/ajasta-postgres:alpine ./ajasta-postgres
+ansible-playbook k8s/get-ingress-ip.yml -i k8s/inventory.ini \
+  -e app_namespace=ajasta -e ingress_name=ajasta-ingress \
+  -e wait_for_ip=true -e timeout_seconds=300 -e poll_interval=5
 ```
 
-### Manual Container Setup
+If you only want to query once without waiting:
 
 ```bash
-# Create network
-docker network create ajasta-net
-
-# Create volume  
-docker volume create ajasta_pg_data
-
-# Run PostgreSQL
-docker run -d --name ajasta-postgres \
-  --network ajasta-net \
-  -p 15432:5432 \
-  -e POSTGRES_DB=ajastadb \
-  -e POSTGRES_USER=admin \
-  -e POSTGRES_PASSWORD=adminpw \
-  -v ajasta_pg_data:/var/lib/postgresql/data \
-  postgres:16-alpine
-
-# Run backend
-docker run -d --name ajasta-backend \
-  --network ajasta-net \
-  -p 8090:8090 \
-  -e DB_URL=jdbc:postgresql://ajasta-postgres:5432/ajastadb \
-  -e DB_USERNAME=admin \
-  -e DB_PASSWORD=adminpw \
-  -e JWT_SECRET=change-me-production \
-  vladimirryrik/ajasta-backend:alpine
-
-# Run frontend  
-docker run -d --name ajasta-frontend \
-  --network ajasta-net \
-  -p 3000:80 \
-  vladimirryrik/ajasta-frontend:alpine
+ansible-playbook k8s/get-ingress-ip.yml -i k8s/inventory.ini -e wait_for_ip=false
 ```
 
----
+Notes
+- In managed clouds, LoadBalancer provisioning can take tens of seconds or more; the app being "Ready" does not guarantee the external address is instant.
+- On bare-metal or VMs without a cloud LoadBalancer, the deploy playbook automatically patches the ingress-nginx controller Service with `externalIPs` (master public IP). This lets you access the app directly on port 80 via `http://<master_public_ip>/` even if `.status.loadBalancer` is empty.
+- If no address is available yet, the playbook prints:
+  - Ingress describe output and recent events
+  - The ingress-nginx controller Service YAML (type LoadBalancer/NodePort)
+  - A fallback URL using NodePort: `http://<master_public_ip>:<nodePort>/`
+- You can use the fallback to test from outside the cluster if your nodes have public IPs.
 
-## Environment Variables
 
-### Core Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DOCKERHUB_USER` | `vladimirryrik` | DockerHub username for images |
-| `POSTGRES_DB` | `ajastadb` | Database name |
-| `POSTGRES_USER` | `admin` | Database username |
-| `POSTGRES_PASSWORD` | `adminpw` | Database password |
-| `JWT_SECRET` | `change-me-production-secret-key` | JWT signing secret |
+### Run networking role only (Ingress external IP patch + Longhorn check)
+This repository provides a reusable Ansible role to:
+- Patch the ingress-nginx controller Service with externalIPs using your master node public IP (to expose the app on port 80 without a cloud LoadBalancer)
+- Check whether the Longhorn installation namespace exists (for storage readiness)
 
-### Optional Integrations
-
-| Variable | Description |
-|----------|-------------|
-| `MAIL_USERNAME` | SMTP email username |
-| `MAIL_PASSWORD` | SMTP email password |
-| `AWS_ACCESS_KEY_ID` | AWS access key for S3 |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
-| `AWS_S3_BUCKET` | S3 bucket name |
-| `STRIPE_PUBLIC_KEY` | Stripe public key |
-| `STRIPE_SECRET_KEY` | Stripe secret key |
-
-### Yandex Cloud (VM Deployment)
-
-| Variable | Description |
-|----------|-------------|  
-| `YC_CLOUD_ID` | Your Yandex Cloud ID |
-| `YC_FOLDER_ID` | Your folder ID |
-| `YC_ZONE` | Deployment zone (default: `ru-central1-b`) |
-| `SSH_USERNAME` | SSH user for VM access (default: `ajasta`) |
-
-See `.env.example` for complete configuration options.
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-**VM SSH Connection Failed:**
-```bash
-# Check VM status
-yc compute instance get --name ajasta-host
-
-# Add SSH key manually  
-SSH_USERNAME=ajasta SSH_PUBKEY_FILE=./scripts/ajasta_ed25519.pub ./scripts/add-ssh-key.zsh ajasta-host
-
-# Test connection
-./scripts/ssh-ajasta.zsh 'echo Connection successful'
-```
-
-**Docker Containers Not Starting:**
-```bash
-# Check container logs
-./scripts/logs-all.zsh --service backend
-
-# Check system resources
-docker system df
-
-# Clean up if needed
-./scripts/cleanup-all.zsh --mode local --force
-```
-
-**Port Conflicts:**
-```bash
-# Check what's using ports
-sudo netstat -tlnp | grep -E ':(3000|8090|15432)'
-
-# Use different ports in .env
-echo "FRONTEND_PORT=3001" >> .env  
-echo "BACKEND_PORT=8091" >> .env
-echo "POSTGRES_PORT=15433" >> .env
-```
-
-### Getting Help
+Use the dedicated playbook:
 
 ```bash
-# Show help for any script
-./scripts/deploy-all.zsh --help
-./scripts/status-all.zsh --help  
-./scripts/logs-all.zsh --help
-./scripts/cleanup-all.zsh --help
-
-# Check application status
-./scripts/status-all.zsh --verbose
-
-# View recent logs
-./scripts/logs-all.zsh --lines 100
+ansible-playbook k8s/patch-ingress-and-check-longhorn.yml -i k8s/inventory.ini -vv
 ```
 
-### Support Resources
+Override variables as needed:
 
-- **VM Management:** Use Yandex Cloud Console for resource monitoring
-- **Local Development:** Check Docker Desktop for container management
-- **Database Access:** Use Adminer at `http://localhost:8080` (local) or connect directly to port 15432
-- **API Testing:** Backend API documentation available at `/swagger-ui` endpoint
+```bash
+ansible-playbook k8s/patch-ingress-and-check-longhorn.yml -i k8s/inventory.ini \
+  -e ingress_namespace=ingress-nginx \
+  -e ingress_service_name=ingress-nginx-controller \
+  -e external_ip=158.160.2.48 \
+  -e ensure_longhorn_ns_check=true \
+  -e longhorn_namespace=longhorn-system
+```
 
----
+Notes
+- If `external_ip` is not provided, the role will use `ansible_host` from the first host in the `[k8s_master]` group in your inventory (the master public IP).
+- The role sets `externalIPs` on the Service in an idempotent way. Re-running is safe.
+- You can run this role independently before or after the full deployment to make the app reachable on `http://<master_public_ip>/` (port 80).
+- Role path (for reference): `k8s/roles/ingress_externalip_longhorn_check`.
 
-## Development Workflow
 
-### Typical Development Process
 
-1. **Setup environment:**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your settings
-   ```
+### Expose Ingress on port 80 (open VM firewall)
+If your environment has no cloud LoadBalancer, the playbooks expose the Ingress via the master VM public IP. Ensure the VM firewall allows inbound 80/443.
 
-2. **Start development environment:**
-   ```bash
-   ./scripts/deploy-all.zsh --mode local
-   ```
+Run the minimal role to open ports on the master:
 
-3. **Monitor services:**
-   ```bash
-   ./scripts/status-all.zsh --mode local --verbose
-   ```
+```bash
+ansible-playbook k8s/open-web-ports.yml -i k8s/inventory.ini -vv
+```
 
-4. **View logs during development:**
-   ```bash
-   ./scripts/logs-all.zsh --mode local --follow
-   ```
+- Defaults open TCP ports: 80 and 443
+- Backend auto-detects firewalld (preferred on CentOS Stream 9) and falls back to iptables if firewalld is not installed
+- Idempotent and safe to re-run
 
-5. **Deploy to cloud for testing:**
-   ```bash
-   ./scripts/deploy-all.zsh --mode vm
-   ```
+Override variables (optional):
 
-6. **Cleanup when done:**
-   ```bash
-   ./scripts/cleanup-all.zsh --keep-data
-   ```
+```bash
+ansible-playbook k8s/open-web-ports.yml -i k8s/inventory.ini \
+  -e open_ports='[80,443]' \
+  -e firewall_backend=auto   # or firewalld | iptables
+```
 
-### Code Changes
+After running, the role prints a summary including current firewall rules and curl checks (localhost and master public IP). If you still cannot reach `http://<master_public_ip>/`, verify your cloud security group permits inbound TCP/80 and TCP/443 to the master VM.
 
-- **Backend:** Rebuild with `docker-compose up -d --build ajasta-backend`
-- **Frontend:** Rebuild with `docker-compose up -d --build ajasta-frontend`  
-- **Database:** Schema changes persist in volumes
-- **Configuration:** Update `.env` and restart: `docker-compose restart`
 
----
 
-## Architecture Notes
+### Open Yandex Cloud Security Group ports (HTTP/HTTPS)
+If your cluster runs on Yandex Cloud, inbound traffic may still be blocked at the cloud Security Group level even when the VM firewall is open. Use the provided playbook to open TCP/80 and TCP/443 on the Security Group(s) attached to the master instance.
 
-- **Frontend** serves static files via Nginx with SPA routing support
-- **Backend** uses Spring Boot with PostgreSQL integration
-- **Database** uses persistent volumes for data preservation  
-- **Networking** uses custom Docker networks for service communication
-- **Security** includes health checks, resource limits, and secure defaults
+Note: The playbook now auto-creates and attaches a Security Group to the master instance if none is attached (controlled by `auto_create_sg`, default: `true`). You can disable this behavior with `-e auto_create_sg=false`.
+
+Auto-discovery: the role first tries to find the master instance by matching the master public IP (NAT address) and extracts attached Security Group IDs; if that fails, it falls back to the instance name (k8s-master by default). You can always override with `-e sg_id=...`.
+
+Prerequisites
+- `yc` CLI installed and authenticated on your Ansible runner
+- Your inventory has a `[local]` group (already present in k8s/inventory.ini)
+
+Run (default opens 80/443):
+```bash
+ansible-playbook k8s/open-cloud-ports.yml -i k8s/inventory.ini -vv
+```
+
+Options:
+```bash
+# Explicitly set the SG ID (skips auto-discovery by instance name)
+ansible-playbook k8s/open-cloud-ports.yml -i k8s/inventory.ini \
+  -e sg_id=YOUR_SG_ID
+
+# Also open the ingress-nginx HTTP NodePort (auto-detected via KUBECONFIG)
+ansible-playbook k8s/open-cloud-ports.yml -i k8s/inventory.ini \
+  -e sg_add_nodeport=true
+
+# Override instance name used for SG discovery (default: k8s-master)
+ansible-playbook k8s/open-cloud-ports.yml -i k8s/inventory.ini \
+  -e instance_name=k8s-master
+```
+
+Notes
+- The role attempts to discover SG IDs from the compute instance named `k8s-master`. If discovery fails, pass `-e sg_id=...` explicitly.
+- The role adds rules idempotently; duplicate-add attempts are ignored safely.
+- Combine this with `k8s/open-web-ports.yml` (VM firewall) and the ingress controller externalIPs patch to expose your app at `http://<MASTER_PUBLIC_IP>/`.
+
+
+
+### Expose Ingress end-to-end (combined playbook)
+Use a single playbook to patch the ingress controller Service with the master public IP, open Yandex Cloud Security Group ports (80/443 and the HTTP NodePort), and verify external reachability.
+
+```bash
+ansible-playbook k8s/expose-ingress.yml -i k8s/inventory.ini -vv
+```
+
+What it does:
+- Patches `ingress-nginx/ingress-nginx-controller` Service with `externalIPs: [<MASTER_PUBLIC_IP>]`
+- Opens inbound TCP/80 and TCP/443 in the Yandex Cloud Security Group(s) attached to `k8s-master`
+- Also opens the ingress-nginx HTTP NodePort as a fallback path
+- Prints the effective external address and a quick curl result
+
+Notes:
+- Requires `yc` CLI installed and authenticated on the machine running Ansible (for SG updates)
+- You can still run the steps separately using:
+  - `k8s/patch-ingress-and-check-longhorn.yml`
+  - `k8s/open-cloud-ports.yml`
+  - `k8s/get-ingress-ip.yml`
+
+
+
+### Rancher access (NodePort) — diagnose and expose
+If you cannot access Rancher anymore at a URL like `https://<MASTER_PUBLIC_IP>:<NODEPORT>/` (example you used: `https://51.250.21.26:31318/`), the NodePort may have changed or cloud/VM firewalls may block the port.
+
+Use the combined playbook to detect Rancher’s current HTTPS NodePort, open it on the master VM firewall, open it in the Yandex Cloud Security Group(s), and print a ready-to-use URL:
+
+```bash
+ansible-playbook k8s/expose-rancher.yml -i k8s/inventory.ini -vv
+```
+
+What it does:
+- Detects the Rancher Service at `cattle-system/rancher` and reads the HTTPS NodePort
+- Opens that NodePort on the master VM firewall (firewalld/iptables)
+- Opens the same NodePort in your Yandex Cloud Security Group(s) (requires `yc` CLI on the operator machine)
+- Prints diagnostic curls and the final URL to try from your machine
+
+If the playbook reports a different NodePort than the one you used before (e.g. not `31318`), update your URL accordingly.
+
+Troubleshooting notes:
+- Curls from the master to its own public IP may fail due to hairpin NAT; the authoritative test is from your machine on the Internet.
+- If you prefer to only open the cloud Security Group rules and you already know the NodePort, you can run:
+  ```bash
+  ansible-playbook k8s/open-cloud-ports.yml -i k8s/inventory.ini \
+    -e sg_add_nodeport=true -e sg_nodeport=<RANCHER_NODEPORT> -vv
+  ```
+
+
+
+### Disable OS firewall on cluster nodes (quick workaround)
+If you prefer to completely disable the operating system firewall on all cluster nodes (master + workers), use the helper playbook below. This stops and disables firewalld, flushes nftables/iptables (best‑effort), and removes the custom iptables unit if it exists.
+
+Warning: Disabling the OS firewall is not recommended for production environments. Prefer configuring specific allowed ports instead (see open-web-ports.yml and open-cloud-ports.yml). Use this only for troubleshooting in a trusted network.
+
+```bash
+ansible-playbook k8s/disable-firewall.yml -i k8s/inventory.ini -vv
+```
+
+What it does:
+- Stops, disables, and masks firewalld (if installed)
+- Flushes nftables ruleset (if nft is available)
+- Flushes iptables filter rules and sets INPUT/FORWARD/OUTPUT policies to ACCEPT (if iptables is available)
+- Removes the ajasta-iptables-ports systemd unit if present
+- Prints a concise summary of actions taken

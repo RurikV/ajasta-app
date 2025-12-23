@@ -22,8 +22,7 @@ const AdminUserRegistration = () => {
 
     const availableRoles = [
         { value: 'ADMIN', label: 'Administrator' },
-        { value: 'CUSTOMER', label: 'Customer' },
-        { value: 'DELIVERY', label: 'Delivery Personnel' }
+        { value: 'CUSTOMER', label: 'Customer' }
     ];
 
     const handleChange = (e) => {

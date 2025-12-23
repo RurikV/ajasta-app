@@ -1,0 +1,20 @@
+---
+- name: Patch ingress Service external IPs and check Longhorn namespace
+  hosts: k8s_master
+  gather_facts: false
+  become: true
+
+  vars:
+    # Override as needed at runtime with -e
+    ingress_namespace: "ingress-nginx"
+    ingress_service_name: "ingress-nginx-controller"
+    external_ip: ""                 # by default derived from k8s_master ansible_host
+    ensure_longhorn_ns_check: true
+    longhorn_namespace: "longhorn-system"
+    kubeconfig_path: "/etc/kubernetes/admin.conf"
+
+  environment:
+    KUBECONFIG: "/etc/kubernetes/admin.conf"
+
+  roles:
+    - role: roles/ingress_externalip_longhorn_check

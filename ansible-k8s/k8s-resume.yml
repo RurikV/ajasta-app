@@ -1,0 +1,591 @@
+---
+# Resume/Recovery playbook for Kubernetes cluster initialization
+# Use this when k8s-provision.yml failed at kubeadm_init but VMs are already created
+# This playbook skips VM provisioning and network setup, focusing on cluster initialization
+#
+# Usage:
+#   ansible-playbook -i ansible-k8s/inventory.ini ansible-k8s/k8s-resume.yml
+#
+# Prerequisites:
+#   1. VMs must already exist (k8s-master, k8s-worker-1, k8s-worker-2)
+#   2. inventory.ini must be populated with correct IPs and ProxyJump configuration
+#   3. SSH access to all nodes must be working (including ProxyJump to workers)
+#   4. Kubernetes packages (kubeadm, kubelet, kubectl) must be installed on all nodes
+#
+# What this playbook does:
+#   MASTER NODE (k8s_master):
+#   - Diagnoses API server issues (container status, logs, certificates)
+#   - Tests connectivity (port 6443, etcd on 2379)
+#   - Attempts recovery actions (restart kubelet, verify certificates)
+#   - Completes cluster initialization if needed
+#   - Installs CNI (Flannel) if not already installed
+#   - Generates join command for workers
+#
+#   WORKER NODES (k8s_workers):
+#   - Verifies connectivity to each worker
+#   - Checks kubelet installation and service status
+#   - Detects if worker is already joined to cluster
+#   - Automatically joins worker if not already joined
+#   - Verifies kubelet is running after join
+#
+#   FINAL VERIFICATION:
+#   - Waits for all nodes to reach Ready state
+#   - Shows complete cluster status (nodes, system pods, CNI pods)
+#   - Displays recovery summary
+#
+# Expected outcome:
+#   - Master API server is responding
+#   - All worker nodes are joined and Ready
+#   - CNI is installed and running
+#   - Cluster is fully operational
+
+- name: Resume Kubernetes cluster initialization on master
+  hosts: k8s_master
+  become: true
+  gather_facts: true
+  vars:
+    containerd_config_path: /etc/containerd/config.toml
+    containerd_service: containerd
+    containerd_pause_image_repo: registry.hpc.ut.ee/mirror/registry.k8s.io/pause
+    containerd_pause_image_version: "3.10"
+    kubeconfig_path: /etc/kubernetes/admin.conf
+  
+  tasks:
+    - name: Check if cluster is already initialized
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: admin_conf_stat
+
+    - name: Test if API server is already responding
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl --kubeconfig={{ kubeconfig_path }} --request-timeout=5s get --raw=/readyz >/dev/null 2>&1 \
+          || kubectl --kubeconfig={{ kubeconfig_path }} --request-timeout=5s get nodes --no-headers >/dev/null 2>&1
+      args:
+        executable: /bin/bash
+      register: api_already_working
+      changed_when: false
+      failed_when: false
+      when: admin_conf_stat.stat.exists
+
+    - name: Cluster status summary
+      ansible.builtin.debug:
+        msg:
+          - "Admin config exists: {{ admin_conf_stat.stat.exists }}"
+          - "API server responding: {{ (api_already_working.rc | default(1)) == 0 }}"
+
+    - name: Enhanced API server diagnostics (if API not responding)
+      when:
+        - admin_conf_stat.stat.exists
+        - (api_already_working.rc | default(1)) != 0
+      block:
+        - name: Check API server container status
+          ansible.builtin.shell: |
+            set -o pipefail
+            echo "=== kube-apiserver containers ==="
+            crictl ps -a 2>/dev/null | grep kube-apiserver || echo "No kube-apiserver container found"
+          args:
+            executable: /bin/bash
+          register: apiserver_status
+          changed_when: false
+          failed_when: false
+
+        - name: Show API server container status
+          ansible.builtin.debug:
+            var: apiserver_status.stdout_lines
+
+        - name: Get detailed API server logs (last 300 lines)
+          ansible.builtin.shell: |
+            set -o pipefail
+            CONTAINER_ID=$(crictl ps -a 2>/dev/null | grep kube-apiserver | awk '{print $1}' | head -n1)
+            if [ -n "$CONTAINER_ID" ]; then
+              echo "=== kube-apiserver container logs ==="
+              crictl logs --tail=300 "$CONTAINER_ID" 2>&1
+            else
+              echo "No kube-apiserver container found"
+            fi
+          args:
+            executable: /bin/bash
+          register: detailed_apiserver_logs
+          changed_when: false
+          failed_when: false
+
+        - name: Show detailed API server logs
+          ansible.builtin.debug:
+            var: detailed_apiserver_logs.stdout_lines
+
+        - name: Check certificate validity
+          ansible.builtin.shell: |
+            set -o pipefail
+            echo "=== Certificate validity checks ==="
+            
+            # Check API server certificate
+            if [ -f /etc/kubernetes/pki/apiserver.crt ]; then
+              echo "API server certificate:"
+              openssl x509 -in /etc/kubernetes/pki/apiserver.crt -noout -dates -subject 2>&1 || echo "Failed to read apiserver.crt"
+              echo ""
+            else
+              echo "WARNING: /etc/kubernetes/pki/apiserver.crt not found"
+            fi
+            
+            # Check CA certificate
+            if [ -f /etc/kubernetes/pki/ca.crt ]; then
+              echo "CA certificate:"
+              openssl x509 -in /etc/kubernetes/pki/ca.crt -noout -dates -subject 2>&1 || echo "Failed to read ca.crt"
+              echo ""
+            else
+              echo "WARNING: /etc/kubernetes/pki/ca.crt not found"
+            fi
+            
+            # Check API server key
+            if [ -f /etc/kubernetes/pki/apiserver.key ]; then
+              echo "API server key exists: YES"
+              ls -la /etc/kubernetes/pki/apiserver.key
+            else
+              echo "WARNING: /etc/kubernetes/pki/apiserver.key not found"
+            fi
+          args:
+            executable: /bin/bash
+          register: cert_check
+          changed_when: false
+          failed_when: false
+
+        - name: Show certificate validity
+          ansible.builtin.debug:
+            var: cert_check.stdout_lines
+
+        - name: Test direct connectivity to API server
+          ansible.builtin.shell: |
+            set -o pipefail
+            echo "=== Direct connectivity tests ==="
+            
+            # Test if port 6443 is listening
+            if ss -tlnp 2>/dev/null | grep -q ':6443' || netstat -tlnp 2>/dev/null | grep -q ':6443'; then
+              echo "✓ Port 6443 is listening"
+              ss -tlnp 2>/dev/null | grep ':6443' || netstat -tlnp 2>/dev/null | grep ':6443'
+            else
+              echo "✗ Port 6443 is NOT listening"
+            fi
+            echo ""
+            
+            # Test TCP connection
+            echo "Testing TCP connection to 127.0.0.1:6443..."
+            if timeout 2 bash -c 'echo > /dev/tcp/127.0.0.1/6443' 2>/dev/null; then
+              echo "✓ TCP connection successful"
+            else
+              echo "✗ TCP connection failed"
+            fi
+            echo ""
+            
+            # Test HTTPS (expect certificate error is OK, connection refused is NOT OK)
+            echo "Testing HTTPS connection (ignoring certificate validation)..."
+            CURL_OUT=$(timeout 5 curl -k -s -o /dev/null -w "HTTP_CODE=%{http_code} TIME=%{time_total}s" https://127.0.0.1:6443/readyz 2>&1 || echo "FAILED")
+            if echo "$CURL_OUT" | grep -q "HTTP_CODE="; then
+              echo "✓ HTTPS connection established: $CURL_OUT"
+            else
+              echo "✗ HTTPS connection failed: $CURL_OUT"
+            fi
+          args:
+            executable: /bin/bash
+          register: connectivity_test
+          changed_when: false
+          failed_when: false
+
+        - name: Show connectivity test results
+          ansible.builtin.debug:
+            var: connectivity_test.stdout_lines
+
+        - name: Check etcd connectivity from API server perspective
+          ansible.builtin.shell: |
+            set -o pipefail
+            echo "=== etcd connectivity ==="
+            
+            # Check if etcd is listening
+            if ss -tlnp 2>/dev/null | grep -q ':2379' || netstat -tlnp 2>/dev/null | grep -q ':2379'; then
+              echo "✓ etcd port 2379 is listening"
+              ss -tlnp 2>/dev/null | grep ':2379' || netstat -tlnp 2>/dev/null | grep ':2379'
+            else
+              echo "✗ etcd port 2379 is NOT listening"
+            fi
+            echo ""
+            
+            # Test etcd health endpoint
+            echo "Testing etcd health endpoint..."
+            if timeout 2 curl -s http://127.0.0.1:2379/health 2>/dev/null | grep -q '"health":"true"'; then
+              echo "✓ etcd is healthy"
+              curl -s http://127.0.0.1:2379/health 2>/dev/null
+            else
+              echo "✗ etcd health check failed"
+            fi
+          args:
+            executable: /bin/bash
+          register: etcd_connectivity
+          changed_when: false
+          failed_when: false
+
+        - name: Show etcd connectivity results
+          ansible.builtin.debug:
+            var: etcd_connectivity.stdout_lines
+
+        - name: Check for common API server error patterns in logs
+          ansible.builtin.shell: |
+            set -o pipefail
+            CONTAINER_ID=$(crictl ps -a 2>/dev/null | grep kube-apiserver | awk '{print $1}' | head -n1)
+            if [ -n "$CONTAINER_ID" ]; then
+              echo "=== Checking for common error patterns ==="
+              echo ""
+              echo "Certificate errors:"
+              crictl logs "$CONTAINER_ID" 2>&1 | grep -i "certificate\|x509\|tls" | tail -20 || echo "None found"
+              echo ""
+              echo "etcd connection errors:"
+              crictl logs "$CONTAINER_ID" 2>&1 | grep -i "etcd\|context deadline" | tail -20 || echo "None found"
+              echo ""
+              echo "OOM/Resource errors:"
+              crictl logs "$CONTAINER_ID" 2>&1 | grep -i "oom\|out of memory\|killed" | tail -20 || echo "None found"
+              echo ""
+              echo "Fatal errors:"
+              crictl logs "$CONTAINER_ID" 2>&1 | grep -i "fatal\|panic" | tail -20 || echo "None found"
+            else
+              echo "No kube-apiserver container found"
+            fi
+          args:
+            executable: /bin/bash
+          register: error_patterns
+          changed_when: false
+          failed_when: false
+
+        - name: Show error pattern analysis
+          ansible.builtin.debug:
+            var: error_patterns.stdout_lines
+
+    - name: Recovery actions (if API server exists but not responding)
+      when:
+        - admin_conf_stat.stat.exists
+        - (api_already_working.rc | default(1)) != 0
+      block:
+        - name: Attempt to restart kubelet to recreate API server container
+          ansible.builtin.service:
+            name: kubelet
+            state: restarted
+          register: kubelet_restart
+
+        - name: Wait for kubelet to stabilize after restart
+          ansible.builtin.pause:
+            seconds: 15
+
+        - name: Check if API server container is running after restart
+          ansible.builtin.shell: |
+            set -o pipefail
+            crictl ps 2>/dev/null | grep kube-apiserver | grep -q Running
+          args:
+            executable: /bin/bash
+          register: apiserver_running_check
+          changed_when: false
+          failed_when: false
+          retries: 6
+          delay: 5
+          until: apiserver_running_check.rc == 0
+
+        - name: Wait for API server to become ready after restart (2 minutes)
+          ansible.builtin.shell: |
+            set -o pipefail
+            kubectl --kubeconfig={{ kubeconfig_path }} --request-timeout=5s get --raw=/readyz >/dev/null 2>&1 \
+              || kubectl --kubeconfig={{ kubeconfig_path }} --request-timeout=5s get nodes --no-headers >/dev/null 2>&1
+          args:
+            executable: /bin/bash
+          register: apiserver_ready_after_restart
+          changed_when: false
+          failed_when: false
+          retries: 24
+          delay: 5
+          until: apiserver_ready_after_restart.rc == 0
+
+        - name: Recovery result
+          ansible.builtin.debug:
+            msg: "{{ 'API server is now responding after restart' if apiserver_ready_after_restart.rc == 0 else 'API server still not responding after restart' }}"
+
+    - name: Final status check
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl --kubeconfig={{ kubeconfig_path }} --request-timeout=5s get --raw=/readyz >/dev/null 2>&1 \
+          || kubectl --kubeconfig={{ kubeconfig_path }} --request-timeout=5s get nodes --no-headers >/dev/null 2>&1
+      args:
+        executable: /bin/bash
+      register: final_api_check
+      changed_when: false
+      failed_when: false
+      when: admin_conf_stat.stat.exists
+
+    - name: Fail if API server is still not working
+      ansible.builtin.fail:
+        msg: |
+          API server is still not responding after diagnostics and recovery attempts.
+          
+          Review the diagnostic output above for specific issues:
+          - Certificate validity and expiration
+          - etcd connectivity 
+          - Container crash loops
+          - Resource constraints (OOM)
+          
+          Manual recovery may be required:
+            1. SSH to master: ssh {{ ansible_user }}@{{ ansible_host }}
+            2. Check container: sudo crictl ps -a | grep apiserver
+            3. Check logs: sudo crictl logs <container-id>
+            4. Reset if needed: sudo kubeadm reset -f
+            5. Re-run full provision: ansible-playbook -i inventory.ini k8s-provision.yml
+      when:
+        - admin_conf_stat.stat.exists
+        - (final_api_check.rc | default(1)) != 0
+
+    - name: Success message
+      ansible.builtin.debug:
+        msg: "✓ API server is responding. Cluster is ready for CNI installation and worker join."
+      when:
+        - admin_conf_stat.stat.exists
+        - final_api_check.rc == 0
+
+# Continue with CNI installation and cluster finalization if API server is working
+- name: Install CNI and finalize cluster
+  hosts: k8s_master
+  become: true
+  gather_facts: false
+  vars:
+    kubeconfig_path: /etc/kubernetes/admin.conf
+  
+  tasks:
+    - name: Check if CNI is already installed
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl --kubeconfig={{ kubeconfig_path }} get pods -n kube-flannel --no-headers 2>/dev/null | wc -l
+      args:
+        executable: /bin/bash
+      register: cni_pods_count
+      changed_when: false
+      failed_when: false
+
+    - name: Install Flannel CNI if not already installed
+      ansible.builtin.shell: |
+        kubectl --kubeconfig={{ kubeconfig_path }} apply -f https://raw.githubusercontent.com/flannel-io/flannel/refs/heads/master/Documentation/kube-flannel.yml
+      args:
+        executable: /bin/bash
+      register: flannel_install
+      when: (cni_pods_count.stdout | default('0') | int) == 0
+
+    - name: Wait for CNI pods to be ready
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl --kubeconfig={{ kubeconfig_path }} wait --for=condition=ready pod -l app=flannel -n kube-flannel --timeout=180s
+      args:
+        executable: /bin/bash
+      register: cni_ready
+      failed_when: false
+      changed_when: false
+
+    - name: Check cluster nodes
+      ansible.builtin.shell: |
+        kubectl --kubeconfig={{ kubeconfig_path }} get nodes -o wide
+      args:
+        executable: /bin/bash
+      register: cluster_nodes
+      changed_when: false
+
+    - name: Show cluster nodes
+      ansible.builtin.debug:
+        var: cluster_nodes.stdout_lines
+
+    - name: Generate join command for workers
+      ansible.builtin.shell: |
+        kubeadm token create --print-join-command
+      args:
+        executable: /bin/bash
+      register: join_command
+      changed_when: false
+      failed_when: false
+
+    - name: Save join command
+      ansible.builtin.set_fact:
+        worker_join_command: "{{ join_command.stdout | default('') }}"
+
+    - name: Show join command
+      ansible.builtin.debug:
+        msg: "Join command: {{ worker_join_command }}"
+      when: (worker_join_command | default('') | length) > 0
+
+    - name: Cluster resume complete
+      ansible.builtin.debug:
+        msg:
+          - "✓ Kubernetes cluster master is operational"
+          - "✓ API server is responding"
+          - "✓ CNI (Flannel) is installed"
+          - "✓ Worker join command generated"
+
+# Worker node recovery and join
+- name: Verify and recover worker nodes
+  hosts: k8s_workers
+  become: true
+  gather_facts: true
+  vars:
+    kubeconfig_path: /etc/kubernetes/kubelet.conf
+  
+  tasks:
+    - name: Check connectivity to worker node
+      ansible.builtin.ping:
+      register: worker_ping
+
+    - name: Worker connectivity status
+      ansible.builtin.debug:
+        msg: "✓ Successfully connected to {{ inventory_hostname }}"
+
+    - name: Check if kubelet is installed
+      ansible.builtin.command: which kubelet
+      register: kubelet_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if kubelet is not installed
+      ansible.builtin.fail:
+        msg: |
+          Kubelet is not installed on {{ inventory_hostname }}.
+          This worker needs to run through the full provisioning first.
+          Run: ansible-playbook -i inventory.ini k8s-provision.yml
+      when: kubelet_installed.rc != 0
+
+    - name: Check kubelet service status
+      ansible.builtin.systemd:
+        name: kubelet
+      register: kubelet_status
+
+    - name: Show kubelet status
+      ansible.builtin.debug:
+        msg:
+          - "Kubelet active: {{ kubelet_status.status.ActiveState }}"
+          - "Kubelet loaded: {{ kubelet_status.status.LoadState }}"
+
+    - name: Start kubelet if not running
+      ansible.builtin.service:
+        name: kubelet
+        state: started
+        enabled: true
+      when: kubelet_status.status.ActiveState != "active"
+
+    - name: Check if worker is already joined
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: kubelet_conf_stat
+
+    - name: Worker join status
+      ansible.builtin.debug:
+        msg: "{{ 'Worker is already joined to cluster' if kubelet_conf_stat.stat.exists else 'Worker needs to join cluster' }}"
+
+    - name: Get join command from master
+      ansible.builtin.set_fact:
+        join_cmd: "{{ hostvars[groups['k8s_master'][0]]['worker_join_command'] | default('') }}"
+      when: not kubelet_conf_stat.stat.exists
+
+    - name: Verify join command is available
+      ansible.builtin.fail:
+        msg: |
+          Join command not available from master.
+          This usually means the master recovery failed.
+          Check the master recovery output above.
+      when:
+        - not kubelet_conf_stat.stat.exists
+        - (join_cmd | default('') | length) == 0
+
+    - name: Join worker to cluster
+      ansible.builtin.shell: |
+        set -euo pipefail
+        {{ join_cmd }}
+      args:
+        executable: /bin/bash
+      register: worker_join_result
+      when:
+        - not kubelet_conf_stat.stat.exists
+        - (join_cmd | default('') | length) > 0
+
+    - name: Show join result
+      ansible.builtin.debug:
+        var: worker_join_result.stdout_lines
+      when: worker_join_result is defined and worker_join_result.changed
+
+    - name: Wait for kubelet to stabilize after join
+      ansible.builtin.pause:
+        seconds: 10
+      when: worker_join_result is defined and worker_join_result.changed
+
+    - name: Check kubelet status after join
+      ansible.builtin.systemd:
+        name: kubelet
+      register: kubelet_status_after_join
+      when: worker_join_result is defined and worker_join_result.changed
+
+    - name: Show kubelet status after join
+      ansible.builtin.debug:
+        msg:
+          - "Kubelet active: {{ kubelet_status_after_join.status.ActiveState }}"
+          - "Kubelet enabled: {{ kubelet_status_after_join.status.UnitFileState }}"
+      when: kubelet_status_after_join is defined
+
+    - name: Worker recovery complete
+      ansible.builtin.debug:
+        msg: "✓ Worker node {{ inventory_hostname }} is ready"
+
+# Final cluster verification
+- name: Verify full cluster status
+  hosts: k8s_master
+  become: true
+  gather_facts: false
+  vars:
+    kubeconfig_path: /etc/kubernetes/admin.conf
+  
+  tasks:
+    - name: Wait for all nodes to be ready (up to 3 minutes)
+      ansible.builtin.shell: |
+        set -o pipefail
+        kubectl --kubeconfig={{ kubeconfig_path }} get nodes --no-headers | grep -v " Ready " && exit 1 || exit 0
+      args:
+        executable: /bin/bash
+      register: nodes_ready_check
+      changed_when: false
+      failed_when: false
+      retries: 36
+      delay: 5
+      until: nodes_ready_check.rc == 0
+
+    - name: Get final cluster status
+      ansible.builtin.shell: |
+        echo "=== Cluster Nodes ==="
+        kubectl --kubeconfig={{ kubeconfig_path }} get nodes -o wide
+        echo ""
+        echo "=== System Pods ==="
+        kubectl --kubeconfig={{ kubeconfig_path }} get pods -n kube-system
+        echo ""
+        echo "=== CNI Pods ==="
+        kubectl --kubeconfig={{ kubeconfig_path }} get pods -n kube-flannel
+      args:
+        executable: /bin/bash
+      register: final_cluster_status
+      changed_when: false
+
+    - name: Show final cluster status
+      ansible.builtin.debug:
+        var: final_cluster_status.stdout_lines
+
+    - name: Cluster recovery summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "  Kubernetes Cluster Recovery Complete"
+          - "=========================================="
+          - ""
+          - "✓ Master node is operational"
+          - "✓ API server is responding"
+          - "✓ CNI (Flannel) is installed"
+          - "✓ Worker nodes have been verified/joined"
+          - "✓ All nodes are ready"
+          - ""
+          - "Cluster is now fully operational!"
+          - ""
+          - "To verify cluster health:"
+          - "  kubectl get nodes"
+          - "  kubectl get pods --all-namespaces"

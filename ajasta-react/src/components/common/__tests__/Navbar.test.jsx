@@ -37,14 +37,16 @@ jest.mock('../../../services/ApiService', () => ({
     isAuthenticated: jest.fn(() => true),
     isAdmin: jest.fn(() => false),
     isCustomer: jest.fn(() => true),
-    isDeliveryPerson: jest.fn(() => false),
+    isResourceManager: jest.fn(() => false),
     logout: jest.fn(),
+    onRolesChange: jest.fn(() => jest.fn()),
+    bootstrapRoles: jest.fn(() => Promise.resolve([])),
   }
 }));
 
-// Import Navbar after mocks so it uses the mocked modules
-import Navbar from '../Navbar';
-import ApiService from '../../../services/ApiService';
+// Import Navbar and ApiService using require after mocks to satisfy import/first
+const Navbar = require('../Navbar').default;
+const ApiService = require('../../../services/ApiService').default;
 
 describe('Navbar links', () => {
   beforeEach(() => {
@@ -53,7 +55,6 @@ describe('Navbar links', () => {
     ApiService.isAuthenticated.mockReturnValue(true);
     ApiService.isCustomer.mockReturnValue(true);
     ApiService.isAdmin.mockReturnValue(false);
-    ApiService.isDeliveryPerson.mockReturnValue(false);
   });
 
   it('Orders link points to /my-order-history', () => {

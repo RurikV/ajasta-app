@@ -3,6 +3,7 @@ package top.ajasta.AjastaApp.security;
 import top.ajasta.AjastaApp.exceptions.CustomAuthenticationEntryPoint;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -38,24 +39,47 @@ public class AuthFilter extends OncePerRequestFilter {
         String  token = getTokenFromRequest(request);
 
         if (token != null){
-            String email;
-
             try {
-                email = jwtUtils.getUsernameFromToken(token);
+                String email = jwtUtils.getUsernameFromToken(token);
 
-            }catch(Exception ex){
-                AuthenticationException authenticationException = new BadCredentialsException(ex.getMessage());
-                customAuthenticationEntryPoint.commence(request, response, authenticationException);
-                return;
-            }
+                // Validate that the token belongs to the same User-Agent (bound at login time)
+                String currentUA = request.getHeader("User-Agent");
+                if (!jwtUtils.isUserAgentValid(token, currentUA)) {
+                    log.warn("Invalid User-Agent for token, continuing without authentication");
+                    filterChain.doFilter(request, response);
+                    return;
+                }
 
-            UserDetails userDetails = customUserDetailsService.loadUserByUsername(email);
-            if (StringUtils.hasText(email) && jwtUtils.isTokenValid(token, userDetails)){
-                UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(
-                        userDetails, null, userDetails.getAuthorities()
-                );
-                authenticationToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authenticationToken);
+                // Enforce session cookie (AJASTA_SID) to match token's sid claim to prevent token pasting
+                String sidInToken = jwtUtils.getSessionIdFromToken(token);
+                String sidInCookie = null;
+                Cookie[] cookies = request.getCookies();
+                if (cookies != null) {
+                    for (Cookie c : cookies) {
+                        if ("AJASTA_SID".equals(c.getName())) {
+                            sidInCookie = c.getValue();
+                            break;
+                        }
+                    }
+                }
+                if (sidInToken == null || sidInToken.isEmpty() || sidInCookie == null || !sidInToken.equals(sidInCookie)) {
+                    log.warn("Invalid session context for token, continuing without authentication");
+                    filterChain.doFilter(request, response);
+                    return;
+                }
+
+                UserDetails userDetails = customUserDetailsService.loadUserByUsername(email);
+                if (StringUtils.hasText(email) && jwtUtils.isTokenValid(token, userDetails)){
+                    UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(
+                            userDetails, null, userDetails.getAuthorities()
+                    );
+                    authenticationToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authenticationToken);
+                }
+            } catch(Exception ex){
+                // Token validation failed, but continue without authentication
+                // Spring Security will reject if the endpoint requires authentication
+                log.warn("Token validation failed: {}, continuing without authentication", ex.getMessage());
             }
         }
 

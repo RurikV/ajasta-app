@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import ApiService from '../../services/ApiService';
-import { useNavigate } from 'react-router-dom';
 import { useError } from '../common/ErrorDisplay';
 
 
@@ -8,54 +7,20 @@ const OrderHistoryPage = () => {
 
     const [orders, setOrders] = useState(null);
     const [message, setMessage] = useState(null);
-    const navigate = useNavigate();
     const { ErrorDisplay, showError } = useError();
 
 
     useEffect(() => {
-        // Define an asynchronous function to fetch orders
         const fetchOrders = async () => {
             try {
-                // Call the API service to get the current user's orders
                 const response = await ApiService.getMyOrders();
-
-                // Check if the API call was successful (status code 200)
                 if (response.statusCode === 200) {
-                    const enhancedOrders = [];
-                    // Iterate over each order to enhance its items
-                    for (const order of response.data) {
-                        const enhancedItems = [];
-                        // Iterate over each item within the current order
-                        for (const item of order.orderItems) {
-                            // Fetch details for each order item by its ID
-                            const itemResponse = await ApiService.getOrderItemById(item.id);
-
-                            // If item details are successfully fetched
-                            if (itemResponse.statusCode === 200) {
-                                enhancedItems.push({
-                                    ...item,
-                                    // Determine if the item has a review associated with the current order
-                                    hasReview: itemResponse.data.menu.reviews.some(
-                                        review => review.orderId === order.id
-                                    )
-                                });
-                            } else {
-                                // Return the original item if fetching details failed
-                                enhancedItems.push(item);
-                            }
-                        }
-                        // Add the order with its newly enhanced items to the list
-                        enhancedOrders.push({ ...order, orderItems: enhancedItems });
-                    }
-                    // Update the state with the enhanced orders
-                    setOrders(enhancedOrders);
+                    setOrders(response.data || []);
                 }
             } catch (error) {
-                // Catch and display any errors that occur during the fetch operation
                 showError(error.response?.data?.message || error.message);
             }
         };
-
         fetchOrders();
     }, [showError]);
 
@@ -70,11 +35,6 @@ const OrderHistoryPage = () => {
             minute: '2-digit',
         };
         return date.toLocaleDateString(undefined, options);
-    };
-
-
-    const handleLeaveReview = (orderId, menuId) => {
-        navigate(`/leave-review?orderId=${orderId}&menuId=${menuId}`);
     };
 
     const handleDeleteOrder = async (orderId) => {
@@ -142,7 +102,7 @@ const OrderHistoryPage = () => {
                                 order.orderItems.map((item) => (
                                     <div key={item.id} className="order-item">
                                         <div className="item-details">
-                                            <span className="item-name">{item.menu?.name || 'Item'}</span>
+                                            <span className="item-name">{item.itemName || 'Item'}</span>
                                             <span className="item-quantity">Quantity: {item.quantity}</span>
                                             <span className="item-price">
                                                 Price: ${item.pricePerUnit.toFixed(2)}
@@ -150,18 +110,10 @@ const OrderHistoryPage = () => {
                                             <span className="subtotal">
                                                 Subtotal: ${item.subtotal.toFixed(2)}
                                             </span>
-                                            {order.orderStatus.toLowerCase() === 'delivered' && item.menu && !item.hasReview && (
-                                                <button
-                                                    className="review-button"
-                                                    onClick={() => handleLeaveReview(order.id, item.menu.id)}
-                                                >
-                                                    Leave Review
-                                                </button>
-                                            )}
                                         </div>
                                         <div className="item-image-container">
-                                            {item.menu?.imageUrl && (
-                                                <img src={item.menu.imageUrl} alt={item.menu.name} className="item-image" />
+                                            {item.itemImageUrl && (
+                                                <img src={item.itemImageUrl} alt={item.itemName || 'Item'} className="item-image" />
                                             )}
                                         </div>
                                     </div>

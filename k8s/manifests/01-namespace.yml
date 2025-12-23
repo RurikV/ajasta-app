@@ -1,0 +1,8 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ajasta
+  labels:
+    name: ajasta
+    app: ajasta

@@ -3,10 +3,12 @@ package top.ajasta.AjastaApp.reservation.entity;
 import top.ajasta.AjastaApp.reservation.enums.ResourceType;
 import jakarta.persistence.*;
 import lombok.*;
+import top.ajasta.AjastaApp.auth_users.entity.User;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.List;
 
 @Entity
 @Table(name = "resources")
@@ -58,6 +60,15 @@ public class Resource {
     // Semicolon-separated time ranges per day e.g. "12:00-13:30;16:00-17:00"
     @Column(length = 2000)
     private String dailyUnavailableRanges;
+
+    // Users who are managers/admins for this resource
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+            name = "resource_managers",
+            joinColumns = @JoinColumn(name = "resource_id"),
+            inverseJoinColumns = @JoinColumn(name = "user_id")
+    )
+    private List<User> managers;
 
     @Builder.Default
     private boolean active = true;

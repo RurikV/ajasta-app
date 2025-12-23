@@ -1,0 +1,89 @@
+{{- if .Values.postgres.enabled }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ajasta-postgres
+  namespace: {{ include "ajasta-app.namespace" . }}
+  labels:
+    {{- include "ajasta-app.postgres.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "ajasta-app.postgres.serviceName" . }}
+  replicas: {{ .Values.postgres.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ajasta-app.postgres.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ajasta-app.postgres.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: postgres
+        image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+        imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.postgres.service.port }}
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_PASSWORD
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - {{ .Values.postgres.auth.username }}
+            - -d
+            - {{ .Values.postgres.auth.database }}
+          initialDelaySeconds: {{ .Values.postgres.livenessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.postgres.livenessProbe.periodSeconds }}
+          timeoutSeconds: {{ .Values.postgres.livenessProbe.timeoutSeconds }}
+          failureThreshold: {{ .Values.postgres.livenessProbe.failureThreshold }}
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - {{ .Values.postgres.auth.username }}
+            - -d
+            - {{ .Values.postgres.auth.database }}
+          initialDelaySeconds: {{ .Values.postgres.readinessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.postgres.readinessProbe.periodSeconds }}
+          timeoutSeconds: {{ .Values.postgres.readinessProbe.timeoutSeconds }}
+          failureThreshold: {{ .Values.postgres.readinessProbe.failureThreshold }}
+        resources:
+          {{- toYaml .Values.postgres.resources | nindent 10 }}
+  {{- if .Values.postgres.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+      labels:
+        {{- include "ajasta-app.postgres.labels" . | nindent 8 }}
+    spec:
+      accessModes:
+      - {{ .Values.postgres.persistence.accessMode }}
+      storageClassName: {{ .Values.postgres.persistence.storageClassName | quote }}
+      resources:
+        requests:
+          storage: {{ .Values.postgres.persistence.size }}
+  {{- end }}
+{{- end }}

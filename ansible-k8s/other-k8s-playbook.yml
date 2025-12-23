@@ -1,0 +1,20 @@
+---
+- name: Configure containerd for Kubernetes nodes
+  hosts: k8s
+  become: true
+  gather_facts: true
+  vars:
+    containerd_config_path: /etc/containerd/config.toml
+    containerd_service: containerd
+    containerd_pause_image_repo: registry.hpc.ut.ee/mirror/registry.k8s.io/pause
+    containerd_pause_image_version: "3.10"
+  roles:
+    - role: firewall_remove
+    - role: ports_verify
+    - role: containerd_config
+    - role: registry
+    - role: system_checks # it should be here don't move up.
+    - role: kubernetes_install
+    - role: cri_ready
+    - role: kubeadm_init
+    - role: cni_install

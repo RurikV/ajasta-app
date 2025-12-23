@@ -21,13 +21,8 @@ public class OrderController {
 
     private final OrderService orderService;
 
-    @PostMapping("/checkout")
-    @PreAuthorize("hasAuthority('CUSTOMER')")
-    public ResponseEntity<Response<?>> checkout(){
-        return ResponseEntity.ok(orderService.placeOrderFromCart());
-    }
-
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyAuthority('ADMIN','RESOURCE_MANAGER')")
     public ResponseEntity<Response<OrderDTO>> getOrderById(@PathVariable Long id){
         return ResponseEntity.ok(orderService.getOrderById(id));
     }
@@ -45,17 +40,18 @@ public class OrderController {
 
 
     @GetMapping("/all")
-    @PreAuthorize("hasAuthority('ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','RESOURCE_MANAGER')")
     public ResponseEntity<Response<Page<OrderDTO>>> getAllOrders(
             @RequestParam(required = false) OrderStatus orderStatus,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "100") int size) {
-        return ResponseEntity.ok(orderService.getAllOrders(orderStatus, page, size));
+            @RequestParam(defaultValue = "100") int size,
+            @RequestParam(required = false) String name) {
+        return ResponseEntity.ok(orderService.getAllOrders(orderStatus, page, size, name));
     }
 
 
     @PutMapping("/update")
-    @PreAuthorize("hasAuthority('ADMIN')")
+    @PreAuthorize("hasAnyAuthority('ADMIN','RESOURCE_MANAGER')")
     public ResponseEntity<Response<OrderDTO>> updateOrderStatus(@RequestBody OrderDTO orderDTO) {
         return ResponseEntity.ok(orderService.updateOrderStatus(orderDTO));
     }

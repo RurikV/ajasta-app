@@ -1,0 +1,23 @@
+# Example custom Prometheus alert rules
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ajasta-custom-rules
+  namespace: {{ monitoring_namespace }}
+  labels:
+    release: {{ release_name_kps }}
+spec:
+  groups:
+    - name: ajasta-backend.rules
+      rules:
+        - alert: BackendHighErrorRate
+          expr: |
+            sum(rate(http_server_requests_seconds_count{outcome="SERVER_ERROR", namespace="{{ app_namespace }}"}[5m]))
+            /
+            sum(rate(http_server_requests_seconds_count{namespace="{{ app_namespace }}"}[5m])) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High 5xx error rate on backend"
+            description: ">5% 5xx responses in the last 10m"

@@ -1,0 +1,35 @@
+# Service to expose backend metrics and ServiceMonitor for Prometheus
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ajasta-backend-metrics
+  namespace: ajasta
+  labels:
+    app.kubernetes.io/name: ajasta-backend
+spec:
+  selector:
+    app.kubernetes.io/name: ajasta-backend
+  ports:
+    - name: http-metrics
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ajasta-backend
+  namespace: monitoring
+  labels:
+    release: kps
+spec:
+  namespaceSelector:
+    matchNames:
+      - ajasta
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ajasta-backend
+  endpoints:
+    - port: http-metrics
+      path: /actuator/prometheus
+      interval: 30s

@@ -1,0 +1,91 @@
+---
+- name: Disable OS firewall (firewalld/nftables/iptables) on all cluster nodes
+  hosts: k8s
+  gather_facts: false
+  become: true
+
+  vars:
+    # When true, also remove custom Ajasta firewall units if present
+    purge_custom_units: true
+
+  tasks:
+    - name: Detect firewalld installation
+      shell: rpm -q firewalld >/dev/null 2>&1 && echo present || echo absent
+      register: fw_pkg
+      changed_when: false
+      failed_when: false
+
+    - name: Stop and disable firewalld if installed
+      when: fw_pkg.stdout == 'present'
+      block:
+        - name: Stop firewalld
+          service:
+            name: firewalld
+            state: stopped
+            enabled: false
+          register: fw_stop
+
+        - name: Mask firewalld to prevent accidental start
+          command: systemctl mask firewalld
+          register: fw_mask
+          changed_when: fw_mask.rc == 0
+          failed_when: false
+
+        - name: Verify firewalld inactive
+          shell: systemctl is-active firewalld || echo inactive
+          register: fw_state
+          changed_when: false
+          failed_when: false
+
+    - name: Best-effort flush nftables ruleset (if nft available)
+      shell: |
+        if command -v nft >/dev/null 2>&1; then
+          nft flush ruleset || true
+          echo flushed
+        else
+          echo nft_not_found
+        fi
+      register: nft_flush
+      changed_when: '"flushed" in nft_flush.stdout'
+      failed_when: false
+
+    - name: Best-effort flush iptables filter rules and set ACCEPT policies (if iptables available)
+      shell: |
+        if command -v iptables >/dev/null 2>&1; then
+          iptables -P INPUT ACCEPT || true
+          iptables -P FORWARD ACCEPT || true
+          iptables -P OUTPUT ACCEPT || true
+          iptables -F || true
+          echo iptables_flushed
+        else
+          echo iptables_not_found
+        fi
+      register: ipt_flush
+      changed_when: '"iptables_flushed" in ipt_flush.stdout'
+      failed_when: false
+
+    - name: Disable custom Ajasta iptables unit if present
+      when: purge_custom_units | bool
+      block:
+        - name: Stop/disable ajasta-iptables-ports.service if exists
+          shell: |
+            systemctl list-unit-files | grep -q "ajasta-iptables-ports.service" || exit 0
+            systemctl disable --now ajasta-iptables-ports.service || true
+            echo disabled
+          register: ajasta_fw_unit
+          changed_when: '"disabled" in ajasta_fw_unit.stdout'
+          failed_when: false
+
+        - name: Remove ajasta-iptables-ports.service file (if present)
+          file:
+            path: /etc/systemd/system/ajasta-iptables-ports.service
+            state: absent
+
+    - name: Summary (firewall disabled)
+      debug:
+        msg:
+          - "firewalld package: {{ fw_pkg.stdout | default('unknown') }}"
+          - "firewalld state: {{ fw_state.stdout | default('n/a') }}"
+          - "nft flush: {{ nft_flush.stdout | default('n/a') }}"
+          - "iptables flush: {{ ipt_flush.stdout | default('n/a') }}"
+          - "custom unit disabled: {{ ajasta_fw_unit.stdout | default('n/a') }}"

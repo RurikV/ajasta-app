@@ -1,0 +1,40 @@
+# loki-stack values rendered by Ansible
+# - installs single-binary Loki and Promtail DaemonSet
+# - disables Grafana (we use Grafana from kube-prometheus-stack)
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  persistence:
+    enabled: true
+    size: {{ loki_pvc_size }}
+  service:
+    type: ClusterIP
+
+singleBinary:
+  replicas: 1
+
+# Do not install extra Grafana from this chart
+grafana:
+  enabled: false
+
+promtail:
+  enabled: true
+  config:
+    clients:
+      - url: http://loki.{{ logging_namespace }}.svc.cluster.local:3100/loki/api/v1/push
+    snippets:
+      pipelineStages:
+        - cri: {}
+        # Drop very old logs at source if desired (comment out to keep all)
+        - drop:
+            older_than: 168h
+      relabelings:
+        - action: replace
+          sourceLabels: ["__meta_kubernetes_pod_label_app_kubernetes_io_name", "__meta_kubernetes_pod_label_app"]
+          targetLabel: "app"
+  tolerations: []
+  extraScrapeConfigs: []

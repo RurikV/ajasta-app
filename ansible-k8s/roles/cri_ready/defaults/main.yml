@@ -1,0 +1,12 @@
+---
+# Defaults for cri_ready role
+# Prefer crictl to verify CRI readiness; install from GitHub if package repos are unreachable.
+crictl_version: "1.30.0"
+# Map ansible_architecture -> crictl arch suffix
+crictl_arch_map:
+  x86_64: amd64
+  aarch64: arm64
+  arm64: arm64
+  armv7l: arm
+# Runtime endpoint used by crictl
+cri_runtime_endpoint: "unix:///run/containerd/containerd.sock"

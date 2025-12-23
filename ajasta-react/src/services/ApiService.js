@@ -1,13 +1,97 @@
 import axios from "axios";
+axios.defaults.withCredentials = true;
+
+// Determine API base URL at runtime. Prefer explicit env/config, with smart localhost defaults.
+const __RUNTIME_API_BASE__ = (() => {
+    try {
+        // 1) Build-time env or runtime globals take precedence
+        const envUrl = (typeof process !== 'undefined' && process.env && (process.env.REACT_APP_API_BASE_URL || process.env.API_BASE_URL))
+            || (typeof window !== 'undefined' && (window.__API_BASE_URL || window.API_BASE_URL));
+        if (envUrl && typeof envUrl === 'string') {
+            return envUrl.replace(/\/$/, '');
+        }
+
+        // 2) Smart defaults depending on environment
+        if (typeof window !== 'undefined' && window.location && window.location.origin) {
+            const origin = window.location.origin;
+            const port = window.location.port;
+            const hostname = window.location.hostname;
+            const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+
+            // CRA dev server: rely on dev proxy to avoid CORS
+            if (isLocalhost && typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development') {
+                return `${origin}/api`;
+            }
+
+            // Static/production build served at localhost:3000 (e.g., docker-compose nginx)
+            // There is no CRA proxy in this case; direct to backend port 8090 by default.
+            if (isLocalhost && port === '3000' && (typeof process === 'undefined' || !process.env || process.env.NODE_ENV === 'production')) {
+                return 'http://localhost:8090/api';
+            }
+
+            // Generic default: same-origin /api (assumes reverse proxy/Ingress present)
+            return `${origin}/api`;
+        }
+    } catch (_) {}
+    // 3) Safe default: relative path via Ingress
+    return '/api';
+})();
+
+// Dedicated CMS base URL with per-service override support
+const __RUNTIME_CMS_API_BASE__ = (() => {
+    try {
+        const envUrl = (typeof process !== 'undefined' && process.env && (process.env.REACT_APP_CMS_API_BASE_URL || process.env.CMS_API_BASE_URL))
+            || (typeof window !== 'undefined' && (window.__CMS_API_BASE_URL || window.CMS_API_BASE_URL));
+        if (envUrl && typeof envUrl === 'string') {
+            return envUrl.replace(/\/$/, '');
+        }
+
+        // Localhost static build at port 3000 (no dev proxy) -> default to CMS on 8091
+        if (typeof window !== 'undefined' && window.location) {
+            const port = window.location.port;
+            const hostname = window.location.hostname;
+            const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+            if (isLocalhost && port === '3000' && (typeof process === 'undefined' || !process.env || process.env.NODE_ENV === 'production')) {
+                return 'http://localhost:8091/api/cms';
+            }
+        }
+
+        // Fallback to primary API base + '/cms'
+        const base = (__RUNTIME_API_BASE__ || '').replace(/\/$/, '');
+        if (base) return `${base}/cms`;
+    } catch (_) {}
+    return '/api/cms';
+})();
 
 export default class ApiService {
 
 
-    static BASE_URL = "http://localhost:8090/api";
+    static BASE_URL = __RUNTIME_API_BASE__;
+    static CMS_BASE_URL = __RUNTIME_CMS_API_BASE__;
     // static BASE_URL = "http://18.221.120.102:8090/api"; //production base url
 
     // In-memory cache for roles (never persisted to localStorage)
     static cachedRoles = null;
+
+    // Simple listeners to notify components when roles change
+    static roleListeners = new Set();
+
+    static onRolesChange(callback) {
+        if (typeof callback === 'function') {
+            this.roleListeners.add(callback);
+            return () => this.roleListeners.delete(callback);
+        }
+        return () => {};
+    }
+
+    static emitRolesChange() {
+        try {
+            const roles = this.getRoles();
+            this.roleListeners.forEach(cb => {
+                try { cb(roles); } catch {}
+            });
+        } catch {}
+    }
 
     static saveToken(token) {
         localStorage.setItem("token", token);
@@ -17,14 +101,20 @@ export default class ApiService {
         return localStorage.getItem("token");
     }
 
-    // Save roles in-memory only (do NOT store in localStorage)
+    // Save roles: keep an in-memory cache for fast checks (no localStorage persistence)
     static saveRole(roles) {
         try {
-            if (!roles) { this.cachedRoles = null; return; }
+            if (!roles) {
+                this.cachedRoles = null;
+                this.emitRolesChange();
+                return;
+            }
             const arr = Array.isArray(roles) ? roles : [roles];
             this.cachedRoles = Array.from(new Set(arr.map(r => String(r).replace(/^ROLE_/,'').toUpperCase())));
+            this.emitRolesChange();
         } catch {
             this.cachedRoles = null;
+            this.emitRolesChange();
         }
     }
 
@@ -53,11 +143,17 @@ export default class ApiService {
         }
     }
 
-    // Get roles from token (preferred) or from in-memory cache
+    // Get roles from token (preferred) or in-memory cache
     static getRoles() {
+        // Prefer parsed roles from token if present
         const fromToken = this.parseRolesFromToken();
-        if (fromToken && fromToken.length) return fromToken;
-        return this.cachedRoles || [];
+        if (fromToken && fromToken.length) {
+            this.cachedRoles = fromToken;
+            return fromToken;
+        }
+        // Fall back to in-memory cached roles
+        if (this.cachedRoles && this.cachedRoles.length) return this.cachedRoles;
+        return [];
     }
 
     // Check if the user has a specific role
@@ -78,17 +174,19 @@ export default class ApiService {
         return this.hasRole('CUSTOMER');
     }
 
-    // Check if the user is a delivery person
-    static isDeliveryPerson() {
-        return this.hasRole('DELIVERY');
+    // Check if the user is a resource manager
+    static isResourceManager() {
+        return this.hasRole('RESOURCE_MANAGER');
     }
+
 
 
     static logout() {
         localStorage.removeItem("token");
-        // Clear any legacy roles key and reset in-memory cache
-        try { localStorage.removeItem("roles"); } catch {}
+        localStorage.removeItem("roles");
+        // Reset in-memory cache and notify listeners
         this.cachedRoles = null;
+        this.emitRolesChange();
     }
 
     static isAuthenticated() {
@@ -123,6 +221,27 @@ export default class ApiService {
     static async loginUser(loginData) {
         const resp = await axios.post(`${this.BASE_URL}/auth/login`, loginData);
         return resp.data;
+    }
+
+    // Bootstrap roles securely from backend (in-memory only)
+    static async bootstrapRoles(force = false) {
+        if (!this.isAuthenticated()) {
+            this.saveRole(null);
+            return [];
+        }
+        if (!force) {
+            const existing = this.getRoles();
+            if (existing && existing.length) return existing;
+        }
+        try {
+            const profile = await this.myProfile();
+            const list = (profile?.data?.roles || []).map(r => (r?.name || '').toUpperCase()).filter(Boolean);
+            this.saveRole(list);
+            return list;
+        } catch (e) {
+            this.saveRole([]);
+            return [];
+        }
     }
 
 
@@ -199,12 +318,6 @@ export default class ApiService {
         return resp.data;
     }
 
-    static async initiateDelivery(body) {
-        const resp = await axios.post(`${this.BASE_URL}/orders/initiate-delivery`, body, {
-            headers: this.getHeader()
-        })
-        return resp.data;
-    }
 
     static async updateOrderStatus(body) {
         const resp = await axios.put(`${this.BASE_URL}/orders/update`, body, {
@@ -214,13 +327,15 @@ export default class ApiService {
     }
 
 
-    static async getAllOrders(orderStatus, page = 0, size = 200) {
+    static async getAllOrders(orderStatus, page = 0, size = 200, name) {
 
-        let url = `${this.BASE_URL}/orders/all`;
-
-        if (orderStatus) {
-            url = `${this.BASE_URL}/orders/all?orderStatus=${encodeURIComponent(orderStatus)}&page=${page}&size=${size}`
-        }
+        let params = new URLSearchParams();
+        if (orderStatus) params.set('orderStatus', orderStatus);
+        if (page != null) params.set('page', String(page));
+        if (size != null) params.set('size', String(size));
+        if (name && String(name).trim()) params.set('name', String(name).trim());
+        const qs = params.toString();
+        const url = `${this.BASE_URL}/orders/all${qs ? ('?' + qs) : ''}`;
 
         const resp = await axios.get(url, {
             headers: this.getHeader()
@@ -229,72 +344,6 @@ export default class ApiService {
 
     }
 
-    static async getDeliveryOrders(orderStatus, page = 0, size = 200) {
-        // Try a set of likely delivery endpoints and query variants; return the first successful response
-        const candidates = [
-            `${this.BASE_URL}/orders/for-delivery`,
-            `${this.BASE_URL}/orders/ready-for-delivery`,
-            `${this.BASE_URL}/orders/available-for-delivery`,
-            `${this.BASE_URL}/orders/available`,
-            `${this.BASE_URL}/orders/deliveries`,
-            `${this.BASE_URL}/orders/delivery`,
-            `${this.BASE_URL}/orders/my-deliveries`,
-            `${this.BASE_URL}/orders/assigned`,
-            `${this.BASE_URL}/orders/assigned-to-me`,
-            `${this.BASE_URL}/delivery/orders`,
-            `${this.BASE_URL}/orders/driver`,
-            `${this.BASE_URL}/orders/courier`,
-            `${this.BASE_URL}/orders/rider`,
-            `${this.BASE_URL}/orders/ready`
-        ];
-
-        // Build query string variants to support different backends
-        const qsVariants = [];
-        const encoded = encodeURIComponent(orderStatus || '');
-        // with orderStatus
-        qsVariants.push(`?orderStatus=${encoded}&page=${page}&size=${size}`);
-        // with status
-        qsVariants.push(`?status=${encoded}&page=${page}&size=${size}`);
-        // no status filter
-        qsVariants.push(`?page=${page}&size=${size}`);
-        // bare (no params) as last resort
-        qsVariants.push('');
-
-        for (const base of candidates) {
-            for (const qs of qsVariants) {
-                try {
-                    const url = `${base}${qs}`;
-                    const resp = await axios.get(url, {
-                        headers: this.getHeader()
-                    });
-                    return resp.data;
-                } catch (e) {
-                    const status = e.response?.status;
-                    const msg = e.response?.data?.message || '';
-                    // Continue probing on typical discovery errors or framework messages
-                    if (
-                        status === 404 ||
-                        status === 403 ||
-                        status === 400 ||
-                        status === 405 ||
-                        msg.includes('Failed to convert value of type') ||
-                        msg.includes('No static resource')
-                    ) {
-                        continue;
-                    }
-                    // Bubble up 401 (unauthorized) and other unexpected errors
-                    if (status === 401) throw e;
-                    throw e;
-                }
-            }
-        }
-        // As a last resort, if admin, reuse admin listing
-        if (this.isAdmin()) {
-            return await this.getAllOrders(orderStatus, page, size);
-        }
-        // Graceful fallback for delivery users when endpoint is unavailable
-        return { statusCode: 403, message: 'Access Denied: Delivery orders endpoint is not accessible for your role.' };
-    }
 
     static async getMyOrders() {
         const resp = await axios.get(`${this.BASE_URL}/orders/me`, {
@@ -327,12 +376,6 @@ export default class ApiService {
     }
 
 
-    static async getOrderItemById(id) {
-        const resp = await axios.get(`${this.BASE_URL}/orders/order-item/${id}`, {
-            headers: this.getHeader()
-        })
-        return resp.data;
-    }
 
 
 
@@ -346,39 +389,6 @@ export default class ApiService {
 
 
 
-    /* CATEGORY SECTION */
-    static async getAllCategories() {
-        console.log("getAllCategories() was called")
-        const resp = await axios.get(`${this.BASE_URL}/categories/all`);
-        console.log("response is: " + resp.data)
-        return resp.data;
-    }
-
-    static async getCategoryById(id) {
-        const resp = await axios.get(`${this.BASE_URL}/categories/${id}`);
-        return resp.data;
-    }
-
-    static async createCategory(body) {
-        const resp = await axios.post(`${this.BASE_URL}/categories`, body, {
-            headers: this.getHeader()
-        });
-        return resp.data;
-    }
-
-    static async updateCategory(body) {
-        const resp = await axios.put(`${this.BASE_URL}/categories`, body, {
-            headers: this.getHeader()
-        });
-        return resp.data;
-    }
-
-    static async deleteCategory(id) {
-        const resp = await axios.delete(`${this.BASE_URL}/categories/${id}`, {
-            headers: this.getHeader()
-        });
-        return resp.data;
-    }
 
 
 
@@ -390,62 +400,6 @@ export default class ApiService {
 
 
 
-    /* MENU SECTION */
-
-    static async addMenu(formData) {
-        const resp = await axios.post(`${this.BASE_URL}/menu`, formData, {
-            headers: {
-                ...this.getHeader(),
-                'Content-Type': 'multipart/form-data'
-            }
-        });
-        return resp.data;
-    }
-
-    static async updateMenu(formData) {
-        const resp = await axios.put(`${this.BASE_URL}/menu`, formData, {
-            headers: {
-                ...this.getHeader(),
-                'Content-Type': 'multipart/form-data'
-            }
-        });
-        return resp.data;
-    }
-
-    static async deleteMenu(id) {
-        const resp = await axios.delete(`${this.BASE_URL}/menu/${id}`, {
-            headers: this.getHeader()
-        });
-        return resp.data;
-    }
-
-    static async getMenuById(id) {
-        const resp = await axios.get(`${this.BASE_URL}/menu/${id}`);
-        return resp.data;
-    }
-
-    static async getAllMenus() {
-        const resp = await axios.get(`${this.BASE_URL}/menu`, {});
-        return resp.data;
-    }
-
-    static async getAllMenuByCategoryId(categoryId) {
-        const resp = await axios.get(`${this.BASE_URL}/menu`, {
-            params: {
-                categoryId: categoryId
-            }
-        });
-        return resp.data;
-    }
-
-    static async searchMenu(search) {
-        const resp = await axios.get(`${this.BASE_URL}/menu`, {
-            params: {
-                search: search
-            }
-        });
-        return resp.data;
-    }
 
     /* RESOURCES SECTION */
     static async addResource(formData) {
@@ -516,88 +470,6 @@ export default class ApiService {
     }
 
 
-    /* CART SECTION */
-    static async addItemToCart(cartDTO) {
-
-        const resp = await axios.post(`${this.BASE_URL}/cart/items`, cartDTO, {
-            headers: this.getHeader()
-        });
-        return resp.data;
-    }
-
-    static async incrementItem(menuId) {
-        const resp = await axios.put(`${this.BASE_URL}/cart/items/increment/${menuId}`, null, {
-            headers: this.getHeader()
-        });
-        return resp.data;
-    }
-
-    static async decrementItem(menuId) {
-        const resp = await axios.put(`${this.BASE_URL}/cart/items/decrement/${menuId}`, null, {
-            headers: this.getHeader()
-        });
-        return resp.data;
-    }
-
-    static async removeItem(cartItemId) {
-        const resp = await axios.delete(`${this.BASE_URL}/cart/items/${cartItemId}`, {
-            headers: this.getHeader()
-        });
-        return resp.data;
-    }
-
-    static async getCart() {
-        const resp = await axios.get(`${this.BASE_URL}/cart`, {
-            headers: this.getHeader()
-        });
-        return resp.data;
-    }
-
-    static async clearCart() {
-        const resp = await axios.delete(`${this.BASE_URL}/api/cart`, {
-            headers: this.getHeader()
-        });
-        return resp.data;
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-    /**REVIEW SECTION */
-    static async getMenuAverageOverallReview(menuId) {
-        const resp = await axios.get(`${this.BASE_URL}/reviews/menu-item/average/${menuId}`);
-        return resp.data;
-    }
-
-    static async createReview(body) {
-        const resp = await axios.post(`${this.BASE_URL}/reviews`, body, {
-            headers: this.getHeader()
-        });
-        return resp.data;
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     /**PAYMENT SESSION */
 
     //funtion to create payment intent
@@ -637,4 +509,52 @@ export default class ApiService {
 
 
 
+
+    /* ADMIN USERS & ROLES */
+    static async getAllUsers() {
+        const resp = await axios.get(`${this.BASE_URL}/users/all`, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+    static async getAllRoles() {
+        const resp = await axios.get(`${this.BASE_URL}/roles`, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+    static async updateUserRoles(userId, roles) {
+        const resp = await axios.put(`${this.BASE_URL}/users/${userId}/roles`, roles, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+
+    /* REVIEWS SECTION */
+    static async getResourceReviews(resourceId) {
+        const resp = await axios.get(`${this.BASE_URL}/reviews/resource/${resourceId}`);
+        return resp.data;
+    }
+
+    static async getResourceAverageRating(resourceId) {
+        const resp = await axios.get(`${this.BASE_URL}/reviews/resource/average/${resourceId}`);
+        return resp.data;
+    }
+
+    static async getReviewEligibility(resourceId) {
+        const resp = await axios.get(`${this.BASE_URL}/reviews/resource/eligibility/${resourceId}`, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
+
+    static async createReview(reviewDTO) {
+        const resp = await axios.post(`${this.BASE_URL}/reviews`, reviewDTO, {
+            headers: this.getHeader()
+        });
+        return resp.data;
+    }
 }

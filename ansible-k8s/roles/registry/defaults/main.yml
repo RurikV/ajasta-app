@@ -1,0 +1,20 @@
+---
+# Defaults for the local registry role (override)
+# Keep in sync with other-k8s/roles/registry/defaults/main.yml
+registry_image: "registry.hpc.ut.ee/mirror/library/registry:2"
+registry_name: "registry"
+registry_port: 5000
+registry_kubeconfig: "/root/.kube/config"
+
+# Images to auto-push to the local registry (if present locally)
+registry_push_images:
+  - price-fetcher-service:latest
+
+# nerdctl installation defaults (used by override role)
+nerdctl_version: "1.7.7"
+# Map ansible_architecture -> nerdctl arch
+nerdctl_arch_map:
+  x86_64: amd64
+  aarch64: arm64
+  arm64: arm64
+  armv7l: arm

@@ -10,6 +10,7 @@ import lombok.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 @Data
 @Builder
@@ -45,4 +46,7 @@ public class ResourceDTO {
     private String unavailableWeekdays; // e.g., 0,6
     private String unavailableDates; // yyyy-MM-dd,yyyy-MM-dd
     private String dailyUnavailableRanges; // e.g., 12:00-13:30;16:00-17:00
+
+    // IDs of users who manage this resource
+    private List<Long> managerIds;
 }

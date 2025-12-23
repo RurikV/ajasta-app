@@ -1,0 +1,544 @@
+---
+# ==============================================================================
+# Create Kubernetes Cluster on Yandex Cloud
+# ==============================================================================
+# This playbook provisions a complete Kubernetes cluster on Yandex Cloud with:
+# - Yandex Cloud infrastructure (VMs, networks, static IPs)
+# - Kubernetes cluster initialization (kubeadm)
+# - Storage backend (Longhorn or Rook-Ceph)
+# - Nginx ingress controller
+# - Optional Rancher dashboard
+#
+# Usage:
+#   ansible-playbook -i k8s/inventory.ini k8s/create-k8s-cluster.yml \
+#     -e "storage_backend=longhorn"
+#
+# Parameters:
+#   storage_backend: "longhorn" or "rook" (default: "rook")
+#
+# Prerequisites:
+#   - Yandex Cloud CLI (yc) configured with credentials
+#   - SSH key pair (~/.ssh/id_rsa.pub or configured in group_vars/all.yml)
+#   - Environment variables or group_vars/all.yml configured:
+#       YC_CLOUD_ID, YC_FOLDER_ID (or set via yc init)
+# ==============================================================================
+
+# ==============================================================================
+# PART 1: Provision Yandex Cloud Infrastructure
+# ==============================================================================
+- name: Create k8s infrastructure in Yandex Cloud (1 master + 3 workers)
+  hosts: local
+  gather_facts: true
+  vars:
+    env_base:
+      YC_CLOUD_ID: "{{ yc_cloud_id }}"
+      YC_FOLDER_ID: "{{ yc_folder_id }}"
+      YC_ZONE: "{{ yc_zone }}"
+  tasks:
+    - name: Populate YC IDs from environment if not set
+      ansible.builtin.set_fact:
+        yc_cloud_id: "{{ lookup('env','YC_CLOUD_ID') | default('', true) }}"
+        yc_folder_id: "{{ lookup('env','YC_FOLDER_ID') | default('', true) }}"
+      when:
+        - (yc_cloud_id | default('') | length) == 0 or (yc_folder_id | default('') | length) == 0
+
+    - name: Detect YC cloud-id from yc CLI if still not set
+      ansible.builtin.command: yc config get cloud-id
+      register: yc_cloud_id_cmd
+      changed_when: false
+      failed_when: false
+      when: (yc_cloud_id | default('') | length) == 0
+
+    - name: Set yc_cloud_id from yc CLI result
+      ansible.builtin.set_fact:
+        yc_cloud_id: "{{ yc_cloud_id_cmd.stdout | trim }}"
+      when:
+        - (yc_cloud_id | default('') | length) == 0
+        - (yc_cloud_id_cmd.stdout | default('') | trim | length) > 0
+
+    - name: Detect YC folder-id from yc CLI if still not set
+      ansible.builtin.command: yc config get folder-id
+      register: yc_folder_id_cmd
+      changed_when: false
+      failed_when: false
+      when: (yc_folder_id | default('') | length) == 0
+
+    - name: Set yc_folder_id from yc CLI result
+      ansible.builtin.set_fact:
+        yc_folder_id: "{{ yc_folder_id_cmd.stdout | trim }}"
+      when:
+        - (yc_folder_id | default('') | length) == 0
+        - (yc_folder_id_cmd.stdout | default('') | trim | length) > 0
+
+    - name: Validate required vars are set
+      ansible.builtin.assert:
+        that:
+          - yc_cloud_id | length > 0
+          - yc_folder_id | length > 0
+        fail_msg: "yc_cloud_id and yc_folder_id must be provided in group_vars/all.yml or via YC_CLOUD_ID/YC_FOLDER_ID env vars or yc CLI config (yc init)"
+
+    - name: Ensure external VPC network and subnet exist (for master public IP)
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-network.zsh
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'YC_NETWORK_NAME': yc_network_name, 'YC_SUBNET_NAME': yc_subnet_name, 'YC_SUBNET_RANGE': yc_subnet_cidr}) }}"
+
+    - name: Ensure internal VPC network and subnet exist (private cluster network)
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-network.zsh
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'YC_NETWORK_NAME': yc_internal_network_name, 'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_SUBNET_RANGE': yc_internal_subnet_cidr}) }}"
+
+    - name: Ensure static IP for master exists
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-static-ip.zsh
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'YC_ADDRESS_NAME': master_address_name}) }}"
+
+    - name: Ensure static IP for workers exist
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-static-ip.zsh
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'YC_ADDRESS_NAME': item.address_name}) }}"
+      loop: "{{ workers }}"
+
+    - name: Ensure service account exists
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-sa.zsh
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'YC_SA_NAME': yc_sa_name}) }}"
+
+    # --- SSH public key auto-detection (only pass if file exists) ---
+    - name: Determine HOME directory
+      ansible.builtin.set_fact:
+        home_dir: "{{ lookup('env','HOME') }}"
+
+    - name: Build SSH key candidate list
+      ansible.builtin.set_fact:
+        ssh_key_candidates:
+          - "{{ ((ssh_pubkey_file | default('') | length) > 0) | ternary(ssh_pubkey_file | replace('~', home_dir), '') }}"
+          - "{{ home_dir }}/.ssh/id_ed25519.pub"
+          - "{{ home_dir }}/.ssh/id_rsa.pub"
+          - "{{ playbook_dir }}/../scripts/ajasta_ed25519.pub"
+
+    - name: Check which SSH key candidate exists
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ ssh_key_candidates | reject('equalto', '') | list }}"
+      register: ssh_key_stats
+
+    - name: Select first existing SSH key
+      ansible.builtin.set_fact:
+        ssh_key_file_resolved: "{{ (ssh_key_stats.results | selectattr('stat.exists') | map(attribute='item') | list | first) | default('') }}"
+
+    - name: Build optional SSH env dict
+      ansible.builtin.set_fact:
+        ssh_env_optional: "{{ {'SSH_PUBKEY_FILE': ssh_key_file_resolved} if (ssh_key_file_resolved | default('') | length) > 0 else {} }}"
+
+    - name: Create/ensure master VM (with static public IP on private subnet)
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-vm-static-ip.zsh {{ master_vm_name }}
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      register: master_ip_out
+      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_ADDRESS_NAME': master_address_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': master_vm_memory | string, 'VM_CORES': master_vm_cores | string, 'VM_DISK_SIZE': master_vm_disk_size | string}) | combine(ssh_env_optional) }}"
+
+    - name: Create/ensure worker VMs (with static public IP on private subnet)
+      ansible.builtin.shell: |
+        {{ scripts_dir }}/create-vm-static-ip.zsh {{ item.vm_name }}
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      register: workers_ip_out
+      environment: "{{ env_base | combine({'YC_SUBNET_NAME': yc_internal_subnet_name, 'YC_ADDRESS_NAME': item.address_name, 'METADATA_YAML': metadata_yaml, 'SSH_USERNAME': ssh_username, 'VM_MEMORY': worker_vm_memory | string, 'VM_CORES': worker_vm_cores | string, 'VM_DISK_SIZE': worker_vm_disk_size | string}) | combine(ssh_env_optional) }}"
+      loop: "{{ workers }}"
+
+    - name: Show resulting IP addresses
+      ansible.builtin.debug:
+        msg:
+          - "Master public ({{ master_vm_name }}): {{ master_ip_out.stdout | default('') }}"
+          - "Worker IPs: {{ workers_ip_out.results | map(attribute='stdout') | list }}"
+
+    # --- Bootstrap Kubernetes cluster on the provisioned VMs ---
+    - name: Derive SSH private key candidate from public key
+      ansible.builtin.set_fact:
+        ssh_privkey_guess: "{{ (ssh_key_file_resolved | default('')) | regex_replace('\\.pub$', '') }}"
+
+    - name: Check if derived SSH private key exists
+      ansible.builtin.stat:
+        path: "{{ ssh_privkey_guess }}"
+      register: ssh_privkey_stat
+      when: (ssh_privkey_guess | default('') | length) > 0
+
+    - name: Build optional SSH private key env dict
+      ansible.builtin.set_fact:
+        ssh_privkey_env_optional: "{{ {'SSH_KEY_FILE': ssh_privkey_guess} if (ssh_privkey_stat.stat.exists | default(false)) else {} }}"
+
+    - name: Derive clean master IP from script output
+      ansible.builtin.set_fact:
+        master_ip_clean: "{{ (master_ip_out.stdout | default('') | regex_findall('\\d+\\.\\d+\\.\\d+\\.\\d+') | last | default('')) }}"
+
+    - name: Extract worker IPs from loop results
+      ansible.builtin.set_fact:
+        worker_ips_list: "{{ workers_ip_out.results | map(attribute='stdout') | map('regex_findall', '\\d+\\.\\d+\\.\\d+\\.\\d+') | map('last') | list }}"
+
+    - name: Prepare worker IP CSV (comma-separated)
+      ansible.builtin.set_fact:
+        workers_csv: "{{ worker_ips_list | join(',') }}"
+
+    - name: Debug resolved IPs
+      ansible.builtin.debug:
+        msg:
+          - "Resolved master IP: {{ master_ip_clean | default('') }}"
+          - "Resolved worker IPs: {{ worker_ips_list }}"
+          - "Worker CSV: {{ workers_csv }}"
+
+    # --- Auto-generate inventory.ini with captured VM IPs ---
+    - name: Backup existing inventory.ini (if exists)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/inventory.ini"
+        dest: "{{ playbook_dir }}/inventory.ini.backup.{{ ansible_date_time.epoch }}"
+        remote_src: false
+      when: "(master_ip_clean | default('') | length) > 0"
+      ignore_errors: true
+      delegate_to: localhost
+
+    - name: Generate inventory.ini from template with captured IPs
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/inventory.ini.j2"
+        dest: "{{ playbook_dir }}/inventory.ini"
+        mode: '0644'
+      when: "(master_ip_clean | default('') | length) > 0"
+      delegate_to: localhost
+
+    - name: Display inventory generation status
+      ansible.builtin.debug:
+        msg:
+          - "==========================================="
+          - "✓ Inventory file generated: {{ playbook_dir }}/inventory.ini"
+          - "  Master: {{ master_vm_name }} -> {{ master_ip_clean }}"
+          - "  Workers:"
+          - "{% for worker in workers %}    {{ worker.vm_name }} -> {{ worker_ips_list[loop.index0] }}{% endfor %}"
+          - "==========================================="
+      when: "(master_ip_clean | default('') | length) > 0"
+
+    - name: Ensure master IP is available before bootstrap
+      ansible.builtin.assert:
+        that:
+          - (master_ip_clean | length) > 0
+        fail_msg: "Failed to resolve master public IP address from provisioning output. Check previous tasks' logs."
+      when: bootstrap_k8s | default(false) | bool
+
+    - name: Precheck SSH reachability to master (fail fast)
+      ansible.builtin.wait_for:
+        host: "{{ master_ip_clean }}"
+        port: 22
+        timeout: 60
+        sleep: 3
+        state: started
+      when: bootstrap_k8s | default(false) | bool
+      tags: ["bootstrap"]
+
+    - name: Bootstrap Kubernetes cluster (kubeadm)
+      ansible.builtin.shell: |
+        zsh {{ scripts_dir }}/setup-k8s-cluster.zsh "{{ master_ip_clean }}" "{{ workers_csv }}"
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'SSH_USERNAME': ssh_username, 'SSH_RETRY_ATTEMPTS': ssh_retry_attempts | string, 'SSH_RETRY_DELAY': ssh_retry_delay | string, 'SSH_CMD_TIMEOUT': ssh_cmd_timeout | string}) | combine(ssh_privkey_env_optional) }}"
+      async: 7200
+      poll: 15
+      register: k8s_bootstrap_out
+      when: bootstrap_k8s | default(false) | bool
+      tags: ["bootstrap"]
+
+    - name: Show cluster bootstrap output (summary)
+      ansible.builtin.debug:
+        var: k8s_bootstrap_out.stdout_lines
+      when: bootstrap_k8s | default(false) | bool
+
+    # --- Optional: Install Rancher Dashboard ---
+    - name: Install Rancher dashboard on cluster
+      ansible.builtin.shell: |
+        timeout {{ rancher_install_timeout | default(900) }} zsh {{ scripts_dir }}/install-rancher.zsh "{{ master_ip_clean }}"
+      args:
+        chdir: "{{ playbook_dir }}/.."
+      environment: "{{ env_base | combine({'SSH_USERNAME': ssh_username, 'RANCHER_HOSTNAME': rancher_hostname | default('rancher.local')}) | combine(ssh_privkey_env_optional) }}"
+      register: rancher_install_out
+      when: (bootstrap_k8s | default(false) | bool) and (install_rancher | default(true) | bool)
+      tags: ["rancher"]
+
+    - name: Show Rancher installation output
+      ansible.builtin.debug:
+        var: rancher_install_out.stdout_lines
+      when: (bootstrap_k8s | default(false) | bool) and (install_rancher | default(true) | bool)
+
+    - name: Show infrastructure provisioning completion message
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "✓ Kubernetes infrastructure provisioned successfully!"
+          - "  Master IP: {{ master_ip_clean }}"
+          - "  Worker IPs: {{ worker_ips_list | join(', ') }}"
+          - "  Inventory file: {{ playbook_dir }}/inventory.ini"
+          - ""
+          - "Next: Installing storage backend and ingress controller..."
+          - "=========================================="
+      when: (master_ip_clean | default('') | length) > 0
+
+# ==============================================================================
+# PART 2: Install Storage Backend and Ingress Controller
+# ==============================================================================
+- name: Configure Kubernetes Cluster (Storage Backend + Ingress Controller)
+  hosts: k8s_master
+  gather_facts: false
+  become: true
+  
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+    
+  tasks:
+    - name: Set default storage backend if not provided via -e
+      set_fact:
+        storage_backend: "rook"
+      when: storage_backend is not defined
+
+    - name: Check if kubectl is available
+      command: kubectl version --client
+      register: kubectl_check
+      changed_when: false
+      failed_when: false
+      
+    - name: Fail if kubectl is not available
+      fail:
+        msg: "kubectl is not available on the master node"
+      when: kubectl_check.rc != 0
+      
+    - name: Check worker nodes disk space
+      shell: |
+        kubectl get nodes -o json | \
+        jq -r '.items[] | select(.spec.taints == null or (.spec.taints | map(select(.key == "node-role.kubernetes.io/control-plane")) | length == 0)) | 
+        .metadata.name + " " + (.status.conditions[] | select(.type == "DiskPressure") | .status)'
+      register: disk_check
+      changed_when: false
+      failed_when: false
+      
+    - name: Get detailed node disk usage
+      shell: |
+        kubectl get nodes -o json | \
+        jq -r '.items[] | select(.spec.taints == null or (.spec.taints | map(select(.key == "node-role.kubernetes.io/control-plane")) | length == 0)) |
+        .metadata.name + " - Available: " + .status.allocatable."ephemeral-storage" + " - Capacity: " + .status.capacity."ephemeral-storage"'
+      register: disk_usage
+      changed_when: false
+      failed_when: false
+      
+    - name: Display worker node disk status
+      debug:
+        msg: 
+          - "=== Worker Node Disk Status ==="
+          - "{{ disk_check.stdout_lines | default(['Unable to check disk pressure']) }}"
+          - "=== Worker Node Disk Usage ==="
+          - "{{ disk_usage.stdout_lines | default(['Unable to check disk usage']) }}"
+          - ""
+          - "⚠️  WARNING: If DiskPressure=True, you MUST clean up disk space before deployment!"
+          - "   Run on worker nodes: sudo docker system prune -af && sudo rm -rf /var/lib/containerd/io.containerd.grpc.v1.cri/containers/*"
+      
+    - name: Fail if any worker node has disk pressure
+      fail:
+        msg: |
+          CRITICAL: One or more worker nodes have disk pressure (DiskPressure=True)!
+          
+          You must clean up disk space on worker nodes before deployment:
+          1. SSH to each affected worker node
+          2. Run: sudo docker system prune -af
+          3. Run: sudo crictl rmi --prune
+          4. Check: df -h
+          
+          Disk pressure will cause pod evictions and deployment failures.
+      when: disk_check.stdout is defined and "True" in disk_check.stdout
+      
+    - name: Check if nginx ingress controller is installed
+      shell: kubectl get ingressclass nginx -o name 2>/dev/null || echo "not-found"
+      register: nginx_ingress_check
+      changed_when: false
+      
+    - name: Install nginx ingress controller
+      shell: |
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/cloud/deploy.yaml
+      when: nginx_ingress_check.stdout == "not-found"
+      register: nginx_install
+      
+    - name: Wait for nginx ingress controller to be ready
+      shell: |
+        kubectl wait --namespace ingress-nginx \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/component=controller \
+          --timeout=300s
+      when: nginx_ingress_check.stdout == "not-found"
+      retries: 3
+      delay: 10
+
+    - name: Patch ingress-nginx controller Service with externalIPs (master public IP)
+      shell: |
+        MASTER_IP="{{ hostvars[groups['k8s_master'][0]].ansible_host | default('') }}"
+        if [ -n "$MASTER_IP" ]; then
+          kubectl -n ingress-nginx patch svc ingress-nginx-controller \
+            --type merge \
+            -p "{\"spec\":{\"externalIPs\":[\"$MASTER_IP\"]}}"
+          echo "Added externalIPs [$MASTER_IP] to ingress-nginx-controller Service"
+        else
+          echo "Master public IP not found in inventory; skipping externalIPs patch"
+        fi
+      register: ingress_svc_patch
+      changed_when: '"Added externalIPs" in ingress_svc_patch.stdout'
+      failed_when: false
+
+    - name: Show ingress-nginx controller Service summary
+      shell: kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide
+      register: ingress_svc_summary
+      changed_when: false
+      failed_when: false
+      
+    - name: Display selected storage backend
+      debug:
+        msg: 
+          - "=== Storage Backend Selection ==="
+          - "Selected storage backend: {{ storage_backend }}"
+          - "{% if storage_backend == 'longhorn' %}Installing Longhorn distributed block storage{% elif storage_backend == 'rook' %}Installing Rook-Ceph distributed storage{% else %}Unknown storage backend!{% endif %}"
+      
+    - name: Validate storage backend parameter
+      fail:
+        msg: "Invalid storage_backend value: '{{ storage_backend }}'. Must be 'longhorn' or 'rook'."
+      when: storage_backend not in ['longhorn', 'rook']
+      
+    - name: Install Longhorn storage backend
+      include_role:
+        name: storage_longhorn
+      when: storage_backend == 'longhorn'
+
+    - name: Install Rook storage backend
+      include_role:
+        name: storage_rook
+      when: storage_backend == 'rook'
+      
+    # --- Verify storage backend health before completing ---
+    - name: Verify Rook-Ceph storage backend health
+      when: storage_backend == 'rook'
+      block:
+        - name: Check Rook operator status
+          shell: kubectl get pods -n rook-ceph -l app=rook-ceph-operator -o jsonpath='{.items[*].status.phase}' | grep -q Running
+          register: rook_operator_check
+          until: rook_operator_check.rc == 0
+          retries: 12
+          delay: 5
+          changed_when: false
+          failed_when: false
+          
+        - name: Check Ceph monitors status
+          shell: kubectl get pods -n rook-ceph -l app=rook-ceph-mon -o jsonpath='{.items[*].status.phase}' | grep -q Running
+          register: rook_mon_check
+          until: rook_mon_check.rc == 0
+          retries: 12
+          delay: 5
+          changed_when: false
+          failed_when: false
+          
+        - name: Check Ceph OSDs status
+          shell: kubectl get pods -n rook-ceph -l app=rook-ceph-osd --no-headers 2>/dev/null | grep -c Running || echo "0"
+          register: rook_osd_count
+          changed_when: false
+          
+        - name: Display Rook-Ceph cluster status
+          debug:
+            msg:
+              - "=== Rook-Ceph Storage Backend Status ==="
+              - "Operator Running: {{ 'YES' if rook_operator_check.rc == 0 else 'NO' }}"
+              - "Monitors Running: {{ 'YES' if rook_mon_check.rc == 0 else 'NO' }}"
+              - "OSDs Running: {{ rook_osd_count.stdout | default('0') }}"
+              - "StorageClass: longhorn (provisioner: rook-ceph.rbd.csi.ceph.com)"
+              
+        - name: Fail if no Ceph OSDs are running
+          fail:
+            msg: |
+              CRITICAL: Rook-Ceph storage backend is not ready!
+              
+              OSD Count: {{ rook_osd_count.stdout | default('0') }}
+              
+              No Ceph OSD pods are running. This means Rook-Ceph cannot provision storage volumes.
+              
+              Common causes:
+              1. OSDs failed to start due to storage configuration issues
+              2. No suitable storage found (devices or directories)
+              3. Insufficient node resources (memory/CPU)
+              
+              Please check:
+              - kubectl get pods -n rook-ceph -l app=rook-ceph-osd
+              - kubectl get pods -n rook-ceph -l app=rook-ceph-osd-prepare
+              - kubectl logs -n rook-ceph -l app=rook-ceph-operator --tail=100
+              - kubectl get cephcluster -n rook-ceph -o yaml
+              
+              Fix the Rook-Ceph configuration and redeploy before continuing.
+          when: (rook_osd_count.stdout | default('0') | int) == 0
+          
+    - name: Verify Longhorn storage backend health
+      when: storage_backend == 'longhorn'
+      block:
+        - name: Check Longhorn manager status
+          shell: kubectl get pods -n longhorn-system -l app=longhorn-manager -o jsonpath='{.items[*].status.phase}' | grep -q Running
+          register: longhorn_manager_check
+          until: longhorn_manager_check.rc == 0
+          retries: 12
+          delay: 5
+          changed_when: false
+          failed_when: false
+          
+        - name: Display Longhorn storage backend status
+          debug:
+            msg:
+              - "=== Longhorn Storage Backend Status ==="
+              - "Manager Running: {{ 'YES' if longhorn_manager_check.rc == 0 else 'NO' }}"
+              - "StorageClass: longhorn (provisioner: driver.longhorn.io)"
+              
+        - name: Fail if Longhorn is not ready
+          fail:
+            msg: |
+              CRITICAL: Longhorn storage backend is not ready!
+              
+              Longhorn manager pods are not running.
+              
+              Please check:
+              - kubectl get pods -n longhorn-system
+              - kubectl logs -n longhorn-system -l app=longhorn-manager --tail=100
+              
+              Fix the Longhorn configuration and redeploy before continuing.
+          when: longhorn_manager_check.rc != 0
+    
+    - name: Get cluster status
+      shell: kubectl get nodes,pods -A
+      register: cluster_status
+      changed_when: false
+      failed_when: false
+      
+    - name: Display cluster completion status
+      debug:
+        msg:
+          - "=========================================="
+          - "✓ Kubernetes Cluster Ready!"
+          - ""
+          - "Cluster Components Installed:"
+          - "  - Kubernetes {{ (kubectl_check.stdout | regex_search('v\\d+\\.\\d+\\.\\d+')) | default('installed') }}"
+          - "  - Storage Backend: {{ storage_backend | upper }}"
+          - "  - Ingress Controller: Nginx"
+          - ""
+          - "Master IP: {{ hostvars[groups['k8s_master'][0]].ansible_host | default('N/A') }}"
+          - ""
+          - "Next Steps:"
+          - "  1. Verify cluster: kubectl get nodes"
+          - "  2. Check storage: kubectl get storageclass"
+          - "  3. Check ingress: kubectl get ingressclass"
+          - "  4. Deploy applications: ansible-playbook -i k8s/inventory.ini k8s/deploy-ajasta.yml -e 'storage_backend={{ storage_backend }}'"
+          - ""
+          - "=========================================="

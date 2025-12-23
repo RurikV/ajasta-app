@@ -15,6 +15,7 @@ import top.ajasta.AjastaApp.response.Response;
 
 import org.modelmapper.ModelMapper;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import top.ajasta.AjastaApp.role.repository.RoleRepository;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,7 +40,8 @@ public class UserServiceImplSavedEmailsTest {
         ModelMapper modelMapper = new ModelMapper();
         NotificationService notificationService = mock(NotificationService.class);
         AWSS3Service awss3Service = mock(AWSS3Service.class);
-        service = new UserServiceImpl(userRepository, passwordEncoder, modelMapper, notificationService, awss3Service);
+        RoleRepository roleRepository = mock(RoleRepository.class);
+        service = new UserServiceImpl(userRepository, passwordEncoder, modelMapper, notificationService, awss3Service, roleRepository);
 
         // Security context with current user email as principal
         SecurityContextHolder.getContext().setAuthentication(new TestingAuthenticationToken(currentEmail, null));

@@ -27,9 +27,9 @@ jest.mock('../../../services/ApiService', () => ({
 }));
 
 // Import component and ApiService after mocks
-import { MemoryRouter } from 'react-router-dom';
-import ResourceBookingPage from '../ResourceBookingPage';
-import ApiService from '../../../services/ApiService';
+const { MemoryRouter } = require('react-router-dom');
+const ResourceBookingPage = require('../ResourceBookingPage').default;
+const ApiService = require('../../../services/ApiService').default;
 
 const mockResource = {
   id: 1,

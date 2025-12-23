@@ -1,0 +1,12 @@
+---
+- name: Open web ports (80/443) on master VM for Ingress
+  hosts: k8s_master
+  gather_facts: false
+  become: true
+
+  vars:
+    open_ports: [80, 443]
+    firewall_backend: "auto"   # auto | firewalld | iptables
+
+  roles:
+    - role: roles/open_web_ports

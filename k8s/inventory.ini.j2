@@ -1,0 +1,24 @@
+# Ansible inventory for Kubernetes cluster
+# Generated automatically on {{ ansible_date_time.date }} {{ ansible_date_time.time }}
+# Master IP: {{ master_ip_clean }}
+{% for worker in workers %}
+# {{ worker.vm_name }} IP: {{ worker_ips_list[loop.index0] }}
+{% endfor %}
+[local]
+localhost ansible_connection=local
+
+[k8s_master]
+{{ master_vm_name }} ansible_host={{ master_ip_clean }} ansible_user={{ ssh_username }} ansible_become=true
+
+[k8s_workers]
+{% for worker in workers %}
+{{ worker.vm_name }} ansible_host={{ worker_ips_list[loop.index0] }} ansible_user={{ ssh_username }} ansible_become=true
+{% endfor %}
+
+[k8s:children]
+k8s_master
+k8s_workers
+
+[k8s:vars]
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o CheckHostIP=no -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -o ConnectionAttempts=10

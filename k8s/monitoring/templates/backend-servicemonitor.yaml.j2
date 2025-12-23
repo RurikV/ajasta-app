@@ -1,0 +1,35 @@
+# Service to expose backend metrics and ServiceMonitor for Prometheus
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ajasta-backend-metrics
+  namespace: {{ app_namespace }}
+  labels:
+    {{ app_label_key }}: {{ app_backend_label_value }}
+spec:
+  selector:
+    {{ app_label_key }}: {{ app_backend_label_value }}
+  ports:
+    - name: {{ app_metrics_port_name }}
+      port: {{ app_metrics_port }}
+      targetPort: {{ app_metrics_port }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ajasta-backend
+  namespace: {{ monitoring_namespace }}
+  labels:
+    release: {{ release_name_kps }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ app_namespace }}
+  selector:
+    matchLabels:
+      {{ app_label_key }}: {{ app_backend_label_value }}
+  endpoints:
+    - port: {{ app_metrics_port_name }}
+      path: {{ app_metrics_path }}
+      interval: 30s
