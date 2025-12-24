@@ -35,6 +35,6 @@ provider "yandex" {
   folder_id = var.yc_folder_id != null ? var.yc_folder_id : null
   zone      = var.yc_zone != null ? var.yc_zone : "ru-central1-b"
   # Prefer token if provided, otherwise use service account key file or YC_TOKEN env var
-  token     = var.yc_token != null ? var.yc_token : null
+  token                    = var.yc_token != null ? var.yc_token : null
   service_account_key_file = var.yc_service_account_key_file != "" ? var.yc_service_account_key_file : null
 }
