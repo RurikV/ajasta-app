@@ -28,8 +28,9 @@ variables:
   TF_VAR_ssh_username: "ajasta"
   SSH_PRIVATE_KEY: "${YC_SSH_PRIVATE_KEY}"
 
-  # GitLab Personal Access Token for Terraform state backend (persistence across jobs)
+  # GitLab authentication for Terraform state backend
   GITLAB_PAT: "${GITLAB_PAT}"
+  GITLAB_USERNAME: "${GITLAB_USERNAME}"
 
   # Application Configuration
   # Convert CI_PROJECT_PATH to lowercase for Docker registry compatibility
@@ -269,15 +270,23 @@ terraform:apply:staging:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
-    - export TF_HTTP_USERNAME="gitlab-ci-token"
     - |
-      # Use GITLAB_PAT for backend auth (persists across jobs) instead of CI_JOB_TOKEN
-      if [ -n "${GITLAB_PAT}" ]; then
+      # Configure authentication based on available credentials
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        # Use Personal Access Token with actual username (required for PAT auth)
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
         export TF_HTTP_PASSWORD="${GITLAB_PAT}"
-        echo "✅ Using Personal Access Token for state backend"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      elif [ -n "${GITLAB_PAT}" ]; then
+        # PAT provided but no username - try with gitlab-ci-token (may fail)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
       else
+        # Fallback to CI_JOB_TOKEN (won't work across jobs)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
         export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
-        echo "⚠️  Using CI_JOB_TOKEN (may fail across jobs)"
+        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
       fi
     - |
       terraform init -backend=true \
@@ -338,15 +347,23 @@ terraform:apply:production:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
-    - export TF_HTTP_USERNAME="gitlab-ci-token"
     - |
-      # Use GITLAB_PAT for backend auth (persists across jobs) instead of CI_JOB_TOKEN
-      if [ -n "${GITLAB_PAT}" ]; then
+      # Configure authentication based on available credentials
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        # Use Personal Access Token with actual username (required for PAT auth)
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
         export TF_HTTP_PASSWORD="${GITLAB_PAT}"
-        echo "✅ Using Personal Access Token for state backend"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      elif [ -n "${GITLAB_PAT}" ]; then
+        # PAT provided but no username - try with gitlab-ci-token (may fail)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
       else
+        # Fallback to CI_JOB_TOKEN (won't work across jobs)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
         export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
-        echo "⚠️  Using CI_JOB_TOKEN (may fail across jobs)"
+        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
       fi
     - |
       terraform init -backend=true \
@@ -483,15 +500,23 @@ terraform:destroy:staging:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
-    - export TF_HTTP_USERNAME="gitlab-ci-token"
     - |
-      # Use GITLAB_PAT for backend auth (persists across jobs) instead of CI_JOB_TOKEN
-      if [ -n "${GITLAB_PAT}" ]; then
+      # Configure authentication based on available credentials
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        # Use Personal Access Token with actual username (required for PAT auth)
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
         export TF_HTTP_PASSWORD="${GITLAB_PAT}"
-        echo "✅ Using Personal Access Token for state backend"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      elif [ -n "${GITLAB_PAT}" ]; then
+        # PAT provided but no username - try with gitlab-ci-token (may fail)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
       else
+        # Fallback to CI_JOB_TOKEN (won't work across jobs)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
         export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
-        echo "⚠️  Using CI_JOB_TOKEN (may fail across jobs)"
+        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
       fi
     - |
       terraform init -backend=true \
@@ -547,15 +572,23 @@ terraform:destroy:production:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
-    - export TF_HTTP_USERNAME="gitlab-ci-token"
     - |
-      # Use GITLAB_PAT for backend auth (persists across jobs) instead of CI_JOB_TOKEN
-      if [ -n "${GITLAB_PAT}" ]; then
+      # Configure authentication based on available credentials
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        # Use Personal Access Token with actual username (required for PAT auth)
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
         export TF_HTTP_PASSWORD="${GITLAB_PAT}"
-        echo "✅ Using Personal Access Token for state backend"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      elif [ -n "${GITLAB_PAT}" ]; then
+        # PAT provided but no username - try with gitlab-ci-token (may fail)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
       else
+        # Fallback to CI_JOB_TOKEN (won't work across jobs)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
         export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
-        echo "⚠️  Using CI_JOB_TOKEN (may fail across jobs)"
+        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
       fi
     - |
       terraform init -backend=true \
