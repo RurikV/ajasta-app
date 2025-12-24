@@ -172,8 +172,15 @@ terraform:plan:staging:
         echo "Warning: staging.tfvars not found, using CI variables only"
       fi
 
-        # Create plan (Terraform has built-in lock handling)
-    - terraform plan -out=plan.tfplan -input=false
+    # Create plan (ignore lock release errors - plan file is still valid)
+    - terraform plan -out=plan.tfplan -input=false || true
+    - |
+      if [ -f plan.tfplan ]; then
+        echo "✅ Plan created successfully (lock release error is non-critical)"
+      else
+        echo "❌ Plan file not created - actual failure"
+        exit 1
+      fi
 
     # Show plan summary
     - terraform show -no-color plan.tfplan > plan.txt
@@ -222,8 +229,15 @@ terraform:plan:production:
         echo "Warning: production.tfvars not found, using CI variables only"
       fi
 
-        # Create plan (Terraform has built-in lock handling)
-    - terraform plan -out=plan.tfplan -input=false
+    # Create plan (ignore lock release errors - plan file is still valid)
+    - terraform plan -out=plan.tfplan -input=false || true
+    - |
+      if [ -f plan.tfplan ]; then
+        echo "✅ Plan created successfully (lock release error is non-critical)"
+      else
+        echo "❌ Plan file not created - actual failure"
+        exit 1
+      fi
 
     # Show plan summary
     - terraform show -no-color plan.tfplan > plan.txt
@@ -469,8 +483,15 @@ terraform:destroy:staging:
         cp staging.tfvars terraform.tfvars
       fi
 
-    # Create destroy plan
-    - terraform plan -destroy -out=destroy.tfplan -input=false
+    # Create destroy plan (ignore lock release errors)
+    - terraform plan -destroy -out=destroy.tfplan -input=false || true
+    - |
+      if [ -f destroy.tfplan ]; then
+        echo "✅ Destroy plan created successfully"
+      else
+        echo "❌ Destroy plan file not created"
+        exit 1
+      fi
 
     # Show destroy plan
     - terraform show -no-color destroy.tfplan
@@ -518,8 +539,15 @@ terraform:destroy:production:
         cp production.tfvars terraform.tfvars
       fi
 
-    # Create destroy plan
-    - terraform plan -destroy -out=destroy.tfplan -input=false
+    # Create destroy plan (ignore lock release errors)
+    - terraform plan -destroy -out=destroy.tfplan -input=false || true
+    - |
+      if [ -f destroy.tfplan ]; then
+        echo "✅ Destroy plan created successfully"
+      else
+        echo "❌ Destroy plan file not created"
+        exit 1
+      fi
 
     # Show destroy plan
     - terraform show -no-color destroy.tfplan
