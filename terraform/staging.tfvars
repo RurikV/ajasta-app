@@ -18,10 +18,6 @@ master_vm_cores      = 2
 worker_vm_cores      = 2
 worker_count         = 1 # Reduced for staging
 
-# Network configuration for staging
-external_network_cidr = "172.16.18.0/28"
-internal_network_cidr = "10.10.1.0/24"
-
 # Staging resource settings
 preemptible    = true
 boot_disk_size = 20

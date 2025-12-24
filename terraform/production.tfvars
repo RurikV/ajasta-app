@@ -18,10 +18,6 @@ master_vm_cores      = 4
 worker_vm_cores      = 4
 worker_count         = 3 # Full cluster for production
 
-# Network configuration for production
-external_network_cidr = "172.16.19.0/28"
-internal_network_cidr = "10.10.2.0/24"
-
 # Production resource settings
 preemptible    = false
 boot_disk_size = 50
