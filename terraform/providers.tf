@@ -22,11 +22,19 @@ variable "yc_service_account_key_file" {
   default     = ""
 }
 
+variable "yc_token" {
+  description = "Yandex Cloud IAM/OAuth token (optional, defaults to YC_TOKEN environment variable)"
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
 provider "yandex" {
   # Use variables if provided, otherwise fall back to environment variables
   cloud_id  = var.yc_cloud_id != null ? var.yc_cloud_id : null
   folder_id = var.yc_folder_id != null ? var.yc_folder_id : null
   zone      = var.yc_zone != null ? var.yc_zone : "ru-central1-b"
-  # If empty, provider will rely on YC_TOKEN/IMDS
+  # Prefer token if provided, otherwise use service account key file or YC_TOKEN env var
+  token     = var.yc_token != null ? var.yc_token : null
   service_account_key_file = var.yc_service_account_key_file != "" ? var.yc_service_account_key_file : null
 }
