@@ -13,9 +13,9 @@ yc_zone      = "ru-central1-b"
 # Production VM Configuration
 master_core_fraction = 50
 worker_core_fraction = 50
-master_memory        = 8
-master_cores         = 4
-worker_cores         = 4
+master_vm_memory     = 8
+master_vm_cores      = 4
+worker_vm_cores      = 4
 worker_count         = 3 # Full cluster for production
 
 # Network configuration for production

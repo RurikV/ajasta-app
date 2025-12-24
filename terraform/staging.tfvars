@@ -13,9 +13,9 @@ yc_zone      = "ru-central1-b"
 # Staging VM Configuration
 master_core_fraction = 20
 worker_core_fraction = 20
-master_memory        = 4
-master_cores         = 2
-worker_cores         = 2
+master_vm_memory     = 6
+master_vm_cores      = 2
+worker_vm_cores      = 2
 worker_count         = 1 # Reduced for staging
 
 # Network configuration for staging
