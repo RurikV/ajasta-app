@@ -5,11 +5,6 @@
 environment = "production"
 prefix      = "ajasta-prod"
 
-# Yandex Cloud configuration
-yc_cloud_id  = "your-cloud-id-here"
-yc_folder_id = "your-production-folder-id-here"
-yc_zone      = "ru-central1-b"
-
 # Production VM Configuration
 master_core_fraction = 50
 worker_core_fraction = 50

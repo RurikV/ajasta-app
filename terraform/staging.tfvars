@@ -5,11 +5,6 @@
 environment = "staging"
 prefix      = "ajasta-staging"
 
-# Yandex Cloud configuration
-yc_cloud_id  = "your-cloud-id-here"
-yc_folder_id = "your-staging-folder-id-here"
-yc_zone      = "ru-central1-b"
-
 # Staging VM Configuration
 master_core_fraction = 20
 worker_core_fraction = 20
