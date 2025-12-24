@@ -28,6 +28,9 @@ variables:
   TF_VAR_ssh_username: "ajasta"
   SSH_PRIVATE_KEY: "${YC_SSH_PRIVATE_KEY}"
 
+  # GitLab Personal Access Token for Terraform state backend (persistence across jobs)
+  GITLAB_PAT: "${GITLAB_PAT}"
+
   # Application Configuration
   # Convert CI_PROJECT_PATH to lowercase for Docker registry compatibility
   # Note: Lowercase conversion is done in job scripts for shell compatibility
@@ -267,7 +270,15 @@ terraform:apply:staging:
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
     - export TF_HTTP_USERNAME="gitlab-ci-token"
-    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+    - |
+      # Use GITLAB_PAT for backend auth (persists across jobs) instead of CI_JOB_TOKEN
+      if [ -n "${GITLAB_PAT}" ]; then
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token for state backend"
+      else
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (may fail across jobs)"
+      fi
     - |
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
@@ -328,7 +339,15 @@ terraform:apply:production:
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
     - export TF_HTTP_USERNAME="gitlab-ci-token"
-    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+    - |
+      # Use GITLAB_PAT for backend auth (persists across jobs) instead of CI_JOB_TOKEN
+      if [ -n "${GITLAB_PAT}" ]; then
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token for state backend"
+      else
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (may fail across jobs)"
+      fi
     - |
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
@@ -465,7 +484,15 @@ terraform:destroy:staging:
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
     - export TF_HTTP_USERNAME="gitlab-ci-token"
-    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+    - |
+      # Use GITLAB_PAT for backend auth (persists across jobs) instead of CI_JOB_TOKEN
+      if [ -n "${GITLAB_PAT}" ]; then
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token for state backend"
+      else
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (may fail across jobs)"
+      fi
     - |
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
@@ -521,7 +548,15 @@ terraform:destroy:production:
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
     - export TF_HTTP_USERNAME="gitlab-ci-token"
-    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+    - |
+      # Use GITLAB_PAT for backend auth (persists across jobs) instead of CI_JOB_TOKEN
+      if [ -n "${GITLAB_PAT}" ]; then
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token for state backend"
+      else
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (may fail across jobs)"
+      fi
     - |
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
