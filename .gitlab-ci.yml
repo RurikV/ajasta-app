@@ -144,6 +144,8 @@ terraform:security-scan:
 terraform:plan:staging:
   stage: plan
   extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "staging"
   script:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
@@ -192,6 +194,8 @@ terraform:plan:staging:
 terraform:plan:production:
   stage: plan
   extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "production"
   script:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
@@ -242,6 +246,8 @@ terraform:plan:production:
 terraform:apply:staging:
   stage: deploy
   extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "staging"
   script:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
@@ -301,6 +307,8 @@ terraform:apply:staging:
 terraform:apply:production:
   stage: deploy
   extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "production"
   script:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
@@ -436,6 +444,8 @@ k8s:update-kubeconfig:
 terraform:destroy:staging:
   stage: deploy
   extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "staging"
   script:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
@@ -483,6 +493,8 @@ terraform:destroy:staging:
 terraform:destroy:production:
   stage: deploy
   extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "production"
   script:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"

@@ -22,65 +22,6 @@ extract_lock_id() {
     echo "$1" | grep -A 1 "Lock Info:" | grep "ID:" | awk '{print $2}' | tr -d '\r'
 }
 
-# Function to check if lock exists via API
-check_lock_via_api() {
-    local state_name="${TF_STATE_NAME:-staging}"
-
-    if [ -z "$CI_JOB_TOKEN" ] || [ -z "$CI_PROJECT_ID" ]; then
-        return 1  # Not in GitLab CI, can't check API
-    fi
-
-    local lock_url="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${state_name}/lock"
-
-    local response=$(curl --silent --request GET \
-        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-        "$lock_url" \
-        --write-out "\nHTTP_STATUS:%{http_code}")
-
-    local http_status=$(echo "$response" | grep "HTTP_STATUS" | cut -d: -f2)
-
-    # 404 means no lock (good), 200 means lock exists (bad)
-    if [ "$http_status" = "404" ]; then
-        return 0  # No lock
-    elif [ "$http_status" = "200" ]; then
-        return 1  # Lock exists
-    else
-        return 2  # Error checking
-    fi
-}
-
-# Function to force unlock via API
-force_unlock_via_api() {
-    local state_name="${TF_STATE_NAME:-staging}"
-
-    if [ -z "$CI_JOB_TOKEN" ] || [ -z "$CI_PROJECT_ID" ]; then
-        echo "  Not in GitLab CI/CD, skipping API force unlock"
-        return 1
-    fi
-
-    local lock_url="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${state_name}/lock"
-
-    echo "  Attempting force unlock via GitLab API..."
-
-    local response=$(curl --silent --request DELETE \
-        --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-        "$lock_url" \
-        --write-out "\nHTTP_STATUS:%{http_code}")
-
-    local http_status=$(echo "$response" | grep "HTTP_STATUS" | cut -d: -f2)
-
-    if [ "$http_status" = "200" ] || [ "$http_status" = "204" ] || [ "$http_status" = "202" ]; then
-        echo "  ✅ Force unlock successful via API"
-        return 0
-    elif [ "$http_status" = "404" ]; then
-        echo "  ℹ️  Lock not found (may have already expired)"
-        return 0
-    else
-        echo "  ⚠️  Force unlock failed (HTTP $http_status)"
-        return 1
-    fi
-}
-
 # Main logic
 elapsed_time=0
 attempt_num=1
@@ -103,8 +44,14 @@ while [ $elapsed_time -lt $MAX_WAIT_TIME ]; do
     # Check for lock release error (non-critical, plan was successful)
     if echo "$output" | grep -q "$LOCK_RELEASE_ERROR"; then
         echo "⚠️  Lock release error detected, checking if command succeeded..."
-        if [ -f "plan.tfplan" ] || echo "$output" | grep -q "Plan:"; then
+        # Check if plan was actually created
+        if echo "$output" | grep -q "Plan:"; then
             echo "✅ Plan created successfully (lock release error is non-critical)"
+            echo "The lock will auto-expire shortly. This error can be ignored."
+            exit 0
+        fi
+        if [ -f "plan.tfplan" ]; then
+            echo "✅ Plan file exists (lock release error is non-critical)"
             echo "The lock will auto-expire shortly. This error can be ignored."
             exit 0
         fi
@@ -117,24 +64,26 @@ while [ $elapsed_time -lt $MAX_WAIT_TIME ]; do
         echo "⚠️  State lock detected (ID: ${lock_id})"
         echo "Lock info:"
         echo "$output" | grep -A 10 "Lock Info:" | sed 's/^/  /' || true
+        echo ""
 
-        # Try to force unlock if we're in GitLab CI/CD
-        if [ -n "$CI_JOB_TOKEN" ]; then
-            force_unlock_via_api
-            # Give it a moment to take effect
-            sleep 5
-        fi
+        # Note: We do NOT attempt to force unlock via API because:
+        # 1. CI job tokens often don't have permission to delete locks
+        # 2. Force unlocking can be dangerous if another process is legitimately running
+        # 3. Locks auto-expire after a few minutes anyway
+        echo "ℹ️  Waiting for lock to be released or expire..."
+        echo "   (GitLab CI job tokens cannot force unlock locks for security reasons)"
 
-        # Check if we should wait or give up
-        if [ $elapsed_time -ge $MAX_WAIT_TIME ]; then
+        # Check if we should give up
+        if [ $elapsed_time -ge $((MAX_WAIT_TIME - CHECK_INTERVAL)) ]; then
             echo ""
             echo "❌ Error: Maximum wait time reached (${MAX_WAIT_TIME}s)"
             echo ""
             echo "The state is still locked. This could mean:"
             echo "  1. Another Terraform operation is in progress"
             echo "  2. A previous operation crashed without releasing the lock"
+            echo "  3. The lock hasn't auto-expired yet"
             echo ""
-            echo "To manually unlock:"
+            echo "To manually unlock via GitLab web UI:"
             if [ -n "$CI_SERVER_URL" ] && [ -n "$CI_PROJECT_PATH" ]; then
                 echo "  1. Go to: ${CI_SERVER_URL}/${CI_PROJECT_PATH}/-/settings/infrastructure"
             else
@@ -143,7 +92,7 @@ while [ $elapsed_time -lt $MAX_WAIT_TIME ]; do
             echo "  2. Find the Terraform state: ${TF_STATE_NAME:-staging}"
             echo "  3. Click 'Force unlock'"
             echo ""
-            echo "Or run locally:"
+            echo "Or run locally (if you have the lock ID):"
             echo "  cd terraform"
             echo "  terraform force-unlock ${lock_id}"
             exit 1
