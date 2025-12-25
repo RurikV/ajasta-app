@@ -5,7 +5,7 @@
 
 set -e
 
-echo "🔥 Starting complete Terraform destruction..."
+echo " Starting complete Terraform destruction..."
 
 # Configuration
 TERRAFORM_DIR="${TERRAFORM_DIR:-terraform}"
@@ -19,19 +19,32 @@ check_terraform_dir() {
     fi
 
     cd "$TERRAFORM_DIR"
-    echo "📁 Working directory: $(pwd)"
+    echo " Working directory: $(pwd)"
 }
 
 # Function to initialize Terraform (if needed)
 init_terraform() {
+    # Try to load GitLab CI/CD variables if not already set
+    if [ -z "${YC_TOKEN}" ] || [ -z "${YC_CLOUD_ID}" ] || [ -z "${YC_FOLDER_ID}" ]; then
+        if [ -f "../scripts/get-gitlab-vars.sh" ]; then
+            echo " Fetching Yandex Cloud credentials from GitLab..."
+            source ../scripts/get-gitlab-vars.sh
+            echo ""
+        fi
+    fi
+
     # Check for Yandex Cloud authentication
     if [ -z "${YC_TOKEN}" ] && [ -z "${YC_CLOUD_ID}" ] && [ -z "${YC_FOLDER_ID}" ]; then
         echo "❌ ERROR: Yandex Cloud authentication not configured!"
         echo ""
-        echo "Please set the following environment variables:"
-        echo "  export YC_TOKEN=\"your-oauth-token\""
-        echo "  export YC_CLOUD_ID=\"your-cloud-id\""
-        echo "  export YC_FOLDER_ID=\"your-folder-id\""
+        echo "Please either:"
+        echo "  1. Set GITLAB_PAT to fetch variables from GitLab:"
+        echo "     export GITLAB_PAT=\"glpat-xxxxxxxxxxxxxxxxxxxx\""
+        echo ""
+        echo "  2. Or set these environment variables manually:"
+        echo "     export YC_TOKEN=\"your-oauth-token\""
+        echo "     export YC_CLOUD_ID=\"your-cloud-id\""
+        echo "     export YC_FOLDER_ID=\"your-folder-id\""
         echo ""
         echo "You can find these values by running:"
         echo "  yc config list"
@@ -40,6 +53,11 @@ init_terraform() {
         echo "  https://oauth.yandexcloud.com/authorize?response_type=token"
         exit 1
     fi
+
+    echo "✅ Yandex Cloud authentication configured"
+    echo "   Cloud ID: ${YC_CLOUD_ID}"
+    echo "   Folder ID: ${YC_FOLDER_ID}"
+    echo ""
 
     echo "🔧 Initializing Terraform with HTTP backend..."
 
@@ -56,7 +74,7 @@ check_terraform_state() {
         return 1
     fi
 
-    echo "📊 Terraform state analysis:"
+    echo " Terraform state analysis:"
     terraform show | grep -E "(resource|id)" | head -10 || true
 }
 
@@ -65,7 +83,7 @@ force_destroy() {
     echo "💥 Force destroying all Terraform resources..."
 
     # Create a destroy plan (ignore lock release errors)
-    echo "📋 Creating destroy plan..."
+    echo " Creating destroy plan..."
     terraform plan -destroy -out=destroy.tfplan -input=false || true
 
     # Check if plan was created
@@ -153,7 +171,7 @@ main() {
     if [ -f "terraform.tfstate" ] || terraform state list >/dev/null 2>&1; then
         force_destroy
     else
-        echo "📋 No Terraform state found, proceeding with manual cleanup..."
+        echo " No Terraform state found, proceeding with manual cleanup..."
     fi
 
     # Clean up any remaining resources
@@ -166,7 +184,7 @@ main() {
     remove_tfvars
 
     echo ""
-    echo "🎉 Complete destruction finished!"
+    echo " Complete destruction finished!"
     echo "Your environment is now clean and ready for fresh deployment."
 }
 

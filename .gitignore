@@ -9,3 +9,4 @@
 /terraform/terraform.tfvars
 /terraform/.terraform*
 /terraform/terraform.tfstate*
+/.DS_Store
