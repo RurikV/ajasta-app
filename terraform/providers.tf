@@ -25,7 +25,7 @@ variable "yc_service_account_key_file" {
 variable "yc_token" {
   description = "Yandex Cloud IAM/OAuth token (optional, defaults to YC_TOKEN environment variable)"
   type        = string
-  default     = null
+  default     = ""  # Empty string allows provider to use YC_TOKEN env var
   sensitive   = true
 }
 
@@ -34,7 +34,14 @@ provider "yandex" {
   cloud_id  = var.yc_cloud_id != null ? var.yc_cloud_id : null
   folder_id = var.yc_folder_id != null ? var.yc_folder_id : null
   zone      = var.yc_zone != null ? var.yc_zone : "ru-central1-b"
-  # Prefer token if provided, otherwise use service account key file or YC_TOKEN env var
-  token                    = var.yc_token != null ? var.yc_token : null
+
+  # Authentication:
+  # The Yandex provider automatically uses these environment variables:
+  # - YC_TOKEN (OAuth token)
+  # - YC_SERVICE_ACCOUNT_KEY_FILE (path to service account key file)
+  #
+  # We only explicitly set these arguments when the corresponding variables are provided.
+  # This allows the provider to fall back to environment variables when variables are null.
+  token                    = var.yc_token != "" ? var.yc_token : null
   service_account_key_file = var.yc_service_account_key_file != "" ? var.yc_service_account_key_file : null
 }

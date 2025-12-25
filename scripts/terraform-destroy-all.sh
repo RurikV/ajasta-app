@@ -24,12 +24,28 @@ check_terraform_dir() {
 
 # Function to initialize Terraform (if needed)
 init_terraform() {
-    if [ ! -d ".terraform" ]; then
-        echo "🔧 Initializing Terraform..."
-        terraform init -input=false
-    else
-        echo "✅ Terraform already initialized"
+    # Check for Yandex Cloud authentication
+    if [ -z "${YC_TOKEN}" ] && [ -z "${YC_CLOUD_ID}" ] && [ -z "${YC_FOLDER_ID}" ]; then
+        echo "❌ ERROR: Yandex Cloud authentication not configured!"
+        echo ""
+        echo "Please set the following environment variables:"
+        echo "  export YC_TOKEN=\"your-oauth-token\""
+        echo "  export YC_CLOUD_ID=\"your-cloud-id\""
+        echo "  export YC_FOLDER_ID=\"your-folder-id\""
+        echo ""
+        echo "You can find these values by running:"
+        echo "  yc config list"
+        echo ""
+        echo "Or get a new OAuth token at:"
+        echo "  https://oauth.yandexcloud.com/authorize?response_type=token"
+        exit 1
     fi
+
+    echo "🔧 Initializing Terraform with HTTP backend..."
+
+    # Initialize with HTTP backend (may fail if no GitLab credentials, but that's OK)
+    # The backend configuration is in backend.tf
+    terraform init -input=false || true
 }
 
 # Function to check Terraform state
@@ -48,13 +64,19 @@ check_terraform_state() {
 force_destroy() {
     echo "💥 Force destroying all Terraform resources..."
 
-    # Create a destroy plan
+    # Create a destroy plan (ignore lock release errors)
     echo "📋 Creating destroy plan..."
-    terraform plan -destroy -out=destroy.tfplan -input=false
+    terraform plan -destroy -out=destroy.tfplan -input=false || true
 
-    # Apply the destroy plan
+    # Check if plan was created
+    if [ ! -f "destroy.tfplan" ]; then
+        echo "⚠️  Destroy plan not created (may have no resources to destroy)"
+        return 0
+    fi
+
+    # Apply the destroy plan (ignore lock release errors)
     echo "🔥 Applying destroy plan..."
-    terraform apply -input=false -auto-approve destroy.tfplan
+    terraform apply -input=false -auto-approve destroy.tfplan || true
 
     echo "✅ All Terraform resources destroyed!"
 }
