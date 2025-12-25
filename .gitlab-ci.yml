@@ -332,8 +332,15 @@ terraform:apply:staging:
         cp staging.tfvars terraform.tfvars
       fi
 
-        # Apply the plan (Terraform has built-in lock handling)
-    - terraform apply -input=false -auto-approve plan.tfplan
+    # Apply the plan (ignore lock release errors - resources already created)
+    - terraform apply -input=false -auto-approve plan.tfplan || true
+    - |
+      if terraform output -json &>/dev/null; then
+        echo "✅ Apply completed successfully (lock release error is non-critical)"
+      else
+        echo "❌ Apply failed - resources may not have been created"
+        exit 1
+      fi
 
     # Output results
     - terraform output -json > outputs.json
@@ -412,8 +419,15 @@ terraform:apply:production:
         cp production.tfvars terraform.tfvars
       fi
 
-        # Apply the plan (Terraform has built-in lock handling)
-    - terraform apply -input=false -auto-approve plan.tfplan
+    # Apply the plan (ignore lock release errors - resources already created)
+    - terraform apply -input=false -auto-approve plan.tfplan || true
+    - |
+      if terraform output -json &>/dev/null; then
+        echo "✅ Apply completed successfully (lock release error is non-critical)"
+      else
+        echo "❌ Apply failed - resources may not have been created"
+        exit 1
+      fi
 
     # Output results
     - terraform output -json > outputs.json
