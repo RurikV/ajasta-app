@@ -5,6 +5,9 @@
 environment = "staging"
 prefix      = "ajasta-staging"
 
+# Yandex Cloud zone
+yc_zone     = "ru-central1-b"
+
 # Staging VM Configuration
 master_core_fraction = 20
 worker_core_fraction = 20
