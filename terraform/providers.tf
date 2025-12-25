@@ -25,7 +25,7 @@ variable "yc_service_account_key_file" {
 variable "yc_token" {
   description = "Yandex Cloud IAM/OAuth token (optional, defaults to YC_TOKEN environment variable)"
   type        = string
-  default     = ""  # Empty string allows provider to use YC_TOKEN env var
+  default     = "" # Empty string allows provider to use YC_TOKEN env var
   sensitive   = true
 }
 
