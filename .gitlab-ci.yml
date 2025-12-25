@@ -154,8 +154,20 @@ terraform:plan:staging:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
-    - export TF_HTTP_USERNAME="gitlab-ci-token"
-    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+    - |
+      # Use GITLAB_PAT for consistent authentication across plan and apply jobs
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      else
+        # Fallback to CI_JOB_TOKEN
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"
+      fi
     - |
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
@@ -211,8 +223,20 @@ terraform:plan:production:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
-    - export TF_HTTP_USERNAME="gitlab-ci-token"
-    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+    - |
+      # Use GITLAB_PAT for consistent authentication across plan and apply jobs
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      else
+        # Fallback to CI_JOB_TOKEN
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"
+      fi
     - |
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
