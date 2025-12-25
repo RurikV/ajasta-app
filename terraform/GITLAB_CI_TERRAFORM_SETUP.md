@@ -616,8 +616,5 @@ curl -H "PRIVATE-TOKEN: glpat-xxxx" \
 3. Push to develop branch
 4. Run pipeline
 5. Approve apply job
-6. VMs created! 🎉
+6. VMs created! 
 
----
-
-**This setup provides a complete, working GitLab CI/CD pipeline for Terraform deployments to Yandex Cloud.**
