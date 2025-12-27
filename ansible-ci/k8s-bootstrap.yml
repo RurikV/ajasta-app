@@ -147,6 +147,21 @@
           - "Run 'kubectl get nodes' from master to verify cluster status"
 
 # ============================================================================
+# INSTALL HELM (when needed for optional components)
+# ============================================================================
+- name: Install Helm package manager
+  hosts: k8s-master
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Include helm_install role
+      ansible.builtin.include_role:
+        name: helm_install
+      when:
+        - (ingress_controller_enabled | default(false) | bool) or
+          (longhorn_enabled | default(false) | bool)
+
+# ============================================================================
 # INSTALL INGRESS CONTROLLER
 # ============================================================================
 - name: Install NGINX Ingress Controller
@@ -303,26 +318,28 @@
 
   tasks:
     - name: Get cluster nodes
-      kubernetes.core.k8s_info:
-        kind: Node
+      ansible.builtin.shell: kubectl get nodes -o wide
       environment:
-        KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+        KUBECONFIG: /etc/kubernetes/admin.conf
       register: nodes_info
+      changed_when: false
+      failed_when: false
 
     - name: Display cluster nodes
       ansible.builtin.debug:
-        msg: "{{ nodes_info.resources | json_query('[].metadata.name') }}"
+        msg: "{{ nodes_info.stdout_lines | default(['Unable to get nodes']) }}"
 
     - name: Get cluster namespaces
-      kubernetes.core.k8s_info:
-        kind: Namespace
+      ansible.builtin.shell: kubectl get namespaces
       environment:
-        KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+        KUBECONFIG: /etc/kubernetes/admin.conf
       register: namespaces_info
+      changed_when: false
+      failed_when: false
 
     - name: Display cluster namespaces
       ansible.builtin.debug:
-        msg: "{{ namespaces_info.resources | json_query('[].metadata.name') }}"
+        msg: "{{ namespaces_info.stdout_lines | default(['Unable to get namespaces']) }}"
 
     - name: Display cluster access information
       ansible.builtin.debug:
@@ -337,8 +354,9 @@
           - "  2. Use kubectl: kubectl get nodes"
           - "  3. Copy kubeconfig: scp {{ ssh_username }}@{{ groups['k8s-master'][0] }}:~/.kube/config ~/.kube/config"
           - ""
-          - "Cluster nodes: {{ nodes_info.resources | length }}"
-          - "Namespaces: {{ namespaces_info.resources | length }}"
+          - "Cluster is ready!"
+          - "Check nodes: kubectl get nodes"
+          - "Check pods: kubectl get pods -A"
           - ""
           - "Next steps:"
           - "  - Deploy applications with: ansible-playbook -i inventory.ini deploy-apps.yml"

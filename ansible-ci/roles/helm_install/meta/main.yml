@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  author: Ansible Playbook for Kubernetes
+  description: Install Helm package manager
+  company: YourCompany
+  license: MIT
+  min_ansible_version: "2.9"
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+  galaxy_tags:
+    - kubernetes
+    - helm
+    - package-manager
+
+dependencies: []

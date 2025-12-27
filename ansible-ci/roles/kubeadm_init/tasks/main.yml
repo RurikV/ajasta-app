@@ -196,6 +196,8 @@
 - name: Show pre-flight check results (always show)
   ansible.builtin.debug:
     msg: "{{ preflight_checks.stdout_lines | default(['No pre-flight output']) }}"
+  when:
+    - preflight_checks is defined
 
 - name: Display pre-flight check summary
   ansible.builtin.debug:
@@ -210,6 +212,7 @@
       {{ preflight_checks.stderr | default('None') }}
   when:
     - preflight_checks is defined
+    - (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
 
 - name: Fail if critical pre-flight checks failed
   ansible.builtin.fail:
@@ -522,6 +525,7 @@
     var: port_check.stdout_lines
 
 # Pre-checks before attempting API server wait - fail fast if fundamentals are broken
+# Skip these checks if cluster is already initialized
 - name: Quick re-check that etcd is still healthy before API server wait
   ansible.builtin.shell:
     cmd: |
@@ -534,18 +538,22 @@
   register: etcd_precheck
   changed_when: false
   failed_when: false
+  when: (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
 
 - name: Fail early if etcd is not healthy
   ansible.builtin.fail:
     msg: |
       etcd is no longer responding on port 2379 before API server readiness check.
       The API server cannot start without a healthy etcd backend.
-      
+
       Check etcd status:
         crictl ps -a | grep etcd
         crictl logs <etcd-container-id>
         journalctl -u kubelet | grep etcd
-  when: etcd_precheck.rc != 0
+  when:
+    - etcd_precheck.rc is defined
+    - etcd_precheck.rc != 0
+    - (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
 
 - name: Verify API server container exists before waiting
   ansible.builtin.shell: |
@@ -556,18 +564,22 @@
   register: apiserver_exists_check
   changed_when: false
   failed_when: false
+  when: (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
 
 - name: Fail early if API server container doesn't exist
   ansible.builtin.fail:
     msg: |
       kube-apiserver container does not exist yet.
       This usually means kubelet hasn't started the static pod or the manifest is missing.
-      
+
       Check:
         ls -la /etc/kubernetes/manifests/kube-apiserver.yaml
         journalctl -u kubelet -n 50 | grep apiserver
         crictl ps -a
-  when: apiserver_exists_check.rc != 0
+  when:
+    - apiserver_exists_check.rc is defined
+    - apiserver_exists_check.rc != 0
+    - (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
 
 # Wait until API returns healthy; try readyz first, then nodes
 - block:

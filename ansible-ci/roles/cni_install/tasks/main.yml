@@ -39,10 +39,41 @@
 - name: Apply Flannel CNI (if missing)
   ansible.builtin.shell: |
     set -euo pipefail
-    KUBECONFIG={{ cni_kubeconfig }} kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/refs/heads/master/Documentation/kube-flannel.yml
+    # Retry up to 5 times with 10s delay if API server is not ready
+    for i in {1..5}; do
+      if KUBECONFIG={{ cni_kubeconfig }} kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/refs/heads/master/Documentation/kube-flannel.yml 2>&1; then
+        exit 0
+      fi
+      echo "Attempt $i failed, retrying in 10s..."
+      sleep 10
+    done
+    exit 1
   args:
     executable: /bin/bash
+  register: flannel_apply
+  failed_when: false
   when: is_master_host and (flannel_ns.stdout | default('')) == ''
+
+- name: Display Flannel apply result
+  ansible.builtin.debug:
+    msg: "{{ flannel_apply.stdout_lines | default([]) }}"
+  when: is_master_host and flannel_apply is defined
+
+- name: Fail if Flannel CNI installation failed
+  ansible.builtin.fail:
+    msg: |
+      Failed to install Flannel CNI after 5 attempts.
+      Error: {{ flannel_apply.stderr | default('Unknown error') }}
+
+      Check:
+        - kubectl get nodes
+        - kubectl get pods -n kube-system
+        - journalctl -u kubelet
+  when:
+    - is_master_host
+    - flannel_apply is defined
+    - flannel_apply.rc is defined
+    - flannel_apply.rc != 0
 
 - name: Remove control-plane/master NoSchedule taints (single-node friendly)
   ansible.builtin.shell: |

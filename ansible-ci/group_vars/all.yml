@@ -70,14 +70,14 @@ calico_version: "v3.28.0"
 # ============================================================================
 # INGRESS CONTROLLER
 # ============================================================================
-ingress_controller_enabled: true
+ingress_controller_enabled: false
 ingress_controller_namespace: "ingress-nginx"
 ingress_controller_nginx_version: "v1.10.0"
 
 # ============================================================================
 # STORAGE (Longhorn)
 # ============================================================================
-longhorn_enabled: true
+longhorn_enabled: false
 longhorn_namespace: "longhorn-system"
 longhorn_version: "v1.6.0"
 
