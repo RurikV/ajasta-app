@@ -1,0 +1,520 @@
+---
+# Deployment Jobs
+# This file contains all deployment jobs (Yandex Cloud VM, Kubernetes with Helm)
+
+# Deploy stage - deploy to Yandex Cloud
+.deploy_base: &deploy_base
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    # Install dependencies - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache curl bash openssh-client
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor) - curl and openssh are usually pre-installed,
+        # bash might need update
+        brew install curl openssh
+        # bash is pre-installed on macOS, but we can ensure it's updated
+        # if needed
+        brew install bash || true
+      else
+        echo "Neither apk nor brew found. Please ensure curl, bash, and" \
+             "openssh are installed."
+        exit 1
+      fi
+    # Install Yandex Cloud CLI
+    - curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
+    - export PATH=$PATH:/root/yandex-cloud/bin
+    # Authenticate with Yandex Cloud
+    - yc config set token $YC_TOKEN
+    - yc config set cloud-id $YC_CLOUD_ID
+    - yc config set folder-id $YC_FOLDER_ID
+    # Setup SSH
+    - eval $(ssh-agent -s)
+    - echo "$YC_SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan -H $YC_VM_EXTERNAL_IP >> ~/.ssh/known_hosts 2>/dev/null \
+      || true
+
+deploy:staging:
+  <<: *deploy_base
+  environment:
+    name: staging
+    url: http://$YC_VM_EXTERNAL_IP
+  script:
+    - cd deploy/scripts && ./deploy-yc.zsh --mode vm
+  only:
+    - develop
+  when: manual
+
+deploy:production:
+  <<: *deploy_base
+  environment:
+    name: production
+    url: http://$YC_VM_EXTERNAL_IP
+  script:
+    - cd deploy/scripts && ./deploy-yc.zsh --mode vm
+  only:
+    - main
+    - tags
+  when: manual
+
+# Kubernetes Deployment with Helm
+# Base template for Kubernetes deployments
+.k8s_deploy_base: &k8s_deploy_base
+  stage: deploy
+  image: alpine/helm:latest
+  before_script:
+    # Install dependencies - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache curl kubectl
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor)
+        # curl is pre-installed on macOS, install kubectl if needed
+        if ! command -v kubectl >/dev/null 2>&1; then
+          echo "Installing kubectl on macOS..."
+          brew install kubectl
+        else
+          echo "✅ kubectl is already installed"
+        fi
+      else
+        echo "Neither apk nor brew found. Please ensure curl and kubectl" \
+             "are installed."
+        exit 1
+      fi
+    # Ensure Helm is available
+    - |
+      if ! command -v helm >/dev/null 2>&1; then
+        echo "Helm not found, installing..."
+        if command -v apk >/dev/null 2>&1; then
+          # Alpine Linux (Docker executor) - helm should be in alpine/helm image
+          echo "Running in Alpine/Docker environment - Helm should be present"
+          exit 1
+        elif command -v brew >/dev/null 2>&1; then
+          # macOS (shell executor) - install helm via brew
+          echo "Installing Helm on macOS..."
+          brew install helm
+        else
+          echo "Cannot install Helm. Please install it manually."
+          exit 1
+        fi
+      else
+        echo "✅ Helm is already installed"
+        helm version
+      fi
+    # Setup kubeconfig from GitLab CI/CD variable
+    # (project-local, do not touch ~/.kube)
+    - mkdir -p .kube
+    - echo "$KUBECONFIG_CONTENT" | base64 -d > .kube/config
+    - chmod 600 .kube/config
+    - export KUBECONFIG="$CI_PROJECT_DIR/.kube/config"
+    # Normalize cluster/context and TLS settings; avoid CA + insecure conflict
+    - |
+      CLUSTER_NAME="$(kubectl config view \
+        -o jsonpath='{.clusters[0].name}' 2>/dev/null || echo kubernetes)"
+      CTX_NAME="$(kubectl config view \
+        -o jsonpath='{.contexts[0].name}' 2>/dev/null || \
+        echo kubernetes-admin@kubernetes)"
+      CA_KEY="clusters.${CLUSTER_NAME}.certificate-authority"
+      CA_DATA_KEY="clusters.${CLUSTER_NAME}.certificate-authority-data"
+      kubectl config unset "$CA_KEY" >/dev/null 2>&1 || true
+      kubectl config unset "$CA_DATA_KEY" >/dev/null 2>&1 || true
+      kubectl config set-cluster "$CLUSTER_NAME" \
+        --insecure-skip-tls-verify=true >/dev/null
+      if kubectl config get-contexts "$CTX_NAME" >/dev/null 2>&1; then
+        kubectl config use-context "$CTX_NAME"
+      else
+        FIRST_CTX="$(kubectl config get-contexts -o name | head -n1)"
+        kubectl config use-context "$FIRST_CTX"
+      fi
+    - echo "✅ Configured cluster to skip TLS verification"
+    # Verify cluster connectivity with diagnostics on failure
+    - |
+      if ! kubectl cluster-info; then
+        echo "⚠️ kubectl auth diagnostics (minified config):"
+        kubectl config view --minify || true
+        echo "⚙️  /version:"
+        kubectl get --raw=/version || true
+        echo "🔐 auth can-i:"
+        kubectl auth can-i --list || true
+        exit 1
+      fi
+    - kubectl version --client
+    - helm version
+
+deploy:k8s:staging:
+  <<: *k8s_deploy_base
+  environment:
+    name: k8s-staging
+    url: http://$K8S_STAGING_INGRESS_HOST
+  variables:
+    KUBE_NAMESPACE: ajasta-staging
+    RELEASE_NAME: ajasta-staging
+    K8S_CLEAN_NS: "true"
+  script:
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
+    - echo "🚀 Deploying Ajasta App to Kubernetes Staging..."
+    # Set ingress host variable
+    - INGRESS_HOST=${K8S_STAGING_INGRESS_HOST:-ajasta-staging.local}
+    # Deploy or upgrade with Helm
+    - |
+      # Preflight: ensure namespace state for first install (optional cleanup)
+      if ! helm status "$RELEASE_NAME" -n "$KUBE_NAMESPACE" \
+        >/dev/null 2>&1; then
+        echo "ℹ️ Helm release '$RELEASE_NAME' not found in namespace" \
+             "'$KUBE_NAMESPACE' (fresh install)."
+        if [ "${K8S_CLEAN_NS:-false}" = "true" ]; then
+          if kubectl get namespace "$KUBE_NAMESPACE" >/dev/null 2>&1; then
+            echo "🧹 Deleting existing namespace '$KUBE_NAMESPACE' before" \
+                 "install..."
+            kubectl delete namespace "$KUBE_NAMESPACE" --wait --timeout=5m
+          else
+            echo "✅ Namespace '$KUBE_NAMESPACE' does not exist."
+          fi
+        else
+          echo "⚠️ Skipping namespace cleanup (K8S_CLEAN_NS=false)."
+        fi
+      else
+        echo "✅ Helm release '$RELEASE_NAME' exists - upgrade path."
+      fi
+
+      # Patch ingress controller Service with current external IP
+      # (resilient to IP rotation)
+      if [ -n "${YC_VM_EXTERNAL_IP:-}" ]; then
+        JSON_PATCH='{"spec":{"externalIPs":["'${YC_VM_EXTERNAL_IP}'"]}}'
+        kubectl -n ingress-nginx patch svc \
+          ingress-nginx-controller \
+          --type merge \
+          -p "$JSON_PATCH" || true
+        kubectl -n ingress-nginx get svc \
+          ingress-nginx-controller -o wide || true
+      fi
+
+      # Compute Helm host flag (use hostless catch-all if INGRESS_HOST is empty)
+      if [ -n "$INGRESS_HOST" ]; then
+        HELM_HOST_FLAG="--set ingress.hosts[0].host=$INGRESS_HOST"
+      else
+        HELM_HOST_FLAG="--set-string ingress.hosts[0].host=\"\""
+      fi
+
+      helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
+        --create-namespace \
+        --namespace $KUBE_NAMESPACE \
+        --set namespace.create=false \
+        --set global.namespace=$KUBE_NAMESPACE \
+        --set backend.image.repository=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER \
+        --set backend.image.tag=$DOCKER_IMAGE_TAG \
+        --set frontend.image.repository=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER \
+        --set frontend.image.tag=$DOCKER_IMAGE_TAG \
+        $HELM_HOST_FLAG \
+        --set ingress.hosts[0].paths[0].path=/ \
+        --set ingress.hosts[0].paths[0].pathType=Prefix \
+        --set ingress.hosts[0].paths[0].serviceName=ajasta-frontend \
+        --set ingress.hosts[0].paths[0].servicePort=80 \
+        --set ingress.hosts[0].paths[1].path=/api \
+        --set ingress.hosts[0].paths[1].pathType=Prefix \
+        --set ingress.hosts[0].paths[1].serviceName=ajasta-backend \
+        --set ingress.hosts[0].paths[1].servicePort=8090 \
+        --set postgres.auth.password=$POSTGRES_PASSWORD \
+        --set backend.database.password=$POSTGRES_PASSWORD \
+        --set backend.secrets.jwtSecret=$JWT_SECRET \
+        --wait \
+        --timeout 10m
+
+      # Post-deploy quick checks
+      kubectl -n $KUBE_NAMESPACE get ingress ajasta-ingress || true
+      # Probe homepage
+      for i in 1 2 3 4 5; do
+        if curl -fsSI "http://$INGRESS_HOST/" >/dev/null 2>&1; then
+          echo "✅ Ingress homepage reachable"; break; fi; sleep 5; done || true
+      # Probe public API endpoint
+      for i in 1 2 3 4 5; do
+        if curl -fsSI \
+          "http://$INGRESS_HOST/api/resources?active=true" \
+          >/dev/null 2>&1; then
+          echo "✅ Public API reachable"; break; fi; sleep 5; done || true
+      # Basic diagnostics
+      kubectl -n $KUBE_NAMESPACE describe ingress ajasta-ingress \
+        | sed -n '1,120p' || true
+      kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide \
+        || true
+    - echo "✅ Deployment to Kubernetes Staging successful"
+    # Display deployment status
+    - kubectl get all -n $KUBE_NAMESPACE
+  only:
+    - develop
+  when: manual
+  needs: [k8s:update-kubeconfig]
+
+deploy:k8s:production:
+  <<: *k8s_deploy_base
+  environment:
+    name: k8s-production
+    url: http://$K8S_PRODUCTION_INGRESS_HOST
+  variables:
+    KUBE_NAMESPACE: ajasta
+    RELEASE_NAME: ajasta-production
+    K8S_CLEAN_NS: "true"
+  script:
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
+    - echo "🚀 Deploying Ajasta App to Kubernetes Production..."
+    # Set ingress host variable
+    - INGRESS_HOST=${K8S_PRODUCTION_INGRESS_HOST:-$YC_VM_EXTERNAL_IP}
+    # Deploy or upgrade with Helm
+    - |
+      # Preflight: ensure namespace state for first install (optional cleanup)
+      if ! helm status "$RELEASE_NAME" -n "$KUBE_NAMESPACE" \
+        >/dev/null 2>&1; then
+        echo "ℹ️ Fresh install: release missing in" \
+             "'$KUBE_NAMESPACE'"
+        if [ "${K8S_CLEAN_NS:-false}" = "true" ]; then
+          if kubectl get namespace "$KUBE_NAMESPACE" >/dev/null 2>&1; then
+            echo "🧹 Deleting namespace '$KUBE_NAMESPACE'..."
+            kubectl delete namespace "$KUBE_NAMESPACE" --wait --timeout=5m
+          else
+            echo "✅ Namespace '$KUBE_NAMESPACE' absent"
+          fi
+        else
+          echo "⚠️ Skip ns cleanup (K8S_CLEAN_NS=false)"
+        fi
+      else
+        echo "✅ Release exists: upgrade"
+      fi
+
+      # Patch ingress controller Service with current external IP
+      # (resilient to IP rotation)
+      if [ -n "${YC_VM_EXTERNAL_IP:-}" ]; then
+        JSON_PATCH='{"spec":{"externalIPs":["'${YC_VM_EXTERNAL_IP}'"]}}'
+        kubectl -n ingress-nginx patch svc \
+          ingress-nginx-controller \
+          --type merge \
+          -p "$JSON_PATCH" || true
+        kubectl -n ingress-nginx get svc \
+          ingress-nginx-controller -o wide || true
+      fi
+
+      # Compute Helm host flag (use hostless catch-all if INGRESS_HOST is empty)
+      if [ -n "$INGRESS_HOST" ]; then
+        HELM_HOST_FLAG="--set ingress.hosts[0].host=$INGRESS_HOST"
+      else
+        HELM_HOST_FLAG="--set-string ingress.hosts[0].host=\"\""
+      fi
+
+      helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
+        --create-namespace \
+        --namespace $KUBE_NAMESPACE \
+        --set namespace.create=false \
+        --set global.namespace=$KUBE_NAMESPACE \
+        --set backend.image.repository=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER \
+        --set backend.image.tag=$DOCKER_IMAGE_TAG \
+        --set frontend.image.repository=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER \
+        --set frontend.image.tag=$DOCKER_IMAGE_TAG \
+        $HELM_HOST_FLAG \
+        --set ingress.hosts[0].paths[0].path=/ \
+        --set ingress.hosts[0].paths[0].pathType=Prefix \
+        --set ingress.hosts[0].paths[0].serviceName=ajasta-frontend \
+        --set ingress.hosts[0].paths[0].servicePort=80 \
+        --set ingress.hosts[0].paths[1].path=/api \
+        --set ingress.hosts[0].paths[1].pathType=Prefix \
+        --set ingress.hosts[0].paths[1].serviceName=ajasta-backend \
+        --set ingress.hosts[0].paths[1].servicePort=8090 \
+        --set postgres.auth.password=$POSTGRES_PASSWORD \
+        --set backend.database.password=$POSTGRES_PASSWORD \
+        --set backend.secrets.jwtSecret=$JWT_SECRET \
+        --set backend.secrets.awsAccessKeyId=$AWS_ACCESS_KEY_ID \
+        --set backend.secrets.awsSecretAccessKey=$AWS_SECRET_ACCESS_KEY \
+        --set backend.config.awsS3Bucket=$AWS_S3_BUCKET \
+        --set backend.secrets.stripePublicKey=$STRIPE_PUBLIC_KEY \
+        --set backend.secrets.stripeSecretKey=$STRIPE_SECRET_KEY \
+        --wait \
+        --timeout 10m
+
+      # Post-deploy quick checks
+      kubectl -n $KUBE_NAMESPACE get ingress ajasta-ingress || true
+      # Probe homepage
+      for i in 1 2 3 4 5; do
+        if curl -fsSI "http://$INGRESS_HOST/" >/dev/null 2>&1; then
+          echo "✅ Ingress homepage reachable"; break; fi; sleep 5; done || true
+      # Probe public API endpoint
+      for i in 1 2 3 4 5; do
+        if curl -fsSI \
+          "http://$INGRESS_HOST/api/resources?active=true" \
+          >/dev/null 2>&1; then
+          echo "✅ Public API reachable"; break; fi; sleep 5; done || true
+      # Basic diagnostics
+      kubectl -n $KUBE_NAMESPACE describe ingress ajasta-ingress \
+        | sed -n '1,120p' || true
+      kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide \
+        || true
+    - echo "✅ Deployment to Kubernetes Production successful"
+    # remove the host from `ajasta-ingress` to make it hostless (catch‑all)
+    # to fix the cause:
+    # the Ingress was bound to the hostname `ajasta.top`,
+    # so requests to the raw IP did not match and NGINX served a 404 from the default backend.
+    - kubectl -n ajasta patch ingress ajasta-ingress --type json -p='[{"op":"remove","path":"/spec/rules/0/host"}]'
+    # Display deployment status
+    - kubectl get all -n $KUBE_NAMESPACE
+  only:
+    - main
+    - tags
+  when: manual
+  needs: [k8s:update-kubeconfig]
+
+# --- Deploy support jobs: patch ingress external IP and post-deploy probe ---
+.deploy_kube_base: &deploy_kube_base
+  image: bitnami/kubectl:1.28
+  variables:
+    KUBECONFIG: "$CI_PROJECT_DIR/.kube/config"
+  before_script:
+    - mkdir -p "$CI_PROJECT_DIR/.kube"
+    - |
+      if [ -n "${KUBECONFIG_CONTENT:-}" ]; then
+        echo "$KUBECONFIG_CONTENT" | base64 -d > "$KUBECONFIG" 2>/dev/null || \
+          echo "$KUBECONFIG_CONTENT" | base64 -D > "$KUBECONFIG"
+      elif [ -f "$CI_PROJECT_DIR/kubeconfig" ]; then
+        cp "$CI_PROJECT_DIR/kubeconfig" "$KUBECONFIG"
+      else
+        echo "KUBECONFIG_CONTENT not set and no kubeconfig file provided" >&2
+        exit 1
+      fi
+    - kubectl version --short || true
+
+# Patches ingress-nginx controller Service with the current public IP
+# Use INGRESS_PUBLIC_IP (preferred) or YC_VM_EXTERNAL_IP as the source
+# Example: INGRESS_PUBLIC_IP=51.250.100.218
+
+deploy:patch-ingress-externalip:
+  stage: deploy
+  extends: [".deploy_kube_base"]
+  rules:
+    - if: >-
+        $CI_PIPELINE_SOURCE == "push" &&
+        $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: '"web" == $CI_PIPELINE_SOURCE'
+    - if: '"pipeline" == $CI_PIPELINE_SOURCE'
+  artifacts:
+    reports:
+      dotenv: deploy_env.env
+    when: always
+    expire_in: 1 day
+  script:
+    - |
+      set -e
+      IP="${INGRESS_PUBLIC_IP:-${YC_VM_EXTERNAL_IP:-}}"
+      if [ -z "$IP" ]; then
+        echo "INGRESS_PUBLIC_IP/YC_VM_EXTERNAL_IP not set." >&2
+        echo "Trying to autodetect from ingress/service..." >&2
+        # Try Ingress LoadBalancer IP/hostname
+        JSONPATH_IP='{.status.loadBalancer.ingress[0].ip}'
+        JSONPATH_HOST='{.status.loadBalancer.ingress[0].hostname}'
+        IP=$(kubectl -n ajasta get ingress ajasta-ingress \
+          -o jsonpath="$JSONPATH_IP" 2>/dev/null | tr -d '\n') || true
+        if [ -z "$IP" ]; then
+          IP=$(kubectl -n ajasta get ingress ajasta-ingress \
+            -o jsonpath="$JSONPATH_HOST" 2>/dev/null | tr -d '\n') || true
+        fi
+        # Try existing Service externalIPs[0]
+        if [ -z "$IP" ]; then
+          IP=$(kubectl -n ingress-nginx get svc ingress-nginx-controller \
+            -o jsonpath='{.spec.externalIPs[0]}' 2>/dev/null | tr -d '\n') \
+            || true
+        fi
+      fi
+      if [ -z "$IP" ]; then
+        echo "ERROR: Could not determine public IP." >&2
+        echo "Set INGRESS_PUBLIC_IP in CI variables." >&2
+        exit 1
+      fi
+      echo "Patching ingress-nginx-controller with externalIPs=[$IP]"
+      PATCH_PAYLOAD=$(cat <<'JSON'
+      {"spec":{"externalIPs":["IP_PLACEHOLDER"]}}
+      JSON
+      )
+      PATCH_PAYLOAD=${PATCH_PAYLOAD/IP_PLACEHOLDER/$IP}
+      kubectl -n ingress-nginx patch svc ingress-nginx-controller \
+        --type merge -p "$PATCH_PAYLOAD" || true
+      # Ensure externalTrafficPolicy is Cluster (idempotent)
+      kubectl -n ingress-nginx patch svc ingress-nginx-controller \
+        --type merge -p '{"spec":{"externalTrafficPolicy":"Cluster"}}' \
+        || true
+      # Ensure ajasta-ingress uses a valid IngressClass
+      CUR_CLASS=$(kubectl -n ajasta get ingress ajasta-ingress \
+        -o jsonpath='{.spec.ingressClassName}' 2>/dev/null | tr -d '\n' \
+        || true)
+      JSONPATH_DEF='{range .items[?(@.metadata.annotations.ingressclass'
+      JSONPATH_DEF="$JSONPATH_DEF"'\.kubernetes\.io/is-default-class=="true")]}'
+      JSONPATH_DEF="$JSONPATH_DEF"'{.metadata.name}{end}'
+      DEF_CLASS=$(kubectl get ingressclass -o jsonpath="$JSONPATH_DEF" \
+        2>/dev/null | tr -d '\n' || true)
+      if [ -z "$DEF_CLASS" ] && kubectl get ingressclass nginx \
+        >/dev/null 2>&1; then DEF_CLASS="nginx"; fi
+      if [ -n "$DEF_CLASS" ]; then
+        if [ -z "$CUR_CLASS" ] || ! kubectl get ingressclass "$CUR_CLASS" \
+          >/dev/null 2>&1; then
+          echo "Patching ajasta-ingress class to: $DEF_CLASS"
+          kubectl -n ajasta patch ingress ajasta-ingress --type merge \
+            -p "{\"spec\":{\"ingressClassName\":\"$DEF_CLASS\"}}"
+        fi
+      else
+        echo "WARN: No IngressClass detected; leaving class unchanged."
+      fi
+      echo "Service summary:"
+      kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
+      echo "Ingress summary:"
+      kubectl -n ajasta get ingress ajasta-ingress || true
+      echo "Ingress describe (first 120 lines):"
+      kubectl -n ajasta describe ingress ajasta-ingress \
+        | sed -n '1,120p' || true
+      echo "Service endpoints:"
+      kubectl -n ajasta get endpoints ajasta-frontend ajasta-backend -o wide \
+        || true
+      echo "Exporting PROBE_IP via dotenv artifact for downstream jobs"
+      printf "PROBE_IP=%s\n" "$IP" > deploy_env.env
+
+# Probes the root URL and /api after deploy to catch regressions
+
+deploy:probe-root:
+  stage: deploy
+  needs: ["deploy:patch-ingress-externalip", "deploy:k8s:production"]
+  image: curlimages/curl:8.10.1
+  variables:
+    PROBE_IP: "$INGRESS_PUBLIC_IP"
+  rules:
+    - if: >-
+        $CI_PIPELINE_SOURCE == "push" &&
+        $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: '"web" == $CI_PIPELINE_SOURCE'
+    - if: '"pipeline" == $CI_PIPELINE_SOURCE'
+  script:
+    - |
+      set -e
+      IP="${PROBE_IP:-${YC_VM_EXTERNAL_IP:-}}"
+      if [ -z "$IP" ]; then
+        echo "ERROR: Set INGRESS_PUBLIC_IP or YC_VM_EXTERNAL_IP for probe." >&2
+        exit 1
+      fi
+      BASE="http://$IP"
+      echo "Probing $BASE/"
+      curl -sS -o /dev/null -w "HTTP %{http_code}\\n" "$BASE/"
+      echo "Probing $BASE/api/health (fallback: /api)"
+      code=$(curl -sS -o /dev/null -w "%{http_code}" \
+        "$BASE/api/health" || true)
+      if [ "$code" = "000" ] || [ "$code" = "404" ]; then
+        curl -sS -o /dev/null -w "HTTP %{http_code}\\n" \
+          "$BASE/api" || true
+      else
+        echo "HTTP $code"
+      fi

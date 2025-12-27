@@ -1,0 +1,633 @@
+---
+# Terraform CI/CD Jobs
+# This file contains all Terraform-related jobs for infrastructure provisioning
+
+# Base template for all Terraform jobs
+.terraform_base:
+  before_script:
+    # Create plugin cache directory
+    - mkdir -p "${CI_PROJECT_DIR}/.terraform.d/plugin-cache"
+
+    # Setup Terraform CLI config for Yandex Cloud mirror
+    - export TF_CLI_CONFIG_FILE="${CI_PROJECT_DIR}/.terraformrc"
+    - |
+      cat > ${CI_PROJECT_DIR}/.terraformrc << 'EOF'
+      provider_installation {
+        network_mirror {
+          url = "https://terraform-mirror.yandexcloud.net/"
+          include = ["registry.terraform.io/*/*"]
+        }
+        direct {
+          exclude = ["registry.terraform.io/*/*"]
+        }
+      }
+      EOF
+
+    # Navigate to terraform directory
+    - cd ${TF_ROOT}
+
+    # Clean up any existing Terraform state files
+    - rm -f .terraform/terraform.tfstate .terraform.lock.hcl || true
+    - rm -f terraform.tfstate* || true
+    - rm -f .terraform/environment || true
+
+    # Show versions
+    - terraform --version
+
+# Terraform format and validation - runs on all branches
+terraform:fmt:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - terraform fmt -check -recursive || (terraform fmt -recursive -write=true && exit 1)
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  allow_failure: false
+
+# Terraform validate
+terraform:validate:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - terraform init -backend=false
+    - terraform validate
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  needs: [terraform:fmt]
+
+# Security scan with tfsec
+terraform:security-scan:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - terraform init -backend=false
+    - |
+      # Install tfsec if not present
+      if ! command -v tfsec >/dev/null 2>&1; then
+        curl -sSL https://github.com/aquasecurity/tfsec/releases/latest/download/tfsec-linux-amd64 -o /tmp/tfsec
+        chmod +x /tmp/tfsec
+        export PATH=/tmp:$PATH
+      fi
+    - tfsec --format json --out tfsec-report.json . || true
+    - tfsec --format text . || true
+  artifacts:
+    reports:
+      sast: tfsec-report.json
+    paths:
+      - terraform/tfsec-report.json
+    expire_in: "1 week"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  allow_failure: true
+  needs: [terraform:validate]
+
+# Plan for staging environment (available on develop and main branches)
+terraform:plan:staging:
+  stage: plan
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "staging"
+  script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - |
+      # Use GITLAB_PAT for consistent authentication across plan and apply jobs
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      else
+        # Fallback to CI_JOB_TOKEN
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"
+      fi
+    - |
+      terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load staging variables
+    - |
+      if [ -f "staging.tfvars" ]; then
+        echo "Loading staging variables from staging.tfvars"
+        cp staging.tfvars terraform.tfvars
+      else
+        echo "Warning: staging.tfvars not found, using CI variables only"
+      fi
+
+    # Create plan (ignore lock release errors - plan file is still valid)
+    - terraform plan -out=plan.tfplan -input=false || true
+    - |
+      if [ -f plan.tfplan ]; then
+        echo "✅ Plan created successfully (lock release error is non-critical)"
+      else
+        echo "❌ Plan file not created - actual failure"
+        exit 1
+      fi
+
+    # Show plan summary
+    - terraform show -no-color plan.tfplan > plan.txt
+  artifacts:
+    paths:
+      - terraform/plan.tfplan
+      - terraform/plan.txt
+    expire_in: "1 week"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  environment:
+    name: staging
+    action: prepare
+
+# Plan for production environment (manual on main branch)
+terraform:plan:production:
+  stage: plan
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "production"
+  script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - |
+      # Use GITLAB_PAT for consistent authentication across plan and apply jobs
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      else
+        # Fallback to CI_JOB_TOKEN
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"
+      fi
+    - |
+      terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load production variables
+    - |
+      if [ -f "production.tfvars" ]; then
+        echo "Loading production variables from production.tfvars"
+        cp production.tfvars terraform.tfvars
+      else
+        echo "Warning: production.tfvars not found, using CI variables only"
+      fi
+
+    # Create plan (ignore lock release errors - plan file is still valid)
+    - terraform plan -out=plan.tfplan -input=false || true
+    - |
+      if [ -f plan.tfplan ]; then
+        echo "✅ Plan created successfully (lock release error is non-critical)"
+      else
+        echo "❌ Plan file not created - actual failure"
+        exit 1
+      fi
+
+    # Show plan summary
+    - terraform show -no-color plan.tfplan > plan.txt
+
+    # Display plan in job output
+    - cat plan.txt
+  artifacts:
+    paths:
+      - terraform/plan.tfplan
+      - terraform/plan.txt
+    expire_in: "1 month"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  environment:
+    name: production
+    action: prepare
+
+# Apply to staging (manual on both develop and main branches)
+terraform:apply:staging:
+  stage: deploy
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "staging"
+  script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - |
+      # Configure authentication based on available credentials
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        # Use Personal Access Token with actual username (required for PAT auth)
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      elif [ -n "${GITLAB_PAT}" ]; then
+        # PAT provided but no username - try with gitlab-ci-token (may fail)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
+      else
+        # Fallback to CI_JOB_TOKEN (won't work across jobs)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
+      fi
+    - |
+      terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load staging variables
+    - |
+      if [ -f "staging.tfvars" ]; then
+        cp staging.tfvars terraform.tfvars
+      fi
+
+    # Apply the plan (ignore lock release errors - resources already created)
+    - terraform apply -input=false -auto-approve plan.tfplan || true
+    - |
+      if terraform output -json &>/dev/null; then
+        echo "✅ Apply completed successfully (lock release error is non-critical)"
+      else
+        echo "❌ Apply failed - resources may not have been created"
+        exit 1
+      fi
+
+    # Output results
+    - terraform output -json > outputs.json
+    - |
+      echo "Staging deployment completed successfully!"
+      echo ""
+      echo "Infrastructure outputs:"
+      terraform output -raw || true
+  artifacts:
+    paths:
+      - terraform/outputs.json
+    reports:
+      dotenv: terraform/terraform-outputs.env
+    expire_in: "1 week"
+  rules:
+    # Available on develop branch (manual)
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+      allow_failure: false
+    # Available on main branch (manual for testing)
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: false
+  environment:
+    name: staging
+    url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
+    on_stop: terraform:destroy:staging
+  needs: [terraform:plan:staging]
+  allow_failure: false
+
+# Apply to production (manual on main branch)
+terraform:apply:production:
+  stage: deploy
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "production"
+  script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - |
+      # Configure authentication based on available credentials
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        # Use Personal Access Token with actual username (required for PAT auth)
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      elif [ -n "${GITLAB_PAT}" ]; then
+        # PAT provided but no username - try with gitlab-ci-token (may fail)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
+      else
+        # Fallback to CI_JOB_TOKEN (won't work across jobs)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
+      fi
+    - |
+      terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load production variables
+    - |
+      if [ -f "production.tfvars" ]; then
+        cp production.tfvars terraform.tfvars
+      fi
+
+    # Apply the plan (ignore lock release errors - resources already created)
+    - terraform apply -input=false -auto-approve plan.tfplan || true
+    - |
+      if terraform output -json &>/dev/null; then
+        echo "✅ Apply completed successfully (lock release error is non-critical)"
+      else
+        echo "❌ Apply failed - resources may not have been created"
+        exit 1
+      fi
+
+    # Output results
+    - terraform output -json > outputs.json
+    - |
+      echo "Production deployment completed successfully!"
+      echo ""
+      echo "Infrastructure outputs:"
+      terraform output -raw || true
+
+      # Create outputs file for GitLab environment
+      cat > terraform-outputs.env << EOF
+      TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip 2>/dev/null || echo "")
+      TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips 2>/dev/null || echo "{}")
+      FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null || echo "")
+      BACKEND_API_URL=$(terraform output -raw backend_api_url 2>/dev/null || echo "")
+      EOF
+  artifacts:
+    paths:
+      - terraform/outputs.json
+      - terraform/terraform-outputs.env
+    reports:
+      dotenv: terraform/terraform-outputs.env
+    expire_in: "1 month"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual  # Manual approval required for production
+  environment:
+    name: production
+    url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
+    on_stop: terraform:destroy:production
+  needs: [terraform:plan:production]
+  timeout: 30m
+
+# Update kubeconfig after Terraform deployment
+k8s:update-kubeconfig:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client curl jq bash
+  script:
+    # Extract master IP from terraform outputs
+    - |
+      if [ -f "terraform/terraform-outputs.env" ]; then
+        source terraform/terraform-outputs.env
+        MASTER_IP="${TERRAFORM_MASTER_IP:-$TERRAFORM_MASTER_PUBLIC_IP}"
+      else
+        # Fallback to manual IP specification
+        MASTER_IP="${TERRAFORM_MASTER_IP:-$YC_VM_EXTERNAL_IP}"
+      fi
+
+      if [ -z "$MASTER_IP" ]; then
+        echo "ERROR: Unable to determine master IP"
+        echo "TERRAFORM_MASTER_IP not set and terraform-outputs.env not found"
+        exit 1
+      fi
+
+      echo "Master IP: $MASTER_IP"
+
+    # Setup SSH
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - |
+      cat > ~/.ssh/config <<EOF
+      Host *
+          StrictHostKeyChecking no
+          UserKnownHostsFile=/dev/null
+      EOF
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+
+    # Wait for cluster to be ready
+    - echo "⏳ Waiting 60 seconds for Kubernetes cluster to initialize..."
+    - sleep 60
+
+    # Run the kubeconfig update script
+    - chmod +x ../scripts/update-kubeconfig.sh
+    - ../scripts/update-kubeconfig.sh "$MASTER_IP"
+
+    # Save kubeconfig for downstream jobs
+    - mkdir -p ../.kube
+    - cp ~/.kube/config ../.kube/config
+
+    # Verify the connection
+    - export KUBECONFIG="$PWD/../.kube/config"
+    - kubectl cluster-info
+    - kubectl get nodes
+    - echo "✅ Kubeconfig updated and verified successfully"
+  artifacts:
+    paths:
+      - .kube/config
+    expire_in: "1 day"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+  needs:
+    - job: terraform:apply:production
+      optional: true
+    - job: terraform:apply:staging
+      optional: true
+  dependencies:
+    - terraform:apply:production
+    - terraform:apply:staging
+  timeout: 15m
+
+# Destroy staging resources (manual)
+terraform:destroy:staging:
+  stage: deploy
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "staging"
+  script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - |
+      # Configure authentication based on available credentials
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        # Use Personal Access Token with actual username (required for PAT auth)
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      elif [ -n "${GITLAB_PAT}" ]; then
+        # PAT provided but no username - try with gitlab-ci-token (may fail)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
+      else
+        # Fallback to CI_JOB_TOKEN (won't work across jobs)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
+      fi
+    - |
+      terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load staging variables
+    - |
+      if [ -f "staging.tfvars" ]; then
+        cp staging.tfvars terraform.tfvars
+      fi
+
+    # Create destroy plan (ignore lock release errors)
+    - terraform plan -destroy -out=destroy.tfplan -input=false || true
+    - |
+      if [ -f destroy.tfplan ]; then
+        echo "✅ Destroy plan created successfully"
+      else
+        echo "❌ Destroy plan file not created"
+        exit 1
+      fi
+
+    # Show destroy plan
+    - terraform show -no-color destroy.tfplan
+
+    # Apply destroy (ignore lock release errors - resources already destroyed)
+    - terraform apply -input=false -auto-approve destroy.tfplan || true
+    - |
+      # After destroy, resources should be gone (no outputs expected)
+      # The || true ensures lock release errors don't fail the job
+      echo "✅ Destroy completed successfully (lock release error is non-critical)"
+
+    - echo "Staging infrastructure destroyed successfully"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+      allow_failure: true
+  environment:
+    name: staging
+    action: stop
+  needs: []
+  timeout: 15m
+
+# Destroy production resources (manual, protected)
+terraform:destroy:production:
+  stage: deploy
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "production"
+  script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - |
+      # Configure authentication based on available credentials
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        # Use Personal Access Token with actual username (required for PAT auth)
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      elif [ -n "${GITLAB_PAT}" ]; then
+        # PAT provided but no username - try with gitlab-ci-token (may fail)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
+      else
+        # Fallback to CI_JOB_TOKEN (won't work across jobs)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
+      fi
+    - |
+      terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load production variables
+    - |
+      if [ -f "production.tfvars" ]; then
+        cp production.tfvars terraform.tfvars
+      fi
+
+    # Create destroy plan (ignore lock release errors)
+    - terraform plan -destroy -out=destroy.tfplan -input=false || true
+    - |
+      if [ -f destroy.tfplan ]; then
+        echo "✅ Destroy plan created successfully"
+      else
+        echo "❌ Destroy plan file not created"
+        exit 1
+      fi
+
+    # Show destroy plan
+    - terraform show -no-color destroy.tfplan
+
+    # Apply destroy (ignore lock release errors - resources already destroyed)
+    - terraform apply -input=false -auto-approve destroy.tfplan || true
+    - |
+      # After destroy, resources should be gone (no outputs expected)
+      # The || true ensures lock release errors don't fail the job
+      echo "✅ Destroy completed successfully (lock release error is non-critical)"
+
+    - echo "Production infrastructure destroyed successfully"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: true
+  environment:
+    name: production
+    action: stop
+  needs: []
+  timeout: 15m

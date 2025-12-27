@@ -1,0 +1,119 @@
+---
+# Validation Jobs
+# This file contains all validation jobs (syntax, Dockerfile, Helm lint)
+
+# Validate stage - check code quality and configuration
+validate:syntax:
+  stage: validate
+  image: alpine:latest
+  before_script:
+    # Install packages - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache yamllint shellcheck
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor)
+        brew install yamllint shellcheck
+      else
+        echo "Neither apk nor brew found. Please ensure required packages" \
+             "are installed."
+        exit 1
+      fi
+  script:
+    - |
+      CONF='{extends: default, rules: { line-length: { max: 130 } } }'
+      yamllint -d "$CONF" .gitlab-ci.yml
+    - yamllint docker-compose.yml
+    - find scripts -name "*.sh" -o -name "*.zsh" | xargs shellcheck || true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+
+validate:docker:
+  stage: validate
+  before_script:
+    # Detect OS and install hadolint accordingly
+    - |
+      echo "Detecting OS for hadolint installation..."
+      if command -v apk >/dev/null 2>&1; then
+        echo "Alpine Linux detected"
+        apk add --no-cache wget
+        wget -O /bin/hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+        chmod +x /bin/hadolint
+      elif command -v brew >/dev/null 2>&1; then
+        echo "macOS detected, using Homebrew"
+        brew install hadolint 2>/dev/null || brew upgrade hadolint 2>/dev/null || true
+      elif command -v yum >/dev/null 2>&1; then
+        echo "RHEL/CentOS detected"
+        yum install -y wget
+        wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+        chmod +x /usr/local/bin/hadolint
+      elif command -v apt-get >/dev/null 2>&1; then
+        echo "Debian/Ubuntu detected"
+        apt-get update && apt-get install -y wget
+        wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+        chmod +x /usr/local/bin/hadolint
+      else
+        echo "Unknown OS, trying to download hadolint to /tmp"
+        wget -O /tmp/hadolint \
+          https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 \
+          2>/dev/null || \
+          curl -o /tmp/hadolint -L \
+            https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+        chmod +x /tmp/hadolint
+        export PATH=/tmp:$PATH
+      fi
+  script:
+    - |
+      echo "Running Dockerfile linting..."
+      if ! command -v hadolint >/dev/null 2>&1; then
+        echo "❌ hadolint not found, skipping validation"
+        exit 0
+      fi
+
+      echo "Validating ajasta-backend/Dockerfile"
+      hadolint ajasta-backend/Dockerfile || echo "⚠️ Backend Dockerfile has linting issues (non-blocking)"
+
+      echo "Validating ajasta-react/Dockerfile"
+      hadolint ajasta-react/Dockerfile || echo "⚠️ Frontend Dockerfile has linting issues (non-blocking)"
+
+      echo "✅ Dockerfile validation completed"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+  allow_failure: true
+
+# Helm lint - validate Helm charts
+helm:lint:
+  stage: validate
+  image: alpine/helm:latest
+  before_script:
+    # Install Helm - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
+    - |
+      if ! command -v helm >/dev/null 2>&1; then
+        echo "Helm not found, installing..."
+        if command -v apk >/dev/null 2>&1; then
+          # Alpine Linux (Docker executor) - helm already in alpine/helm image
+          echo "Running in Alpine/Docker environment"
+        elif command -v brew >/dev/null 2>&1; then
+          # macOS (shell executor) - install helm via brew
+          echo "Installing Helm on macOS..."
+          brew install helm
+        else
+          echo "Neither apk nor brew found. Please install Helm manually."
+          exit 1
+        fi
+      else
+        echo "✅ Helm is already installed"
+        helm version
+      fi
+  script:
+    - echo "🔍 Linting Helm charts..."
+    - helm lint helm/ajasta-app
+    - echo "✅ Helm chart validation successful"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"

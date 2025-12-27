@@ -1,0 +1,63 @@
+---
+# Test Jobs
+# This file contains all automated test jobs for backend and frontend
+
+# Test stage - run automated tests
+test:backend:
+  stage: test
+  image: maven:3.9.8-eclipse-temurin-21-alpine
+  services:
+    - postgres:16-alpine
+  variables:
+    MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+    # PostgreSQL service configuration
+    POSTGRES_DB: testdb
+    POSTGRES_USER: testuser
+    POSTGRES_PASSWORD: testpass
+    # Spring Boot test configuration
+    SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/testdb
+    SPRING_DATASOURCE_USERNAME: testuser
+    SPRING_DATASOURCE_PASSWORD: testpass
+  cache:
+    key: "$CI_JOB_NAME"
+    paths:
+      - .m2/repository/
+      - ajasta-backend/target/
+  script:
+    - cd ajasta-backend
+    - mvn clean verify
+  artifacts:
+    reports:
+      junit:
+        - ajasta-backend/target/surefire-reports/TEST-*.xml
+        - ajasta-backend/target/failsafe-reports/TEST-*.xml
+    paths:
+      - ajasta-backend/target/
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+
+test:frontend:
+  stage: test
+  image: node:20-alpine
+  cache:
+    key: "$CI_JOB_NAME"
+    paths:
+      - ajasta-react/node_modules/
+  script:
+    - cd ajasta-react
+    - npm ci --no-audit --no-fund
+    - npm run test -- --coverage --watchAll=false
+    - npm run build
+  coverage: '/Lines\s*:\s*(\d+\.\d+)%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: ajasta-react/coverage/cobertura-coverage.xml
+    paths:
+      - ajasta-react/coverage/
+      - ajasta-react/build/
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"

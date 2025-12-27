@@ -1,0 +1,48 @@
+---
+# Package Jobs
+# This file contains package creation jobs for deployment artifacts
+
+# Package stage - create deployment artifacts
+package:compose:
+  stage: package
+  image: alpine:latest
+  script:
+    # Install envsubst - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache gettext
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor) - envsubst is part of gettext package
+        brew install gettext
+      else
+        echo "Neither apk nor brew found. Please ensure gettext package" \
+             "is installed."
+        exit 1
+      fi
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
+    # Create deployment package with environment-specific configuration
+    - mkdir -p deploy
+    # Substitute image tags in docker-compose for deployment
+    - >
+      envsubst '${DOCKER_REGISTRY} ${BACKEND_IMAGE_LOWER}
+      ${FRONTEND_IMAGE_LOWER} ${DOCKER_IMAGE_TAG}'
+      < docker-compose.yml > deploy/docker-compose.yml
+    - cp -r scripts deploy/
+    - echo "DOCKER_IMAGE_TAG=$DOCKER_IMAGE_TAG" > deploy/.env
+    - BACKEND_IMG="$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG"
+    - echo "BACKEND_IMAGE=$BACKEND_IMG" >> deploy/.env
+    - FRONTEND_IMG="$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG"
+    - echo "FRONTEND_IMAGE=$FRONTEND_IMG" >> deploy/.env
+  artifacts:
+    paths:
+      - deploy/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - tags

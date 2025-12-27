@@ -1,0 +1,43 @@
+---
+# GitLab CI/CD Variables Configuration
+# This file contains all global variables used across the pipeline
+
+variables:
+  # Docker Registry Configuration
+  DOCKER_REGISTRY: $CI_REGISTRY
+  DOCKER_IMAGE_TAG: $CI_COMMIT_SHA
+  DOCKER_LATEST_TAG: "latest"
+
+  # Terraform Configuration
+  TF_ROOT: "${CI_PROJECT_DIR}/terraform"
+  TF_CLI_ARGS: "-no-color"
+  TF_IN_AUTOMATION: "true"
+
+  # Yandex Cloud variables - configure in GitLab CI/CD Variables
+  TF_VAR_yc_cloud_id: "${YC_CLOUD_ID}"
+  TF_VAR_yc_folder_id: "${YC_FOLDER_ID}"
+  YC_TOKEN: "${YC_TOKEN}"
+  TF_VAR_ssh_username: "ajasta"
+  SSH_PRIVATE_KEY: "${YC_SSH_PRIVATE_KEY}"
+
+  # GitLab authentication for Terraform state backend
+  GITLAB_PAT: "${GITLAB_PAT}"
+  GITLAB_USERNAME: "${GITLAB_USERNAME}"
+
+  # Application Configuration
+  # Convert CI_PROJECT_PATH to lowercase for Docker registry compatibility
+  # Note: Lowercase conversion is done in job scripts for shell compatibility
+  BACKEND_IMAGE_NAME: "$CI_PROJECT_PATH/backend"
+  FRONTEND_IMAGE_NAME: "$CI_PROJECT_PATH/frontend"
+
+  # Yandex Cloud Configuration
+  YC_ZONE: "ru-central1-a"
+  YC_INSTANCE_NAME: "ajasta-app-vm"
+  YC_INSTANCE_TYPE: "standard-v3"
+  YC_CORES: "2"
+  YC_MEMORY: "2GB"
+  YC_DISK_SIZE: "10GB"
+
+  # Build optimization for idempotency
+  DOCKER_BUILDKIT: "1"
+  BUILDX_EXPERIMENTAL: "1"
