@@ -1,0 +1,147 @@
+# PATCH: Add diagnostic and repair tasks before CRI verification
+# Insert this BEFORE line 121 in roles/cri_ready/tasks/main.yml
+
+- name: Get containerd service status
+  ansible.builtin.service_facts:
+
+- name: Display containerd service status
+  ansible.builtin.debug:
+    msg: "Containerd service status: {{ ansible_facts.services['containerd.service'].state }}"
+
+- name: Check containerd logs for errors
+  ansible.builtin.shell: journalctl -u containerd -n 50 --no-pager | grep -i error || echo "No errors found"
+  args:
+    executable: /bin/bash
+  register: containerd_errors
+  changed_when: false
+
+- name: Display containerd errors
+  ansible.builtin.debug:
+    msg: "{{ containerd_errors.stdout_lines }}"
+  when: containerd_errors.rc == 0
+
+- name: Check current containerd config sandbox_image
+  ansible.builtin.shell: grep "sandbox_image" /etc/containerd/config.toml || echo "No sandbox_image found"
+  args:
+    executable: /bin/bash
+  register: sandbox_image_check
+  changed_when: false
+
+- name: Display current sandbox_image
+  ansible.builtin.debug:
+    msg: "{{ sandbox_image_check.stdout }}"
+
+- name: List installed containerd plugins
+  ansible.builtin.shell: ctr plugins ls
+  args:
+    executable: /bin/bash
+  register: ctr_plugins
+  changed_when: false
+
+- name: Display containerd plugins
+  ansible.builtin.debug:
+    msg: "{{ ctr_plugins.stdout_lines }}"
+
+- name: Check if CRI plugin is in the list
+  ansible.builtin.shell: ctr plugins ls | grep -io "io.containerd.grpc.v1.cri" || echo "CRI plugin not found"
+  args:
+    executable: /bin/bash
+  register: cri_plugin_check
+  changed_when: false
+
+- name: Display CRI plugin status
+  ansible.builtin.debug:
+    msg: "{{ cri_plugin_check.stdout }}"
+
+- name: Attempt to pull pause image manually using ctr
+  ansible.builtin.shell: |
+    set -euo pipefail
+    echo "Attempting to pull pause image..."
+    ctr image pull {{ containerd_pause_image_repo }}:{{ containerd_pause_image_version }}
+    echo "Pause image pulled successfully!"
+  args:
+    executable: /bin/bash
+  register: pause_pull
+  ignore_errors: true
+  failed_when: false
+
+- name: Display pause image pull result
+  ansible.builtin.debug:
+    msg: "{{ pause_pull.stdout }} | {{ pause_pull.stderr }}"
+
+- name: Try alternative pause image if official registry failed
+  when: pause_pull.rc != 0
+  block:
+    - name: Try pulling from mirror.gcr.io
+      ansible.builtin.shell: |
+        set -euo pipefail
+        echo "Trying alternative registry: mirror.gcr.io..."
+        ctr image pull mirror.gcr.io/google-containers/pause:3.10
+        echo "Successfully pulled from mirror!"
+        # Tag it as the expected image
+        ctr image tag mirror.gcr.io/google-containers/pause:3.10 {{ containerd_pause_image_repo }}:{{ containerd_pause_image_version }}
+      args:
+        executable: /bin/bash
+      register: alt_pause_pull
+      ignore_errors: true
+      failed_when: false
+
+    - name: Try using Aliyun mirror (China/Russia friendly)
+      when: alt_pause_pull.rc != 0
+      ansible.builtin.shell: |
+        set -euo pipefail
+        echo "Trying Aliyun mirror..."
+        ctr image pull registry.cn-hangzhou.aliyuncs.com/google_containers/pause:3.10
+        echo "Successfully pulled from Aliyun!"
+        ctr image tag registry.cn-hangzhou.aliyuncs.com/google_containers/pause:3.10 {{ containerd_pause_image_repo }}:{{ containerd_pause_image_version }}
+      args:
+        executable: /bin/bash
+      register: aliyun_pause_pull
+      ignore_errors: true
+      failed_when: false
+
+    - name: Display alternative pull results
+      ansible.builtin.debug:
+        msg:
+          - "Mirror.gcr.io: {{ 'SUCCESS' if alt_pause_pull.rc == 0 else 'FAILED' }}"
+          - "Aliyun: {{ 'SUCCESS' if aliyun_pause_pull.rc == 0 else 'FAILED' }}"
+
+- name: List all images in containerd
+  ansible.builtin.shell: ctr image ls
+  args:
+    executable: /bin/bash
+  register: ctr_images
+  changed_when: false
+
+- name: Display containerd images
+  ansible.builtin.debug:
+    msg: "{{ ctr_images.stdout_lines }}"
+
+- name: Force restart containerd to pick up any changes
+  ansible.builtin.service:
+    name: containerd
+    state: restarted
+
+- name: Wait for containerd socket after restart
+  ansible.builtin.wait_for:
+    path: /run/containerd/containerd.sock
+    timeout: 120
+
+- name: Sleep to let containerd fully initialize
+  ansible.builtin.wait_for:
+    timeout: 10
+  delegate_to: localhost
+
+- name: Test crictl with verbose error output
+  ansible.builtin.shell: |
+    set -euo pipefail
+    crictl --runtime-endpoint={{ cri_runtime_endpoint }} info 2>&1
+  args:
+    executable: /bin/bash
+  register: crictl_test
+  ignore_errors: true
+  failed_when: false
+
+- name: Display crictl test output
+  ansible.builtin.debug:
+    msg: "{{ crictl_test.stdout_lines | default([]) }} | {{ crictl_test.stderr_lines | default([]) }}"

@@ -1,0 +1,82 @@
+---
+# Fix pause image issue for containerd CRI
+# This role pulls the pause image using ctr before CRI verification
+
+- name: Check if pause image exists in containerd
+  ansible.builtin.shell: ctr image ls | grep -q pause || echo "NOT_FOUND"
+  args:
+    executable: /bin/bash
+  register: pause_exists
+  changed_when: false
+  failed_when: false
+
+- name: Display pause image status
+  ansible.builtin.debug:
+    msg: "Pause image exists: {{ pause_exists.stdout }}"
+
+- name: Pull pause image using ctr (bypasses CRI plugin)
+  when: pause_exists.stdout == "NOT_FOUND"
+  block:
+    - name: Try official registry.k8s.io first
+      ansible.builtin.shell: |
+        set -euo pipefail
+        echo "Pulling pause image from registry.k8s.io..."
+        ctr image pull registry.k8s.io/pause:3.10
+      args:
+        executable: /bin/bash
+      register: pull_official
+      ignore_errors: true
+
+    - name: Try mirror.gcr.io if official failed
+      when: pull_official.rc != 0
+      ansible.builtin.shell: |
+        set -euo pipefail
+        echo "Trying mirror.gcr.io..."
+        ctr image pull mirror.gcr.io/google-containers/pause:3.10
+        ctr image tag mirror.gcr.io/google-containers/pause:3.10 registry.k8s.io/pause:3.10
+      args:
+        executable: /bin/bash
+      register: pull_mirror
+      ignore_errors: true
+
+    - name: Try Aliyun mirror (China/Russia friendly)
+      when:
+        - pull_official.rc != 0
+        - pull_mirror.rc != 0
+      ansible.builtin.shell: |
+        set -euo pipefail
+        echo "Trying Aliyun mirror..."
+        ctr image pull registry.cn-hangzhou.aliyuncs.com/google_containers/pause:3.10
+        ctr image tag registry.cn-hangzhou.aliyuncs.com/google_containers/pause:3.10 registry.k8s.io/pause:3.10
+      args:
+        executable: /bin/bash
+      register: pull_aliyun
+
+    - name: Update containerd config to use working image
+      when: pull_aliyun.rc == 0 or pull_mirror.rc == 0 or pull_official.rc == 0
+      ansible.builtin.replace:
+        path: /etc/containerd/config.toml
+        regexp: '^(\s*sandbox_image\s*=\s*").*(")'
+        replace: '\1registry.k8s.io/pause:3.10\2'
+      notify: Restart containerd
+
+    - name: Force restart containerd
+      ansible.builtin.service:
+        name: containerd
+        state: restarted
+
+    - name: Wait for containerd
+      ansible.builtin.wait_for:
+        path: /run/containerd/containerd.sock
+        timeout: 120
+
+- name: Verify pause image is available
+  ansible.builtin.shell: ctr image ls | grep pause
+  args:
+    executable: /bin/bash
+  register: pause_verify
+  changed_when: false
+
+- name: Display pause image verification
+  ansible.builtin.debug:
+    msg: "{{ pause_verify.stdout_lines }}"

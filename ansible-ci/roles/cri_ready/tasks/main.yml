@@ -124,6 +124,93 @@
   changed_when: false
   failed_when: false
 
+- name: Check if pause image exists in containerd
+  ansible.builtin.shell: ctr image ls | grep -q "pause.*3.10" && echo "EXISTS" || echo "MISSING"
+  args:
+    executable: /bin/bash
+  register: pause_image_exists
+  changed_when: false
+  failed_when: false
+
+- name: Display pause image status
+  ansible.builtin.debug:
+    msg: "Pause image status: {{ pause_image_exists.stdout }}"
+
+- name: Pull pause image using ctr if missing (critical for CRI plugin)
+  when: pause_image_exists.stdout == "MISSING"
+  block:
+    - name: Attempt to pull pause image from multiple registries
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        echo "Attempting to pull pause image..."
+
+        # Try official registry first
+        if ctr image pull registry.k8s.io/pause:3.10 2>/dev/null; then
+          echo "✓ Pulled from registry.k8s.io"
+          exit 0
+        fi
+
+        echo "✗ Failed from registry.k8s.io, trying mirror.gcr.io..."
+        # Try Google mirror
+        if ctr image pull mirror.gcr.io/google-containers/pause:3.10 2>/dev/null; then
+          ctr image tag mirror.gcr.io/google-containers/pause:3.10 registry.k8s.io/pause:3.10
+          echo "✓ Pulled from mirror.gcr.io"
+          exit 0
+        fi
+
+        echo "✗ Failed from mirror.gcr.io, trying Aliyun (China/Russia mirror)..."
+        # Try Aliyun mirror (works well in Russia/China)
+        if ctr image pull registry.cn-hangzhou.aliyuncs.com/google_containers/pause:3.10 2>/dev/null; then
+          ctr image tag registry.cn-hangzhou.aliyuncs.com/google_containers/pause:3.10 registry.k8s.io/pause:3.10
+          echo "✓ Pulled from Aliyun mirror"
+          exit 0
+        fi
+
+        echo "✗ All registries failed"
+        exit 1
+      args:
+        executable: /bin/bash
+      register: pause_pull_result
+
+    - name: Display pull result
+      ansible.builtin.debug:
+        msg: "{{ pause_pull_result.stdout_lines }}"
+      when: pause_pull_result.rc == 0
+
+    - name: Fail if all registries failed
+      ansible.builtin.fail:
+        msg: "Failed to pull pause image from any registry"
+      when: pause_pull_result.rc != 0
+
+- name: List all images in containerd
+  ansible.builtin.shell: ctr image ls | grep -E "PAUSE|pause"
+  args:
+    executable: /bin/bash
+  register: ctr_images
+  changed_when: false
+  failed_when: false
+
+- name: Display pause image availability
+  ansible.builtin.debug:
+    msg: "{{ ctr_images.stdout_lines | default(['No pause images found']) }}"
+
+- name: Restart containerd to ensure CRI plugin picks up the image
+  ansible.builtin.service:
+    name: containerd
+    state: restarted
+  when: pause_image_exists.stdout == "MISSING"
+
+- name: Wait for containerd socket after restart
+  ansible.builtin.wait_for:
+    path: /run/containerd/containerd.sock
+    timeout: 120
+
+- name: Give containerd time to initialize CRI plugin
+  ansible.builtin.wait_for:
+    timeout: 15
+  delegate_to: localhost
+
 - name: Verify CRI is ready (prefer crictl; fallback to ctr plugin) with retries
   ansible.builtin.shell: |
     set -o pipefail

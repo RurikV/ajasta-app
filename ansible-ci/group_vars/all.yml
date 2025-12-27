@@ -35,11 +35,31 @@ kubernetes_version: "1.29.0"
 pod_network_cidr: "10.244.0.0/16"
 
 # Container registry for Kubernetes images
-container_registry: "registry.hpc.ut.ee/mirror/registry.k8s.io"
+# Use official registry.k8s.io or regional mirror accessible from your VMs
+container_registry: "registry.k8s.io"
 
 # Pause image (sandbox image)
-pause_image_repo: "registry.hpc.ut.ee/mirror/registry.k8s.io/pause"
+# IMPORTANT: This registry MUST be accessible from your VMs
+# If registry.k8s.io is blocked in your region, use a regional mirror
+pause_image_repo: "registry.k8s.io/pause"
 pause_image_version: "3.10"
+
+# Containerd-specific pause image configuration
+containerd_pause_image_repo: "{{ pause_image_repo }}"
+containerd_pause_image_version: "{{ pause_image_version }}"
+
+# Containerd configuration
+containerd_config_path: "/etc/containerd/config.toml"
+containerd_service: "containerd"
+
+# CRI (Container Runtime Interface) configuration
+cri_runtime_endpoint: "unix:///run/containerd/containerd.sock"
+crictl_version: "1.30.0"
+crictl_arch_map:
+  x86_64: "amd64"
+  aarch64: "arm64"
+  armv7l: "arm"
+
 
 # ============================================================================
 # CNI PLUGIN (Calico)
