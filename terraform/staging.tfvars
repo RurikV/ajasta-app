@@ -22,8 +22,8 @@ boot_disk_size = 20
 boot_disk_type = "network-hdd"
 
 # SSH access
-ssh_username   = "ajasta"
-ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC... your-staging-public-key"
+ssh_username = "ajasta"
+ssh_public_key_file = "../ssh-key-id_rsa_k8s.pub"  # Path to SSH public key file (relative to terraform/ directory)
 
 # Staging labels and tags
 labels = {
