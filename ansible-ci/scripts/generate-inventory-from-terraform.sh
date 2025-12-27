@@ -31,9 +31,9 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
-# Read Terraform outputs
-MASTER_IP=$(jq -r '.master_public_ip.value // empty' "${OUTPUTS_FILE}")
-WORKER_IPS=$(jq -r '.worker_public_ips.value // {}' "${OUTPUTS_FILE}")
+# Read Terraform outputs (handle both GitLab format with .value and direct format)
+MASTER_IP=$(jq -r '.master_public_ip | if type == "object" and has("value") then .value elif type == "string" then . else . end' "${OUTPUTS_FILE}")
+WORKER_IPS=$(jq -r '.worker_public_ips | if type == "object" and has("value") then .value elif type == "object" then . else . end' "${OUTPUTS_FILE}")
 
 # Validate master IP
 if [[ -z "${MASTER_IP}" ]] || [[ "${MASTER_IP}" == "null" ]]; then

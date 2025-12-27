@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Quick helper to find your GitLab project ID
+
+echo "🔍 Finding your GitLab Project ID"
+echo ""
+echo "Follow these steps:"
+echo ""
+echo "1. Open this URL in your browser:"
+echo "   https://otusteam.gitlab.yandexcloud.net/Vladimir.Rurik/ajasta-app"
+echo ""
+echo "2. Look at the URL when you navigate to different pages:"
+echo "   - Project Overview: https://otusteam.gitlab.yandexcloud.net/PROJECT_ID/..."
+echo "   - Infrastructure: https://otusteam.gitlab.yandexcloud.net/PROJECT_ID/-/infrastructure"
+echo "   - CI/CD: https://otusteam.gitlab.yandexcloud.net/PROJECT_ID/-/pipelines"
+echo ""
+echo "3. The PROJECT_ID is usually a number (e.g., 123, 456, etc.)"
+echo ""
+echo "4. Once you find it, set it as environment variable:"
+echo "   export PROJECT_ID=\"your-project-id\""
+echo ""
+echo "5. Then run the fetch script again:"
+echo "   ./get-terraform-outputs-from-gitlab.sh production"
+echo ""

@@ -59,13 +59,37 @@ ansible-ci/
 
 ## Quick Start
 
+### ⚠️ Important: GitLab Terraform Backend
+
+If you're using GitLab CI/CD with HTTP backend (which you are), the Terraform state is stored in GitLab, not locally. You need to fetch outputs first:
+
+```bash
+# Option 1: Automated (Recommended)
+cd ansible-ci
+./scripts/generate-inventory-auto.sh
+
+# Option 2: Manual step-by-step
+# Step 1: Set GitLab token
+export GITLAB_PAT="glpat-xxxxxxxxxxxxxxxxxxxx"
+
+# Step 2: Fetch outputs from GitLab
+cd ../../scripts
+./get-terraform-outputs-from-gitlab.sh production
+
+# Step 3: Generate inventory
+cd ../ansible-ci
+./scripts/generate-inventory-from-terraform.sh
+```
+
+**See:** [GITLAB_TERRAFORM_WORKFLOW.md](GITLAB_TERRAFORM_WORKFLOW.md) for detailed instructions.
+
 ### 1. Generate Inventory from Terraform
 
-After running `terraform apply`, generate the Ansible inventory:
+After fetching outputs, generate the Ansible inventory:
 
 ```bash
 cd ansible-ci
-./scripts/generate-inventory-from-terraform.sh
+./scripts/generate-inventory-auto.sh
 ```
 
 This creates `inventory.ini` with VM IPs from Terraform outputs.
