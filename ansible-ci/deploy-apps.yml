@@ -1,0 +1,306 @@
+---
+# Deploy Ajasta applications on Kubernetes cluster
+# This playbook deploys the Ajasta backend and frontend using Helm charts
+# Prerequisites: Kubernetes cluster must be bootstrapped (k8s-bootstrap.yml)
+
+- name: Deploy Ajasta Applications to Kubernetes
+  hosts: k8s-master
+  become: false
+  gather_facts: false
+  vars:
+    # Namespace configuration
+    app_namespace: "{{ app_namespace | default('ajasta') }}"
+
+    # Docker registry configuration
+    docker_registry: "{{ lookup('env', 'CI_REGISTRY') | default('registry.gitlab.com', true) }}"
+    project_path: "{{ lookup('env', 'CI_PROJECT_PATH') | default('vladimirryrik/ajasta-app', true) }}"
+    docker_image_tag: "{{ lookup('env', 'CI_COMMIT_SHA') | default('latest', true) }}"
+
+    # Image names (lowercase for Docker registry compatibility)
+    backend_image: "{{ docker_registry }}/{{ project_path | lower }}/backend"
+    frontend_image: "{{ docker_registry }}/{{ project_path | lower }}//frontend"
+
+    # Helm chart configuration
+    helm_chart_path: "{{ playbook_dir }}/../helm/ajasta-app"
+    helm_release_name: "ajasta-app"
+
+    # Ingress configuration
+    ingress_host: "{{ lookup('env', 'K8S_INGRESS_HOST') | default('', true) }}"
+
+  pre_tasks:
+    - name: Display deployment configuration
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Ajasta Application Deployment"
+          - "=========================================="
+          - "Namespace: {{ app_namespace }}"
+          - "Backend Image: {{ backend_image }}:{{ docker_image_tag }}"
+          - "Frontend Image: {{ frontend_image }}:{{ docker_image_tag }}"
+          - "Helm Release: {{ helm_release_name }}"
+          - "Ingress Host: {{ ingress_host | default('default/catch-all') }}"
+          - "=========================================="
+
+    - name: Ensure KUBECONFIG is set
+      ansible.builtin.set_fact:
+        kubeconfig_path: "{{ ansible_env.HOME }}/.kube/config"
+      failed_when: false
+
+    - name: Verify KUBECONFIG exists
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: kubeconfig_stat
+      failed_when: not kubeconfig_stat.stat.exists
+
+    - name: Test cluster connectivity
+      kubernetes.core.k8s_info:
+        kind: Node
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: cluster_test
+      until: cluster_test is not failed
+      retries: 5
+      delay: 10
+
+    - name: Display cluster connection status
+      ansible.builtin.debug:
+        msg: "✅ Connected to Kubernetes cluster ({{ cluster_test.resources | length }} nodes)"
+
+  tasks:
+    - name: Ensure application namespace exists
+      kubernetes.core.k8s:
+        name: "{{ app_namespace }}"
+        api_version: v1
+        kind: Namespace
+        state: present
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Create database secret
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: postgres-secret
+            namespace: "{{ app_namespace }}"
+          type: Opaque
+          stringData:
+            postgres-password: "{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}"
+            password: "{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Create JWT secret
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: jwt-secret
+            namespace: "{{ app_namespace }}"
+          type: Opaque
+          stringData:
+            jwtsecret: "{{ lookup('env', 'JWT_SECRET') | default('changeme', true) }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Create AWS S3 secret (optional)
+      when: lookup('env', 'AWS_ACCESS_KEY_ID') | default('', true) | length > 0
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: aws-s3-secret
+            namespace: "{{ app_namespace }}"
+          type: Opaque
+          stringData:
+            awsAccessKeyId: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+            awsSecretAccessKey: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+            awsS3Bucket: "{{ lookup('env', 'AWS_S3_BUCKET') | default('', true) }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Create Stripe secret (optional)
+      when: lookup('env', 'STRIPE_PUBLIC_KEY') | default('', true) | length > 0
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: stripe-secret
+            namespace: "{{ app_namespace }}"
+          type: Opaque
+          stringData:
+            stripePublicKey: "{{ lookup('env', 'STRIPE_PUBLIC_KEY') }}"
+            stripeSecretKey: "{{ lookup('env', 'STRIPE_SECRET_KEY') }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+
+    - name: Deploy application with Helm
+      kubernetes.core.helm:
+        name: "{{ helm_release_name }}"
+        chart_ref: "{{ helm_chart_path }}"
+        release_namespace: "{{ app_namespace }}"
+        create_namespace: false
+        values:
+          namespace:
+            create: false
+          global:
+            namespace: "{{ app_namespace }}"
+
+          # Backend configuration
+          backend:
+            enabled: true
+            image:
+              repository: "{{ backend_image }}"
+              tag: "{{ docker_image_tag }}"
+              pullPolicy: Always
+            replicas: 1
+            service:
+              type: ClusterIP
+              port: 8090
+            database:
+              password: "{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}"
+            secrets:
+              jwtSecret: "{{ lookup('env', 'JWT_SECRET') | default('changeme', true) }}"
+              awsAccessKeyId: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') | default('', true) }}"
+              awsSecretAccessKey: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') | default('', true) }}"
+            config:
+              awsS3Bucket: "{{ lookup('env', 'AWS_S3_BUCKET') | default('', true) }}"
+
+          # Frontend configuration
+          frontend:
+            enabled: true
+            image:
+              repository: "{{ frontend_image }}"
+              tag: "{{ docker_image_tag }}"
+              pullPolicy: Always
+            replicas: 1
+            service:
+              type: ClusterIP
+              port: 80
+
+          # PostgreSQL configuration
+          postgres:
+            enabled: true
+            auth:
+              password: "{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}"
+            primary:
+              persistence:
+                enabled: true
+                size: 10Gi
+                storageClass: "longhorn"  # Use Longhorn if available
+
+          # Ingress configuration
+          ingress:
+            enabled: true
+            className: "nginx"
+            hosts:
+              - host: "{{ ingress_host | default('') }}"
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    serviceName: ajasta-frontend
+                    servicePort: 80
+                  - path: /api
+                    pathType: Prefix
+                    serviceName: ajasta-backend
+                    servicePort: 8090
+
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: helm_deploy
+
+    - name: Display deployment status
+      ansible.builtin.debug:
+        msg: "✅ Application deployed successfully with Helm release {{ helm_release_name }}"
+      when: helm_deploy is changed
+
+    - name: Wait for deployments to be ready
+      kubernetes.core.k8s_info:
+        kind: Deployment
+        namespace: "{{ app_namespace }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: deployments
+      until: deployments.resources | selectattr('status.readyReplicas', 'defined') | selectattr('status.readyReplicas', 'equalto', 'status.replicas') | list | length == deployments.resources | length
+      retries: 30
+      delay: 10
+      ignore_errors: true
+
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg: "{{ item.metadata.name }}: {{ item.status.readyReplicas | default(0) }}/{{ item.spec.replicas }} replicas ready"
+      loop: "{{ deployments.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Get all pods in namespace
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ app_namespace }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: pods_info
+
+    - name: Display pod status
+      ansible.builtin.debug:
+        msg: "Pod {{ item.metadata.name }}: {{ item.status.phase }}"
+      loop: "{{ pods_info.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Get ingress information
+      kubernetes.core.k8s_info:
+        kind: Ingress
+        namespace: "{{ app_namespace }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: ingress_info
+      ignore_errors: true
+
+    - name: Display ingress information
+      ansible.builtin.debug:
+        msg:
+          - "Ingress: {{ item.metadata.name }}"
+          - "Host: {{ item.spec.rules[0].host | default('catch-all') }}"
+          - "Address: {{ item.status.loadBalancer.ingress[0].ip | default(item.status.loadBalancer.ingress[0].hostname) | default('pending') }}"
+      loop: "{{ ingress_info.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+      when: ingress_info.resources | length > 0
+
+  post_tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "================================================"
+          - "✅ Application Deployment Complete!"
+          - "================================================"
+          - ""
+          - "Application: Ajasta App"
+          - "Namespace: {{ app_namespace }}"
+          - "Helm Release: {{ helm_release_name }}"
+          - ""
+          - "Access the application:"
+          - "  1. Get ingress IP: kubectl get ingress -n {{ app_namespace }}"
+          - "  2. Access via: http://<ingress-ip>/"
+          - "  3. API endpoint: http://<ingress-ip>/api"
+          - ""
+          - "Monitor pods:"
+          - "  kubectl get pods -n {{ app_namespace }} -w"
+          - ""
+          - "View logs:"
+          - "  kubectl logs -n {{ app_namespace }} -l app=ajasta-backend"
+          - "  kubectl logs -n {{ app_namespace }} -l app=ajasta-frontend"
+          - ""
+          - "Upgrade application:"
+          - "  helm upgrade {{ helm_release_name }} {{ helm_chart_path }} --namespace {{ app_namespace }}"
+          - ""

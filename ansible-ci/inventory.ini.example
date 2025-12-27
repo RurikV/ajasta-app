@@ -1,0 +1,39 @@
+# Ansible Inventory Example
+# This is an example inventory file for reference
+# DO NOT use this file directly - use generate-inventory-from-terraform.sh
+#
+# Generated inventory will be created as inventory.ini
+
+# ============================================================================
+# MASTER NODE
+# ============================================================================
+[k8s-master]
+k8s-master ansible_host=51.250.100.218
+
+# ============================================================================
+# WORKER NODES
+# ============================================================================
+[k8s-workers]
+k8s-worker-0 ansible_host=10.10.0.4
+k8s-worker-1 ansible_host=10.10.0.5
+k8s-worker-2 ansible_host=10.10.0.6
+
+# ============================================================================
+# KUBERNETES CLUSTER (ALL NODES)
+# ============================================================================
+[k8s:children]
+k8s-master
+k8s-workers
+
+# ============================================================================
+# CONNECTION VARIABLES
+# ============================================================================
+# These can be overridden in group_vars/all.yml or via -e flag
+[all:vars]
+ansible_user=ajasta
+ansible_become=true
+ansible_become_method=sudo
+ansible_ssh_private_key_file=~/.ssh/id_rsa
+
+# SSH connection options
+ansible_ssh_common_args=-o BatchMode=yes -o NumberOfPasswordPrompts=0 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null

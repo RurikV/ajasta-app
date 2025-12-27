@@ -1,0 +1,21 @@
+---
+# Local override of kubeadm_init to avoid connecting to the master's public IP from itself.
+# This role keeps ./other-k8s unchanged and focuses on making API readiness reliable.
+
+# Pod CIDR for the CNI. Flannel commonly uses 10.244.0.0/16
+pod_cidr: "10.244.0.0/16"
+
+# Path to the admin kubeconfig produced by kubeadm
+kubeconfig_path: "/etc/kubernetes/admin.conf"
+
+# How many retries and delay when waiting for API server
+# Reduced to 30 retries (2.5 minutes) to fail fast if API server won't start.
+# Image pulling happens earlier, so long waits usually indicate real problems.
+apiserver_wait_retries: 30
+apiserver_wait_delay: 5
+
+# Kubernetes image repositories (primary mirror and fallback)
+# Primary tries an accessible mirror to avoid registry.k8s.io connectivity issues.
+# Fallback uses the official default.
+kubeadm_image_repository_primary: "registry.hpc.ut.ee/mirror/registry.k8s.io"
+kubeadm_image_repository_fallback: "registry.k8s.io"

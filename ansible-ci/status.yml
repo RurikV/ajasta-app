@@ -1,0 +1,202 @@
+---
+# Display status of Kubernetes cluster and deployed applications
+# Quick health check and overview playbook
+
+- name: Check Kubernetes Cluster and Application Status
+  hosts: k8s-master
+  become: false
+  gather_facts: false
+  vars:
+    app_namespace: "{{ app_namespace | default('ajasta') }}"
+
+  pre_tasks:
+    - name: Ensure KUBECONFIG is set
+      ansible.builtin.set_fact:
+        kubeconfig_path: "{{ ansible_env.HOME }}/.kube/config"
+
+    - name: Verify KUBECONFIG exists
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: kubeconfig_stat
+      failed_when: not kubeconfig_stat.stat.exists
+
+  tasks:
+    - name: Display status header
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "================================================"
+          - "Kubernetes Cluster & Application Status"
+          - "================================================"
+
+    # Cluster Nodes
+    - name: Get cluster nodes
+      kubernetes.core.k8s_info:
+        kind: Node
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: nodes_info
+
+    - name: Display cluster nodes
+      ansible.builtin.debug:
+        msg:
+          - "Cluster Nodes ({{ nodes_info.resources | length }}):"
+          - "{{ item.metadata.name }}: {{ item.status.conditions | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first | default('NotReady') }}"
+      loop: "{{ nodes_info.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    # Namespaces
+    - name: Get cluster namespaces
+      kubernetes.core.k8s_info:
+        kind: Namespace
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: namespaces_info
+
+    - name: Display namespaces
+      ansible.builtin.debug:
+        msg: "Namespaces ({{ namespaces_info.resources | length }}): {{ namespaces_info.resources | json_query('[].metadata.name') | join(', ') }}"
+
+    # Application Pods
+    - name: Get application pods
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ app_namespace }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: pods_info
+      ignore_errors: true
+
+    - name: Display application pods
+      when: pods_info is not failed
+      block:
+        - name: Show pod count
+          ansible.builtin.debug:
+            msg: "Application Pods ({{ app_namespace }}): {{ pods_info.resources | length }}"
+
+        - name: Display each pod
+          ansible.builtin.debug:
+            msg: "  {{ item.metadata.name }}: {{ item.status.phase }} (Ready: {{ item.status.readyReplicas | default(item.status.containerStatuses | selectattr('ready') | list | length) }}/{{ item.spec.containers | length }})"
+          loop: "{{ pods_info.resources }}"
+          loop_control:
+            label: "{{ item.metadata.name }}"
+
+    # Application Services
+    - name: Get application services
+      kubernetes.core.k8s_info:
+        kind: Service
+        namespace: "{{ app_namespace }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: services_info
+      ignore_errors: true
+
+    - name: Display application services
+      when: services_info is not failed
+      ansible.builtin.debug:
+        msg: "  {{ item.metadata.name }}: {{ item.spec.type }} - {{ item.spec.clusterIP }}:{{ item.spec.ports[0].port }}"
+      loop: "{{ services_info.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+      when: services_info.resources | default([]) | length > 0
+
+    # Application Deployments
+    - name: Get application deployments
+      kubernetes.core.k8s_info:
+        kind: Deployment
+        namespace: "{{ app_namespace }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: deployments_info
+      ignore_errors: true
+
+    - name: Display application deployments
+      when: deployments_info is not failed
+      ansible.builtin.debug:
+        msg: "  {{ item.metadata.name }}: {{ item.status.readyReplicas | default(0) }}/{{ item.spec.replicas }} replicas ready"
+      loop: "{{ deployments_info.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+      when: deployments_info.resources | default([]) | length > 0
+
+    # Helm Releases
+    - name: Get Helm releases
+      ansible.builtin.command: helm list -n {{ app_namespace }} -o json
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: helm_releases
+      changed_when: false
+      failed_when: false
+
+    - name: Display Helm releases
+      when: helm_releases.rc == 0
+      block:
+        - name: Parse Helm releases
+          ansible.builtin.set_fact:
+            helm_list: "{{ helm_releases.stdout | from_json }}"
+
+        - name: Show Helm releases
+          ansible.builtin.debug:
+            msg: "  {{ item.name }}: {{ item.chart }} (version {{ item.app_version }})"
+          loop: "{{ helm_list }}"
+          loop_control:
+            label: "{{ item.name }}"
+
+    # Ingress
+    - name: Get application ingress
+      kubernetes.core.k8s_info:
+        kind: Ingress
+        namespace: "{{ app_namespace }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: ingress_info
+      ignore_errors: true
+
+    - name: Display ingress information
+      when: ingress_info is not failed and ingress_info.resources | default([]) | length > 0
+      block:
+        - name: Display ingress details
+          ansible.builtin.debug:
+            msg:
+              - "Ingress: {{ item.metadata.name }}"
+              - "  Host: {{ item.spec.rules[0].host | default('catch-all') }}"
+              - "  Address: {{ item.status.loadBalancer.ingress[0].ip | default(item.status.loadBalancer.ingress[0].hostname) | default('pending') }}"
+          loop: "{{ ingress_info.resources }}"
+          loop_control:
+            label: "{{ item.metadata.name }}"
+
+    # Persistent Volumes
+    - name: Get application PVCs
+      kubernetes.core.k8s_info:
+        kind: PersistentVolumeClaim
+        namespace: "{{ app_namespace }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: pvc_info
+      ignore_errors: true
+
+    - name: Display PVCs
+      when: pvc_info is not failed and pvc_info.resources | default([]) | length > 0
+      ansible.builtin.debug:
+        msg: "  {{ item.metadata.name }}: {{ item.status.phase }} ({{ item.spec.resources.requests.storage }})"
+      loop: "{{ pvc_info.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+  post_tasks:
+    - name: Display status footer
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "================================================"
+          - "For detailed status, run:"
+          - "  kubectl get nodes"
+          - "  kubectl get all -n {{ app_namespace }}"
+          - "  kubectl describe pod -n {{ app_namespace }}"
+          - ""
+          - "For logs:"
+          - "  kubectl logs -n {{ app_namespace }} -l app=ajasta-backend --tail=50 -f"
+          - "  kubectl logs -n {{ app_namespace }} -l app=ajasta-frontend --tail=50 -f"
+          - "================================================"
+          - ""

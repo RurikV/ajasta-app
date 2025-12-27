@@ -1,0 +1,17 @@
+---
+# Defaults for containerd_config role (RedHat path mirror control)
+# Use a reliable direct baseurl mirror to avoid mirrorlist timeouts
+centos_stream_mirror_base: "https://mirror.yandex.ru/centos-stream/9-stream"
+# Disable stock CentOS Stream repos to prevent mirrorlist hangs and use our baseurl-only repos
+centos_disable_default_repos: true
+
+# Conservative dnf tunables to reduce hang risk
+# These are applied to /etc/dnf/dnf.conf [main], best-effort (non-fatal)
+dnf_conf_tunables:
+  fastestmirror: "True"
+  max_parallel_downloads: "5"
+  retries: "2"
+  timeout: "10"
+
+# Timeout in seconds for dnf install operations (prereqs and containerd)
+dnf_install_timeout: 120

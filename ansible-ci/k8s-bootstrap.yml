@@ -1,0 +1,343 @@
+---
+# Bootstrap Kubernetes cluster on Terraform-provisioned VMs
+# This playbook assumes VMs are already created by Terraform
+# Run: ./scripts/generate-inventory-from-terraform.sh (to create inventory)
+# Then: ansible-playbook -i inventory.ini k8s-bootstrap.yml
+
+- name: Bootstrap Kubernetes cluster on Terraform VMs
+  hosts: local
+  connection: local
+  gather_facts: false
+  vars:
+    env_base:
+      YC_CLOUD_ID: "{{ yc_cloud_id }}"
+      YC_FOLDER_ID: "{{ yc_folder_id }}"
+      YC_ZONE: "{{ yc_zone }}"
+
+  tasks:
+    - name: Display bootstrap information
+      ansible.builtin.debug:
+        msg:
+          - "Kubernetes Bootstrap Playbook"
+          - "================================"
+          - "This playbook will bootstrap Kubernetes on VMs created by Terraform"
+          - ""
+          - "Prerequisites:"
+          - "  1. Terraform apply must be completed"
+          - "  2. Run: ./scripts/generate-inventory-from-terraform.sh"
+          - "  3. Ensure SSH access to master node"
+          - ""
+          - "Press Ctrl+C to cancel or continue to bootstrap..."
+
+    - name: Pause for confirmation (5 seconds)
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Populate YC IDs from environment if not set
+      ansible.builtin.set_fact:
+        yc_cloud_id: "{{ lookup('env','YC_CLOUD_ID') | default('', true) }}"
+        yc_folder_id: "{{ lookup('env','YC_FOLDER_ID') | default('', true) }}"
+      when:
+        - (yc_cloud_id | default('') | length) == 0 or (yc_folder_id | default('') | length) == 0
+
+    - name: Detect YC cloud-id from yc CLI if still not set
+      ansible.builtin.command: yc config get cloud-id
+      register: yc_cloud_id_cmd
+      changed_when: false
+      failed_when: false
+      when: (yc_cloud_id | default('') | length) == 0
+
+    - name: Set yc_cloud_id from yc CLI result
+      ansible.builtin.set_fact:
+        yc_cloud_id: "{{ yc_cloud_id_cmd.stdout | trim }}"
+      when:
+        - (yc_cloud_id | default('') | length) == 0
+        - (yc_cloud_id_cmd.stdout | default('') | trim | length) > 0
+
+    - name: Detect YC folder-id from yc CLI if still not set
+      ansible.builtin.command: yc config get folder-id
+      register: yc_folder_id_cmd
+      changed_when: false
+      failed_when: false
+      when: (yc_folder_id | default('') | length) == 0
+
+    - name: Set yc_folder_id from yc CLI result
+      ansible.builtin.set_fact:
+        yc_folder_id: "{{ yc_folder_id_cmd.stdout | trim }}"
+      when:
+        - (yc_folder_id | default('') | length) == 0
+        - (yc_folder_id_cmd.stdout | default('') | trim | length) > 0
+
+    - name: Validate required vars are set
+      ansible.builtin.assert:
+        that:
+          - yc_cloud_id | length > 0
+          - yc_folder_id | length > 0
+        fail_msg: "yc_cloud_id and yc_folder_id must be provided in group_vars/all.yml or via YC_CLOUD_ID/YC_FOLDER_ID env vars or yc CLI config"
+
+    - name: Read Terraform outputs to get master IP
+      ansible.builtin.set_fact:
+        terraform_outputs: "{{ lookup('file', playbook_dir + '/../terraform/outputs.json') | from_json }}"
+      ignore_errors: false
+
+    - name: Extract master IP from Terraform outputs
+      ansible.builtin.set_fact:
+        master_ip_from_tf: "{{ terraform_outputs.master_public_ip.value }}"
+
+    - name: Display master IP from Terraform
+      ansible.builtin.debug:
+        msg: "Master IP from Terraform: {{ master_ip_from_tf }}"
+
+    - name: Verify master IP is available in inventory
+      ansible.builtin.assert:
+        that:
+          - groups['k8s-master'] is defined
+          - groups['k8s-master'] | length > 0
+        fail_msg: "k8s-master group not found in inventory. Run ./scripts/generate-inventory-from-terraform.sh first"
+
+# ============================================================================
+# MAIN KUBERNETES BOOTSTRAP PLAYBOOK
+# ============================================================================
+- name: Configure and bootstrap Kubernetes cluster
+  hosts: k8s
+  become: true
+  gather_facts: true
+  vars:
+    containerd_config_path: /etc/containerd/config.toml
+    containerd_service: containerd
+
+  pre_tasks:
+    - name: Display node information
+      ansible.builtin.debug:
+        msg:
+          - "Configuring Kubernetes node: {{ inventory_hostname }}"
+          - "IP: {{ ansible_default_ipv4.address }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+  roles:
+    - role: ports_verify
+      tags: ['verify', 'ports']
+
+    - role: containerd_config
+      tags: ['containerd', 'cri']
+
+    - role: registry
+      tags: ['registry', 'cri']
+
+    - role: system_checks
+      tags: ['checks', 'system']
+
+    - role: cri_ready
+      tags: ['cri', 'ready']
+
+    - role: kubeadm_init
+      tags: ['kubeadm', 'init', 'bootstrap']
+
+    - role: cni_install
+      tags: ['cni', 'network', 'calico']
+
+  post_tasks:
+    - name: Display Kubernetes cluster info
+      ansible.builtin.debug:
+        msg:
+          - "Kubernetes node {{ inventory_hostname }} configured successfully"
+          - "Run 'kubectl get nodes' from master to verify cluster status"
+
+# ============================================================================
+# INSTALL INGRESS CONTROLLER
+# ============================================================================
+- name: Install NGINX Ingress Controller
+  hosts: k8s-master
+  become: false
+  gather_facts: false
+  vars:
+    ingress_namespace: "{{ ingress_controller_namespace }}"
+
+  tasks:
+    - name: Install NGINX Ingress Controller using Helm
+      when: ingress_controller_enabled | default(false) | bool
+      block:
+        - name: Add ingress-nginx Helm repository
+          kubernetes.core.helm_repository:
+            name: ingress-nginx
+            repo_url: https://kubernetes.github.io/ingress-nginx
+          environment:
+            KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+
+        - name: Ensure ingress namespace exists
+          kubernetes.core.k8s:
+            name: "{{ ingress_namespace }}"
+            api_version: v1
+            kind: Namespace
+            state: present
+          environment:
+            KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+
+        - name: Install ingress-nginx with Helm
+          kubernetes.core.helm:
+            name: ingress-nginx
+            chart_ref: ingress-nginx/ingress-nginx
+            chart_version: "{{ ingress_controller_nginx_version | default('') }}"
+            release_namespace: "{{ ingress_namespace }}"
+            create_namespace: true
+            values:
+              controller:
+                service:
+                  type: ClusterIP
+                hostNetwork: false
+                publishService:
+                  enabled: true
+              rbac:
+                create: true
+              admissionWebhooks:
+                enabled: true
+          environment:
+            KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+          register: ingress_install
+
+        - name: Display ingress installation status
+          ansible.builtin.debug:
+            msg: "NGINX Ingress Controller installed successfully in namespace {{ ingress_namespace }}"
+          when: ingress_install is changed
+
+# ============================================================================
+# INSTALL LONGHORN STORAGE (Optional)
+# ============================================================================
+- name: Install Longhorn Storage
+  hosts: k8s-master
+  become: false
+  gather_facts: false
+  vars:
+    longhorn_namespace: "{{ longhorn_namespace }}"
+
+  tasks:
+    - name: Install Longhorn using Helm
+      when: longhorn_enabled | default(false) | bool
+      block:
+        - name: Add Longhorn Helm repository
+          kubernetes.core.helm_repository:
+            name: longhorn
+            repo_url: https://charts.longhorn.io
+          environment:
+            KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+
+        - name: Ensure Longhorn namespace exists
+          kubernetes.core.k8s:
+            name: "{{ longhorn_namespace }}"
+            api_version: v1
+            kind: Namespace
+            state: present
+          environment:
+            KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+
+        - name: Install Longhorn with Helm
+          kubernetes.core.helm:
+            name: longhorn
+            chart_ref: longhorn/longhorn
+            chart_version: "{{ longhorn_version | default('') }}"
+            release_namespace: "{{ longhorn_namespace }}"
+            create_namespace: true
+            values:
+              defaultSettings:
+                storageReservation: false
+              persistence:
+                defaultClass: true
+              csi:
+                attacherReplicaCount: 1
+                provisionerReplicaCount: 1
+                resizerReplicaCount: 1
+                snapshotterReplicaCount: 1
+          environment:
+            KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+          register: longhorn_install
+
+        - name: Display Longhorn installation status
+          ansible.builtin.debug:
+            msg: "Longhorn storage installed successfully in namespace {{ longhorn_namespace }}"
+          when: longhorn_install is changed
+
+# ============================================================================
+# INSTALL RANCHER DASHBOARD (Optional)
+# ============================================================================
+- name: Install Rancher Dashboard
+  hosts: local
+  connection: local
+  gather_facts: false
+  vars:
+    env_base:
+      YC_CLOUD_ID: "{{ yc_cloud_id }}"
+      YC_FOLDER_ID: "{{ yc_folder_id }}"
+      YC_ZONE: "{{ yc_zone }}"
+
+  tasks:
+    - name: Install Rancher dashboard
+      when: rancher_enabled | default(false) | bool
+      block:
+        - name: Get master IP from inventory
+          ansible.builtin.add_host:
+            name: master_temp
+            ansible_host: "{{ groups['k8s-master'][0] }}"
+
+        - name: Install Rancher using script
+          ansible.builtin.shell: |
+            timeout {{ rancher_install_timeout }} zsh {{ scripts_dir }}/install-rancher.zsh "{{ master_temp }}"
+          args:
+            chdir: "{{ playbook_dir }}/.."
+          environment: "{{ env_base | combine({'SSH_USERNAME': ssh_username, 'RANCHER_HOSTNAME': rancher_hostname}) }}"
+          register: rancher_install_out
+
+        - name: Display Rancher installation output
+          ansible.builtin.debug:
+            var: rancher_install_out.stdout_lines
+
+# ============================================================================
+# POST-BOOTSTRAP VERIFICATION
+# ============================================================================
+- name: Verify Kubernetes cluster
+  hosts: k8s-master
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Get cluster nodes
+      kubernetes.core.k8s_info:
+        kind: Node
+      environment:
+        KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+      register: nodes_info
+
+    - name: Display cluster nodes
+      ansible.builtin.debug:
+        msg: "{{ nodes_info.resources | json_query('[].metadata.name') }}"
+
+    - name: Get cluster namespaces
+      kubernetes.core.k8s_info:
+        kind: Namespace
+      environment:
+        KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+      register: namespaces_info
+
+    - name: Display cluster namespaces
+      ansible.builtin.debug:
+        msg: "{{ namespaces_info.resources | json_query('[].metadata.name') }}"
+
+    - name: Display cluster access information
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "================================================"
+          - "✅ Kubernetes Cluster Bootstrap Complete!"
+          - "================================================"
+          - ""
+          - "To access the cluster:"
+          - "  1. SSH to master: ssh {{ ssh_username }}@{{ groups['k8s-master'][0] }}"
+          - "  2. Use kubectl: kubectl get nodes"
+          - "  3. Copy kubeconfig: scp {{ ssh_username }}@{{ groups['k8s-master'][0] }}:~/.kube/config ~/.kube/config"
+          - ""
+          - "Cluster nodes: {{ nodes_info.resources | length }}"
+          - "Namespaces: {{ namespaces_info.resources | length }}"
+          - ""
+          - "Next steps:"
+          - "  - Deploy applications with: ansible-playbook -i inventory.ini deploy-apps.yml"
+          - "  - Or use Helm: helm install ajasta-app ../helm/ajasta-app"
+          - ""

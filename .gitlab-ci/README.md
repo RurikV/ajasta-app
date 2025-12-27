@@ -104,4 +104,3 @@ python3 -c "import yaml; yaml.safe_load(open('.gitlab-ci.yml'))"
 For questions or issues with the CI/CD pipeline:
 1. Check [`.gitlab-ci-MODULAR_STRUCTURE.md`](.gitlab-ci-MODULAR_STRUCTURE.md) for detailed documentation
 2. Review GitLab CI/CD pipeline logs in the GitLab UI
-3. Consult the main [CLAUDE.md](../CLAUDE.md) for project context

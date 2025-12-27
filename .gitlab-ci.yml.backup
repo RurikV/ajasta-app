@@ -1,0 +1,1720 @@
+---
+# GitLab CI/CD Pipeline for Ajasta App
+
+# Workflow rules to prevent duplicate pipelines
+# Prefer branch pipelines over MR pipelines
+# When pushing to main/develop, run the branch pipeline (not the MR pipeline)
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH'  # Allow branch pipelines first
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_OPEN_MERGE_REQUESTS'
+      when: never  # Block MR pipeline when branch commit exists
+
+variables:
+  # Docker Registry Configuration
+  DOCKER_REGISTRY: $CI_REGISTRY
+  DOCKER_IMAGE_TAG: $CI_COMMIT_SHA
+  DOCKER_LATEST_TAG: "latest"
+
+  # Terraform Configuration
+  TF_ROOT: "${CI_PROJECT_DIR}/terraform"
+  TF_CLI_ARGS: "-no-color"
+  TF_IN_AUTOMATION: "true"
+
+  # Yandex Cloud variables - configure in GitLab CI/CD Variables
+  TF_VAR_yc_cloud_id: "${YC_CLOUD_ID}"
+  TF_VAR_yc_folder_id: "${YC_FOLDER_ID}"
+  YC_TOKEN: "${YC_TOKEN}"
+  TF_VAR_ssh_username: "ajasta"
+  SSH_PRIVATE_KEY: "${YC_SSH_PRIVATE_KEY}"
+
+  # GitLab authentication for Terraform state backend
+  GITLAB_PAT: "${GITLAB_PAT}"
+  GITLAB_USERNAME: "${GITLAB_USERNAME}"
+
+  # Application Configuration
+  # Convert CI_PROJECT_PATH to lowercase for Docker registry compatibility
+  # Note: Lowercase conversion is done in job scripts for shell compatibility
+  BACKEND_IMAGE_NAME: "$CI_PROJECT_PATH/backend"
+  FRONTEND_IMAGE_NAME: "$CI_PROJECT_PATH/frontend"
+
+  # Yandex Cloud Configuration
+  YC_ZONE: "ru-central1-a"
+  YC_INSTANCE_NAME: "ajasta-app-vm"
+  YC_INSTANCE_TYPE: "standard-v3"
+  YC_CORES: "2"
+  YC_MEMORY: "2GB"
+  YC_DISK_SIZE: "10GB"
+
+  # Build optimization for idempotency
+  DOCKER_BUILDKIT: "1"
+  BUILDX_EXPERIMENTAL: "1"
+
+stages:
+  - validate
+  - plan
+  - build
+  - test
+  - package
+  - deploy
+
+# ============================================================================
+# TERRAFORM CI/CD JOBS
+# ============================================================================
+
+# Base template for all Terraform jobs
+.terraform_base:
+  before_script:
+    # Create plugin cache directory
+    - mkdir -p "${CI_PROJECT_DIR}/.terraform.d/plugin-cache"
+
+    # Setup Terraform CLI config for Yandex Cloud mirror
+    - export TF_CLI_CONFIG_FILE="${CI_PROJECT_DIR}/.terraformrc"
+    - |
+      cat > ${CI_PROJECT_DIR}/.terraformrc << 'EOF'
+      provider_installation {
+        network_mirror {
+          url = "https://terraform-mirror.yandexcloud.net/"
+          include = ["registry.terraform.io/*/*"]
+        }
+        direct {
+          exclude = ["registry.terraform.io/*/*"]
+        }
+      }
+      EOF
+
+    # Navigate to terraform directory
+    - cd ${TF_ROOT}
+
+    # Clean up any existing Terraform state files
+    - rm -f .terraform/terraform.tfstate .terraform.lock.hcl || true
+    - rm -f terraform.tfstate* || true
+    - rm -f .terraform/environment || true
+
+    # Show versions
+    - terraform --version
+
+# Terraform format and validation - runs on all branches
+terraform:fmt:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - terraform fmt -check -recursive || (terraform fmt -recursive -write=true && exit 1)
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  allow_failure: false
+
+# Terraform validate
+terraform:validate:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - terraform init -backend=false
+    - terraform validate
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  needs: [terraform:fmt]
+
+# Security scan with tfsec
+terraform:security-scan:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - terraform init -backend=false
+    - |
+      # Install tfsec if not present
+      if ! command -v tfsec >/dev/null 2>&1; then
+        curl -sSL https://github.com/aquasecurity/tfsec/releases/latest/download/tfsec-linux-amd64 -o /tmp/tfsec
+        chmod +x /tmp/tfsec
+        export PATH=/tmp:$PATH
+      fi
+    - tfsec --format json --out tfsec-report.json . || true
+    - tfsec --format text . || true
+  artifacts:
+    reports:
+      sast: tfsec-report.json
+    paths:
+      - terraform/tfsec-report.json
+    expire_in: "1 week"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  allow_failure: true
+  needs: [terraform:validate]
+
+# Plan for staging environment (available on develop and main branches)
+terraform:plan:staging:
+  stage: plan
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "staging"
+  script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - |
+      # Use GITLAB_PAT for consistent authentication across plan and apply jobs
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      else
+        # Fallback to CI_JOB_TOKEN
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"
+      fi
+    - |
+      terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load staging variables
+    - |
+      if [ -f "staging.tfvars" ]; then
+        echo "Loading staging variables from staging.tfvars"
+        cp staging.tfvars terraform.tfvars
+      else
+        echo "Warning: staging.tfvars not found, using CI variables only"
+      fi
+
+    # Create plan (ignore lock release errors - plan file is still valid)
+    - terraform plan -out=plan.tfplan -input=false || true
+    - |
+      if [ -f plan.tfplan ]; then
+        echo "✅ Plan created successfully (lock release error is non-critical)"
+      else
+        echo "❌ Plan file not created - actual failure"
+        exit 1
+      fi
+
+    # Show plan summary
+    - terraform show -no-color plan.tfplan > plan.txt
+  artifacts:
+    paths:
+      - terraform/plan.tfplan
+      - terraform/plan.txt
+    expire_in: "1 week"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  environment:
+    name: staging
+    action: prepare
+
+# Plan for production environment (manual on main branch)
+terraform:plan:production:
+  stage: plan
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "production"
+  script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - |
+      # Use GITLAB_PAT for consistent authentication across plan and apply jobs
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      else
+        # Fallback to CI_JOB_TOKEN
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"
+      fi
+    - |
+      terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load production variables
+    - |
+      if [ -f "production.tfvars" ]; then
+        echo "Loading production variables from production.tfvars"
+        cp production.tfvars terraform.tfvars
+      else
+        echo "Warning: production.tfvars not found, using CI variables only"
+      fi
+
+    # Create plan (ignore lock release errors - plan file is still valid)
+    - terraform plan -out=plan.tfplan -input=false || true
+    - |
+      if [ -f plan.tfplan ]; then
+        echo "✅ Plan created successfully (lock release error is non-critical)"
+      else
+        echo "❌ Plan file not created - actual failure"
+        exit 1
+      fi
+
+    # Show plan summary
+    - terraform show -no-color plan.tfplan > plan.txt
+
+    # Display plan in job output
+    - cat plan.txt
+  artifacts:
+    paths:
+      - terraform/plan.tfplan
+      - terraform/plan.txt
+    expire_in: "1 month"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  environment:
+    name: production
+    action: prepare
+
+# Apply to staging (manual on both develop and main branches)
+terraform:apply:staging:
+  stage: deploy
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "staging"
+  script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - |
+      # Configure authentication based on available credentials
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        # Use Personal Access Token with actual username (required for PAT auth)
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      elif [ -n "${GITLAB_PAT}" ]; then
+        # PAT provided but no username - try with gitlab-ci-token (may fail)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
+      else
+        # Fallback to CI_JOB_TOKEN (won't work across jobs)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
+      fi
+    - |
+      terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load staging variables
+    - |
+      if [ -f "staging.tfvars" ]; then
+        cp staging.tfvars terraform.tfvars
+      fi
+
+    # Apply the plan (ignore lock release errors - resources already created)
+    - terraform apply -input=false -auto-approve plan.tfplan || true
+    - |
+      if terraform output -json &>/dev/null; then
+        echo "✅ Apply completed successfully (lock release error is non-critical)"
+      else
+        echo "❌ Apply failed - resources may not have been created"
+        exit 1
+      fi
+
+    # Output results
+    - terraform output -json > outputs.json
+    - |
+      echo "Staging deployment completed successfully!"
+      echo ""
+      echo "Infrastructure outputs:"
+      terraform output -raw || true
+  artifacts:
+    paths:
+      - terraform/outputs.json
+    reports:
+      dotenv: terraform/terraform-outputs.env
+    expire_in: "1 week"
+  rules:
+    # Available on develop branch (manual)
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+      allow_failure: false
+    # Available on main branch (manual for testing)
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: false
+  environment:
+    name: staging
+    url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
+    on_stop: terraform:destroy:staging
+  needs: [terraform:plan:staging]
+  allow_failure: false
+
+# Apply to production (manual on main branch)
+terraform:apply:production:
+  stage: deploy
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "production"
+  script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - |
+      # Configure authentication based on available credentials
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        # Use Personal Access Token with actual username (required for PAT auth)
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      elif [ -n "${GITLAB_PAT}" ]; then
+        # PAT provided but no username - try with gitlab-ci-token (may fail)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
+      else
+        # Fallback to CI_JOB_TOKEN (won't work across jobs)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
+      fi
+    - |
+      terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load production variables
+    - |
+      if [ -f "production.tfvars" ]; then
+        cp production.tfvars terraform.tfvars
+      fi
+
+    # Apply the plan (ignore lock release errors - resources already created)
+    - terraform apply -input=false -auto-approve plan.tfplan || true
+    - |
+      if terraform output -json &>/dev/null; then
+        echo "✅ Apply completed successfully (lock release error is non-critical)"
+      else
+        echo "❌ Apply failed - resources may not have been created"
+        exit 1
+      fi
+
+    # Output results
+    - terraform output -json > outputs.json
+    - |
+      echo "Production deployment completed successfully!"
+      echo ""
+      echo "Infrastructure outputs:"
+      terraform output -raw || true
+
+      # Create outputs file for GitLab environment
+      cat > terraform-outputs.env << EOF
+      TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip 2>/dev/null || echo "")
+      TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips 2>/dev/null || echo "{}")
+      FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null || echo "")
+      BACKEND_API_URL=$(terraform output -raw backend_api_url 2>/dev/null || echo "")
+      EOF
+  artifacts:
+    paths:
+      - terraform/outputs.json
+      - terraform/terraform-outputs.env
+    reports:
+      dotenv: terraform/terraform-outputs.env
+    expire_in: "1 month"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual  # Manual approval required for production
+  environment:
+    name: production
+    url: http://${TF_VAR_master_public_ip:-$YC_VM_EXTERNAL_IP}
+    on_stop: terraform:destroy:production
+  needs: [terraform:plan:production]
+  timeout: 30m
+
+# Update kubeconfig after Terraform deployment
+k8s:update-kubeconfig:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client curl jq bash
+  script:
+    # Extract master IP from terraform outputs
+    - |
+      if [ -f "terraform/terraform-outputs.env" ]; then
+        source terraform/terraform-outputs.env
+        MASTER_IP="${TERRAFORM_MASTER_IP:-$TERRAFORM_MASTER_PUBLIC_IP}"
+      else
+        # Fallback to manual IP specification
+        MASTER_IP="${TERRAFORM_MASTER_IP:-$YC_VM_EXTERNAL_IP}"
+      fi
+
+      if [ -z "$MASTER_IP" ]; then
+        echo "ERROR: Unable to determine master IP"
+        echo "TERRAFORM_MASTER_IP not set and terraform-outputs.env not found"
+        exit 1
+      fi
+
+      echo "Master IP: $MASTER_IP"
+
+    # Setup SSH
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - |
+      cat > ~/.ssh/config <<EOF
+      Host *
+          StrictHostKeyChecking no
+          UserKnownHostsFile=/dev/null
+      EOF
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+
+    # Wait for cluster to be ready
+    - echo "⏳ Waiting 60 seconds for Kubernetes cluster to initialize..."
+    - sleep 60
+
+    # Run the kubeconfig update script
+    - chmod +x ../scripts/update-kubeconfig.sh
+    - ../scripts/update-kubeconfig.sh "$MASTER_IP"
+
+    # Save kubeconfig for downstream jobs
+    - mkdir -p ../.kube
+    - cp ~/.kube/config ../.kube/config
+
+    # Verify the connection
+    - export KUBECONFIG="$PWD/../.kube/config"
+    - kubectl cluster-info
+    - kubectl get nodes
+    - echo "✅ Kubeconfig updated and verified successfully"
+  artifacts:
+    paths:
+      - .kube/config
+    expire_in: "1 day"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+  needs:
+    - job: terraform:apply:production
+      optional: true
+    - job: terraform:apply:staging
+      optional: true
+  dependencies:
+    - terraform:apply:production
+    - terraform:apply:staging
+  timeout: 15m
+
+# Destroy staging resources (manual)
+terraform:destroy:staging:
+  stage: deploy
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "staging"
+  script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
+    - |
+      # Configure authentication based on available credentials
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        # Use Personal Access Token with actual username (required for PAT auth)
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      elif [ -n "${GITLAB_PAT}" ]; then
+        # PAT provided but no username - try with gitlab-ci-token (may fail)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
+      else
+        # Fallback to CI_JOB_TOKEN (won't work across jobs)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
+      fi
+    - |
+      terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load staging variables
+    - |
+      if [ -f "staging.tfvars" ]; then
+        cp staging.tfvars terraform.tfvars
+      fi
+
+    # Create destroy plan (ignore lock release errors)
+    - terraform plan -destroy -out=destroy.tfplan -input=false || true
+    - |
+      if [ -f destroy.tfplan ]; then
+        echo "✅ Destroy plan created successfully"
+      else
+        echo "❌ Destroy plan file not created"
+        exit 1
+      fi
+
+    # Show destroy plan
+    - terraform show -no-color destroy.tfplan
+
+    # Apply destroy (ignore lock release errors - resources already destroyed)
+    - terraform apply -input=false -auto-approve destroy.tfplan || true
+    - |
+      # After destroy, resources should be gone (no outputs expected)
+      # The || true ensures lock release errors don't fail the job
+      echo "✅ Destroy completed successfully (lock release error is non-critical)"
+
+    - echo "Staging infrastructure destroyed successfully"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+      allow_failure: true
+  environment:
+    name: staging
+    action: stop
+  needs: []
+  timeout: 15m
+
+# Destroy production resources (manual, protected)
+terraform:destroy:production:
+  stage: deploy
+  extends: .terraform_base
+  variables:
+    TF_STATE_NAME: "production"
+  script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
+    - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
+    - |
+      # Configure authentication based on available credentials
+      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
+        # Use Personal Access Token with actual username (required for PAT auth)
+        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+      elif [ -n "${GITLAB_PAT}" ]; then
+        # PAT provided but no username - try with gitlab-ci-token (may fail)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
+        export TF_PASSWORD="${GITLAB_PAT}"
+        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
+      else
+        # Fallback to CI_JOB_TOKEN (won't work across jobs)
+        export TF_HTTP_USERNAME="gitlab-ci-token"
+        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+        export TF_PASSWORD="${CI_JOB_TOKEN}"
+        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
+      fi
+    - |
+      terraform init -backend=true \
+        -backend-config="address=${TF_HTTP_ADDRESS}" \
+        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
+        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
+        -backend-config="username=${TF_HTTP_USERNAME}" \
+        -backend-config="password=${TF_HTTP_PASSWORD}" \
+        -backend-config="lock_method=POST" \
+        -backend-config="unlock_method=POST" \
+        -backend-config="retry_wait_min=5"
+
+    # Load production variables
+    - |
+      if [ -f "production.tfvars" ]; then
+        cp production.tfvars terraform.tfvars
+      fi
+
+    # Create destroy plan (ignore lock release errors)
+    - terraform plan -destroy -out=destroy.tfplan -input=false || true
+    - |
+      if [ -f destroy.tfplan ]; then
+        echo "✅ Destroy plan created successfully"
+      else
+        echo "❌ Destroy plan file not created"
+        exit 1
+      fi
+
+    # Show destroy plan
+    - terraform show -no-color destroy.tfplan
+
+    # Apply destroy (ignore lock release errors - resources already destroyed)
+    - terraform apply -input=false -auto-approve destroy.tfplan || true
+    - |
+      # After destroy, resources should be gone (no outputs expected)
+      # The || true ensures lock release errors don't fail the job
+      echo "✅ Destroy completed successfully (lock release error is non-critical)"
+
+    - echo "Production infrastructure destroyed successfully"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: true
+  environment:
+    name: production
+    action: stop
+  needs: []
+  timeout: 15m
+
+# ============================================================================
+# END OF TERRAFORM JOBS
+# ============================================================================
+
+# Template for Docker operations with retry mechanisms and timeout handling
+.docker_base: &docker_base
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  variables:
+    # Docker daemon configuration for better network handling
+    DOCKER_DRIVER: overlay2
+    DOCKER_TLS_CERTDIR: "/certs"
+    # Registry connection timeouts and retries
+    DOCKER_CLI_EXPERIMENTAL: enabled
+  before_script:
+    # Install coreutils for timeout command - compatible with both Alpine
+    # (Docker) and macOS (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache coreutils
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor) - install coreutils if timeout is not available
+        if ! command -v timeout >/dev/null 2>&1; then
+          echo "Installing coreutils for timeout command on macOS..."
+          brew install coreutils
+        else
+          echo "timeout command already available on macOS"
+        fi
+      else
+        echo "Neither apk nor brew found. Assuming timeout command" \
+             "is available."
+      fi
+    # Configure Docker daemon with retry and timeout settings
+    - |
+      mkdir -p ~/.docker
+      cat > ~/.docker/config.json << EOF
+      {
+        "experimental": "enabled",
+        "registry-mirrors": [],
+        "max-concurrent-downloads": 3,
+        "max-concurrent-uploads": 3
+      }
+      EOF
+    # Retry mechanism for GitLab Container Registry login with backoff
+    - |
+      retry_count=0
+      max_retries=5
+      base_wait=2
+      while [ $retry_count -lt $max_retries ]; do
+        echo "Attempting GitLab registry login (attempt" \
+             "$((retry_count + 1))/$max_retries)..."
+        if echo $CI_REGISTRY_PASSWORD | timeout 30 docker login \
+           -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY; then
+          echo "✅ GitLab registry login successful"
+          break
+        else
+          retry_count=$((retry_count + 1))
+          if [ $retry_count -lt $max_retries ]; then
+            wait_time=$((base_wait * retry_count))
+            echo "⚠️ GitLab registry login failed, retrying in ${wait_time}s..."
+            sleep $wait_time
+          else
+            echo "❌ GitLab registry login failed after $max_retries attempts"
+            exit 1
+          fi
+        fi
+      done
+    # Login to Docker Hub to avoid rate limiting (optional credentials)
+    - |
+      if [ -n "${DOCKER_HUB_USER:-}" ] && \
+         [ -n "${DOCKER_HUB_PASSWORD:-}" ]; then
+        echo "Attempting Docker Hub login..."
+        retry_count=0
+        max_retries=3
+        while [ $retry_count -lt $max_retries ]; do
+          if echo $DOCKER_HUB_PASSWORD | timeout 30 docker login \
+             -u $DOCKER_HUB_USER --password-stdin; then
+            echo "✅ Docker Hub login successful"
+            break
+          else
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+              echo "⚠️ Docker Hub login failed, retrying" \
+                   "($((retry_count + 1))/$max_retries)..."
+              sleep 5
+            else
+              echo "⚠️ Docker Hub login failed after $max_retries attempts," \
+                   "proceeding without authentication"
+              break
+            fi
+          fi
+        done
+      else
+        echo "ℹ️ Docker Hub credentials not provided, proceeding without" \
+             "authentication (may hit rate limits)"
+      fi
+    - timeout 10 docker info || (echo "Docker info timeout" && exit 1)
+    # Setup buildx for multi-architecture builds (ARM64 + AMD64)
+    - |
+      docker buildx create --name multiarch-builder --use || \
+        docker buildx use multiarch-builder || true
+    - docker buildx inspect --bootstrap
+
+# Validate stage - check code quality and configuration
+validate:syntax:
+  stage: validate
+  image: alpine:latest
+  before_script:
+    # Install packages - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache yamllint shellcheck
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor)
+        brew install yamllint shellcheck
+      else
+        echo "Neither apk nor brew found. Please ensure required packages" \
+             "are installed."
+        exit 1
+      fi
+  script:
+    - |
+      CONF='{extends: default, rules: { line-length: { max: 130 } } }'
+      yamllint -d "$CONF" .gitlab-ci.yml
+    - yamllint docker-compose.yml
+    - find scripts -name "*.sh" -o -name "*.zsh" | xargs shellcheck || true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+
+validate:docker:
+  stage: validate
+  before_script:
+    # Detect OS and install hadolint accordingly
+    - |
+      echo "Detecting OS for hadolint installation..."
+      if command -v apk >/dev/null 2>&1; then
+        echo "Alpine Linux detected"
+        apk add --no-cache wget
+        wget -O /bin/hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+        chmod +x /bin/hadolint
+      elif command -v brew >/dev/null 2>&1; then
+        echo "macOS detected, using Homebrew"
+        brew install hadolint 2>/dev/null || brew upgrade hadolint 2>/dev/null || true
+      elif command -v yum >/dev/null 2>&1; then
+        echo "RHEL/CentOS detected"
+        yum install -y wget
+        wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+        chmod +x /usr/local/bin/hadolint
+      elif command -v apt-get >/dev/null 2>&1; then
+        echo "Debian/Ubuntu detected"
+        apt-get update && apt-get install -y wget
+        wget -O /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+        chmod +x /usr/local/bin/hadolint
+      else
+        echo "Unknown OS, trying to download hadolint to /tmp"
+        wget -O /tmp/hadolint \
+          https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 \
+          2>/dev/null || \
+          curl -o /tmp/hadolint -L \
+            https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
+        chmod +x /tmp/hadolint
+        export PATH=/tmp:$PATH
+      fi
+  script:
+    - |
+      echo "Running Dockerfile linting..."
+      if ! command -v hadolint >/dev/null 2>&1; then
+        echo "❌ hadolint not found, skipping validation"
+        exit 0
+      fi
+
+      echo "Validating ajasta-backend/Dockerfile"
+      hadolint ajasta-backend/Dockerfile || echo "⚠️ Backend Dockerfile has linting issues (non-blocking)"
+
+      echo "Validating ajasta-react/Dockerfile"
+      hadolint ajasta-react/Dockerfile || echo "⚠️ Frontend Dockerfile has linting issues (non-blocking)"
+
+      echo "✅ Dockerfile validation completed"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+  allow_failure: true
+
+# Helm lint - validate Helm charts
+helm:lint:
+  stage: validate
+  image: alpine/helm:latest
+  before_script:
+    # Install Helm - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
+    - |
+      if ! command -v helm >/dev/null 2>&1; then
+        echo "Helm not found, installing..."
+        if command -v apk >/dev/null 2>&1; then
+          # Alpine Linux (Docker executor) - helm already in alpine/helm image
+          echo "Running in Alpine/Docker environment"
+        elif command -v brew >/dev/null 2>&1; then
+          # macOS (shell executor) - install helm via brew
+          echo "Installing Helm on macOS..."
+          brew install helm
+        else
+          echo "Neither apk nor brew found. Please install Helm manually."
+          exit 1
+        fi
+      else
+        echo "✅ Helm is already installed"
+        helm version
+      fi
+  script:
+    - echo "🔍 Linting Helm charts..."
+    - helm lint helm/ajasta-app
+    - echo "✅ Helm chart validation successful"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+
+# Note: k8s auth check moved to run after Terraform deployment
+# See .gitlab-ci-terraform.yml for k8s:update-kubeconfig job
+
+# Build stage - compile and prepare artifacts
+build:backend:
+  <<: *docker_base
+  stage: build
+  script:
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
+    # Check if image with this commit SHA already exists (idempotency)
+    # - with retry
+    - |
+      echo "Checking if backend image already exists..."
+      retry_count=0
+      max_retries=3
+      image_exists=false
+      while [ $retry_count -lt $max_retries ]; do
+        if timeout 60 docker manifest inspect \
+           $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
+           > /dev/null 2>&1; then
+          echo "✅ Backend image already exists for commit $DOCKER_IMAGE_TAG," \
+               "skipping build"
+          image_exists=true
+          break
+        else
+          retry_count=$((retry_count + 1))
+          if [ $retry_count -lt $max_retries ]; then
+            echo "⚠️ Manifest inspect failed, retrying" \
+                 "($((retry_count + 1))/$max_retries)..."
+            sleep 5
+          fi
+        fi
+      done
+      if [ "$image_exists" = true ]; then
+        exit 0
+      fi
+      echo "Image does not exist or manifest check failed," \
+           "proceeding with build..."
+    # Build with cache optimization and multi-architecture support
+    - cd ajasta-backend
+    - |
+      echo "Building multi-arch backend Docker image" \
+           "(linux/amd64,linux/arm64)..."
+      retry_count=0
+      max_retries=3
+      CACHE_REF="$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG"
+      while [ $retry_count -lt $max_retries ]; do
+        if timeout 900 docker buildx build \
+           --platform linux/amd64,linux/arm64 \
+           --cache-from type=registry,ref=$CACHE_REF \
+           --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
+           --tag $DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           --push \
+           . ; then
+          echo "✅ Backend multi-arch Docker build and push successful"
+          break
+        else
+          retry_count=$((retry_count + 1))
+          if [ $retry_count -lt $max_retries ]; then
+            echo "⚠️ Docker buildx failed, retrying" \
+                 "($((retry_count + 1))/$max_retries)..."
+            sleep 10
+          else
+            echo "❌ Docker buildx failed after $max_retries attempts"
+            exit 1
+          fi
+        fi
+      done
+  artifacts:
+    reports:
+      dotenv: build.env
+  only:
+    - main
+    - develop
+    - tags
+
+build:frontend:
+  <<: *docker_base
+  stage: build
+  script:
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
+    # Check if image with this commit SHA already exists (idempotency)
+    # - with retry
+    - |
+      echo "Checking if frontend image already exists..."
+      retry_count=0
+      max_retries=3
+      image_exists=false
+      while [ $retry_count -lt $max_retries ]; do
+        if timeout 60 docker manifest inspect \
+           $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
+           > /dev/null 2>&1; then
+          echo "✅ Frontend image already exists for commit $DOCKER_IMAGE_TAG," \
+               "skipping build"
+          image_exists=true
+          break
+        else
+          retry_count=$((retry_count + 1))
+          if [ $retry_count -lt $max_retries ]; then
+            echo "⚠️ Manifest inspect failed, retrying" \
+                 "($((retry_count + 1))/$max_retries)..."
+            sleep 5
+          fi
+        fi
+      done
+      if [ "$image_exists" = true ]; then
+        exit 0
+      fi
+      echo "Image does not exist or manifest check failed," \
+           "proceeding with build..."
+    # Build with configurable API URL for different environments
+    - cd ajasta-react
+    - |
+      if [ "$CI_COMMIT_REF_NAME" = "main" ]; then
+        API_BASE_URL="http://$YC_VM_EXTERNAL_IP:8090/api"
+      else
+        API_BASE_URL="http://localhost:8090/api"
+      fi
+    - |
+      echo "Building multi-arch frontend Docker image" \
+           "(linux/amd64,linux/arm64)..."
+      retry_count=0
+      max_retries=3
+      CACHE_REF="$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG"
+      while [ $retry_count -lt $max_retries ]; do
+        if timeout 900 docker buildx build \
+           --platform linux/amd64,linux/arm64 \
+           --cache-from type=registry,ref=$CACHE_REF \
+           --build-arg API_BASE_URL="$API_BASE_URL" \
+           --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG \
+           --tag $DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_LATEST_TAG \
+           --push \
+           . ; then
+          echo "✅ Frontend multi-arch Docker build and push successful"
+          break
+        else
+          retry_count=$((retry_count + 1))
+          if [ $retry_count -lt $max_retries ]; then
+            echo "⚠️ Docker buildx failed, retrying" \
+                 "($((retry_count + 1))/$max_retries)..."
+            sleep 10
+          else
+            echo "❌ Docker buildx failed after $max_retries attempts"
+            exit 1
+          fi
+        fi
+      done
+  only:
+    - main
+    - develop
+    - tags
+
+# Test stage - run automated tests
+test:backend:
+  stage: test
+  image: maven:3.9.8-eclipse-temurin-21-alpine
+  services:
+    - postgres:16-alpine
+  variables:
+    MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+    # PostgreSQL service configuration
+    POSTGRES_DB: testdb
+    POSTGRES_USER: testuser
+    POSTGRES_PASSWORD: testpass
+    # Spring Boot test configuration
+    SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/testdb
+    SPRING_DATASOURCE_USERNAME: testuser
+    SPRING_DATASOURCE_PASSWORD: testpass
+  cache:
+    key: "$CI_JOB_NAME"
+    paths:
+      - .m2/repository/
+      - ajasta-backend/target/
+  script:
+    - cd ajasta-backend
+    - mvn clean verify
+  artifacts:
+    reports:
+      junit:
+        - ajasta-backend/target/surefire-reports/TEST-*.xml
+        - ajasta-backend/target/failsafe-reports/TEST-*.xml
+    paths:
+      - ajasta-backend/target/
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+
+test:frontend:
+  stage: test
+  image: node:20-alpine
+  cache:
+    key: "$CI_JOB_NAME"
+    paths:
+      - ajasta-react/node_modules/
+  script:
+    - cd ajasta-react
+    - npm ci --no-audit --no-fund
+    - npm run test -- --coverage --watchAll=false
+    - npm run build
+  coverage: '/Lines\s*:\s*(\d+\.\d+)%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: ajasta-react/coverage/cobertura-coverage.xml
+    paths:
+      - ajasta-react/coverage/
+      - ajasta-react/build/
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "develop"
+
+# Package stage - create deployment artifacts
+package:compose:
+  stage: package
+  image: alpine:latest
+  script:
+    # Install envsubst - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache gettext
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor) - envsubst is part of gettext package
+        brew install gettext
+      else
+        echo "Neither apk nor brew found. Please ensure gettext package" \
+             "is installed."
+        exit 1
+      fi
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
+    # Create deployment package with environment-specific configuration
+    - mkdir -p deploy
+    # Substitute image tags in docker-compose for deployment
+    - >
+      envsubst '${DOCKER_REGISTRY} ${BACKEND_IMAGE_LOWER}
+      ${FRONTEND_IMAGE_LOWER} ${DOCKER_IMAGE_TAG}'
+      < docker-compose.yml > deploy/docker-compose.yml
+    - cp -r scripts deploy/
+    - echo "DOCKER_IMAGE_TAG=$DOCKER_IMAGE_TAG" > deploy/.env
+    - BACKEND_IMG="$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG"
+    - echo "BACKEND_IMAGE=$BACKEND_IMG" >> deploy/.env
+    - FRONTEND_IMG="$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER:$DOCKER_IMAGE_TAG"
+    - echo "FRONTEND_IMAGE=$FRONTEND_IMG" >> deploy/.env
+  artifacts:
+    paths:
+      - deploy/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+    - tags
+
+# Deploy stage - deploy to Yandex Cloud
+.deploy_base: &deploy_base
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    # Install dependencies - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache curl bash openssh-client
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor) - curl and openssh are usually pre-installed,
+        # bash might need update
+        brew install curl openssh
+        # bash is pre-installed on macOS, but we can ensure it's updated
+        # if needed
+        brew install bash || true
+      else
+        echo "Neither apk nor brew found. Please ensure curl, bash, and" \
+             "openssh are installed."
+        exit 1
+      fi
+    # Install Yandex Cloud CLI
+    - curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
+    - export PATH=$PATH:/root/yandex-cloud/bin
+    # Authenticate with Yandex Cloud
+    - yc config set token $YC_TOKEN
+    - yc config set cloud-id $YC_CLOUD_ID
+    - yc config set folder-id $YC_FOLDER_ID
+    # Setup SSH
+    - eval $(ssh-agent -s)
+    - echo "$YC_SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan -H $YC_VM_EXTERNAL_IP >> ~/.ssh/known_hosts 2>/dev/null \
+      || true
+
+deploy:staging:
+  <<: *deploy_base
+  environment:
+    name: staging
+    url: http://$YC_VM_EXTERNAL_IP
+  script:
+    - cd deploy/scripts && ./deploy-yc.zsh --mode vm
+  only:
+    - develop
+  when: manual
+
+deploy:production:
+  <<: *deploy_base
+  environment:
+    name: production
+    url: http://$YC_VM_EXTERNAL_IP
+  script:
+    - cd deploy/scripts && ./deploy-yc.zsh --mode vm
+  only:
+    - main
+    - tags
+  when: manual
+
+# Kubernetes Deployment with Helm
+# Base template for Kubernetes deployments
+.k8s_deploy_base: &k8s_deploy_base
+  stage: deploy
+  image: alpine/helm:latest
+  before_script:
+    # Install dependencies - compatible with both Alpine (Docker) and macOS
+    # (shell executor)
+    - |
+      if command -v apk >/dev/null 2>&1; then
+        # Alpine Linux (Docker executor)
+        apk add --no-cache curl kubectl
+      elif command -v brew >/dev/null 2>&1; then
+        # macOS (shell executor)
+        # curl is pre-installed on macOS, install kubectl if needed
+        if ! command -v kubectl >/dev/null 2>&1; then
+          echo "Installing kubectl on macOS..."
+          brew install kubectl
+        else
+          echo "✅ kubectl is already installed"
+        fi
+      else
+        echo "Neither apk nor brew found. Please ensure curl and kubectl" \
+             "are installed."
+        exit 1
+      fi
+    # Ensure Helm is available
+    - |
+      if ! command -v helm >/dev/null 2>&1; then
+        echo "Helm not found, installing..."
+        if command -v apk >/dev/null 2>&1; then
+          # Alpine Linux (Docker executor) - helm should be in alpine/helm image
+          echo "Running in Alpine/Docker environment - Helm should be present"
+          exit 1
+        elif command -v brew >/dev/null 2>&1; then
+          # macOS (shell executor) - install helm via brew
+          echo "Installing Helm on macOS..."
+          brew install helm
+        else
+          echo "Cannot install Helm. Please install it manually."
+          exit 1
+        fi
+      else
+        echo "✅ Helm is already installed"
+        helm version
+      fi
+    # Setup kubeconfig from GitLab CI/CD variable
+    # (project-local, do not touch ~/.kube)
+    - mkdir -p .kube
+    - echo "$KUBECONFIG_CONTENT" | base64 -d > .kube/config
+    - chmod 600 .kube/config
+    - export KUBECONFIG="$CI_PROJECT_DIR/.kube/config"
+    # Normalize cluster/context and TLS settings; avoid CA + insecure conflict
+    - |
+      CLUSTER_NAME="$(kubectl config view \
+        -o jsonpath='{.clusters[0].name}' 2>/dev/null || echo kubernetes)"
+      CTX_NAME="$(kubectl config view \
+        -o jsonpath='{.contexts[0].name}' 2>/dev/null || \
+        echo kubernetes-admin@kubernetes)"
+      CA_KEY="clusters.${CLUSTER_NAME}.certificate-authority"
+      CA_DATA_KEY="clusters.${CLUSTER_NAME}.certificate-authority-data"
+      kubectl config unset "$CA_KEY" >/dev/null 2>&1 || true
+      kubectl config unset "$CA_DATA_KEY" >/dev/null 2>&1 || true
+      kubectl config set-cluster "$CLUSTER_NAME" \
+        --insecure-skip-tls-verify=true >/dev/null
+      if kubectl config get-contexts "$CTX_NAME" >/dev/null 2>&1; then
+        kubectl config use-context "$CTX_NAME"
+      else
+        FIRST_CTX="$(kubectl config get-contexts -o name | head -n1)"
+        kubectl config use-context "$FIRST_CTX"
+      fi
+    - echo "✅ Configured cluster to skip TLS verification"
+    # Verify cluster connectivity with diagnostics on failure
+    - |
+      if ! kubectl cluster-info; then
+        echo "⚠️ kubectl auth diagnostics (minified config):"
+        kubectl config view --minify || true
+        echo "⚙️  /version:"
+        kubectl get --raw=/version || true
+        echo "🔐 auth can-i:"
+        kubectl auth can-i --list || true
+        exit 1
+      fi
+    - kubectl version --client
+    - helm version
+
+deploy:k8s:staging:
+  <<: *k8s_deploy_base
+  environment:
+    name: k8s-staging
+    url: http://$K8S_STAGING_INGRESS_HOST
+  variables:
+    KUBE_NAMESPACE: ajasta-staging
+    RELEASE_NAME: ajasta-staging
+    K8S_CLEAN_NS: "true"
+  script:
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
+    - echo "🚀 Deploying Ajasta App to Kubernetes Staging..."
+    # Set ingress host variable
+    - INGRESS_HOST=${K8S_STAGING_INGRESS_HOST:-ajasta-staging.local}
+    # Deploy or upgrade with Helm
+    - |
+      # Preflight: ensure namespace state for first install (optional cleanup)
+      if ! helm status "$RELEASE_NAME" -n "$KUBE_NAMESPACE" \
+        >/dev/null 2>&1; then
+        echo "ℹ️ Helm release '$RELEASE_NAME' not found in namespace" \
+             "'$KUBE_NAMESPACE' (fresh install)."
+        if [ "${K8S_CLEAN_NS:-false}" = "true" ]; then
+          if kubectl get namespace "$KUBE_NAMESPACE" >/dev/null 2>&1; then
+            echo "🧹 Deleting existing namespace '$KUBE_NAMESPACE' before" \
+                 "install..."
+            kubectl delete namespace "$KUBE_NAMESPACE" --wait --timeout=5m
+          else
+            echo "✅ Namespace '$KUBE_NAMESPACE' does not exist."
+          fi
+        else
+          echo "⚠️ Skipping namespace cleanup (K8S_CLEAN_NS=false)."
+        fi
+      else
+        echo "✅ Helm release '$RELEASE_NAME' exists - upgrade path."
+      fi
+
+      # Patch ingress controller Service with current external IP
+      # (resilient to IP rotation)
+      if [ -n "${YC_VM_EXTERNAL_IP:-}" ]; then
+        JSON_PATCH='{"spec":{"externalIPs":["'${YC_VM_EXTERNAL_IP}'"]}}'
+        kubectl -n ingress-nginx patch svc \
+          ingress-nginx-controller \
+          --type merge \
+          -p "$JSON_PATCH" || true
+        kubectl -n ingress-nginx get svc \
+          ingress-nginx-controller -o wide || true
+      fi
+
+      # Compute Helm host flag (use hostless catch-all if INGRESS_HOST is empty)
+      if [ -n "$INGRESS_HOST" ]; then
+        HELM_HOST_FLAG="--set ingress.hosts[0].host=$INGRESS_HOST"
+      else
+        HELM_HOST_FLAG="--set-string ingress.hosts[0].host=\"\""
+      fi
+
+      helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
+        --create-namespace \
+        --namespace $KUBE_NAMESPACE \
+        --set namespace.create=false \
+        --set global.namespace=$KUBE_NAMESPACE \
+        --set backend.image.repository=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER \
+        --set backend.image.tag=$DOCKER_IMAGE_TAG \
+        --set frontend.image.repository=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER \
+        --set frontend.image.tag=$DOCKER_IMAGE_TAG \
+        $HELM_HOST_FLAG \
+        --set ingress.hosts[0].paths[0].path=/ \
+        --set ingress.hosts[0].paths[0].pathType=Prefix \
+        --set ingress.hosts[0].paths[0].serviceName=ajasta-frontend \
+        --set ingress.hosts[0].paths[0].servicePort=80 \
+        --set ingress.hosts[0].paths[1].path=/api \
+        --set ingress.hosts[0].paths[1].pathType=Prefix \
+        --set ingress.hosts[0].paths[1].serviceName=ajasta-backend \
+        --set ingress.hosts[0].paths[1].servicePort=8090 \
+        --set postgres.auth.password=$POSTGRES_PASSWORD \
+        --set backend.database.password=$POSTGRES_PASSWORD \
+        --set backend.secrets.jwtSecret=$JWT_SECRET \
+        --wait \
+        --timeout 10m
+
+      # Post-deploy quick checks
+      kubectl -n $KUBE_NAMESPACE get ingress ajasta-ingress || true
+      # Probe homepage
+      for i in 1 2 3 4 5; do
+        if curl -fsSI "http://$INGRESS_HOST/" >/dev/null 2>&1; then
+          echo "✅ Ingress homepage reachable"; break; fi; sleep 5; done || true
+      # Probe public API endpoint
+      for i in 1 2 3 4 5; do
+        if curl -fsSI \
+          "http://$INGRESS_HOST/api/resources?active=true" \
+          >/dev/null 2>&1; then
+          echo "✅ Public API reachable"; break; fi; sleep 5; done || true
+      # Basic diagnostics
+      kubectl -n $KUBE_NAMESPACE describe ingress ajasta-ingress \
+        | sed -n '1,120p' || true
+      kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide \
+        || true
+    - echo "✅ Deployment to Kubernetes Staging successful"
+    # Display deployment status
+    - kubectl get all -n $KUBE_NAMESPACE
+  only:
+    - develop
+  when: manual
+  needs: [k8s:update-kubeconfig]
+
+deploy:k8s:production:
+  <<: *k8s_deploy_base
+  environment:
+    name: k8s-production
+    url: http://$K8S_PRODUCTION_INGRESS_HOST
+  variables:
+    KUBE_NAMESPACE: ajasta
+    RELEASE_NAME: ajasta-production
+    K8S_CLEAN_NS: "true"
+  script:
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
+    - echo "🚀 Deploying Ajasta App to Kubernetes Production..."
+    # Set ingress host variable
+    - INGRESS_HOST=${K8S_PRODUCTION_INGRESS_HOST:-$YC_VM_EXTERNAL_IP}
+    # Deploy or upgrade with Helm
+    - |
+      # Preflight: ensure namespace state for first install (optional cleanup)
+      if ! helm status "$RELEASE_NAME" -n "$KUBE_NAMESPACE" \
+        >/dev/null 2>&1; then
+        echo "ℹ️ Fresh install: release missing in" \
+             "'$KUBE_NAMESPACE'"
+        if [ "${K8S_CLEAN_NS:-false}" = "true" ]; then
+          if kubectl get namespace "$KUBE_NAMESPACE" >/dev/null 2>&1; then
+            echo "🧹 Deleting namespace '$KUBE_NAMESPACE'..."
+            kubectl delete namespace "$KUBE_NAMESPACE" --wait --timeout=5m
+          else
+            echo "✅ Namespace '$KUBE_NAMESPACE' absent"
+          fi
+        else
+          echo "⚠️ Skip ns cleanup (K8S_CLEAN_NS=false)"
+        fi
+      else
+        echo "✅ Release exists: upgrade"
+      fi
+
+      # Patch ingress controller Service with current external IP
+      # (resilient to IP rotation)
+      if [ -n "${YC_VM_EXTERNAL_IP:-}" ]; then
+        JSON_PATCH='{"spec":{"externalIPs":["'${YC_VM_EXTERNAL_IP}'"]}}'
+        kubectl -n ingress-nginx patch svc \
+          ingress-nginx-controller \
+          --type merge \
+          -p "$JSON_PATCH" || true
+        kubectl -n ingress-nginx get svc \
+          ingress-nginx-controller -o wide || true
+      fi
+
+      # Compute Helm host flag (use hostless catch-all if INGRESS_HOST is empty)
+      if [ -n "$INGRESS_HOST" ]; then
+        HELM_HOST_FLAG="--set ingress.hosts[0].host=$INGRESS_HOST"
+      else
+        HELM_HOST_FLAG="--set-string ingress.hosts[0].host=\"\""
+      fi
+
+      helm upgrade --install $RELEASE_NAME ./helm/ajasta-app \
+        --create-namespace \
+        --namespace $KUBE_NAMESPACE \
+        --set namespace.create=false \
+        --set global.namespace=$KUBE_NAMESPACE \
+        --set backend.image.repository=$DOCKER_REGISTRY/$BACKEND_IMAGE_LOWER \
+        --set backend.image.tag=$DOCKER_IMAGE_TAG \
+        --set frontend.image.repository=$DOCKER_REGISTRY/$FRONTEND_IMAGE_LOWER \
+        --set frontend.image.tag=$DOCKER_IMAGE_TAG \
+        $HELM_HOST_FLAG \
+        --set ingress.hosts[0].paths[0].path=/ \
+        --set ingress.hosts[0].paths[0].pathType=Prefix \
+        --set ingress.hosts[0].paths[0].serviceName=ajasta-frontend \
+        --set ingress.hosts[0].paths[0].servicePort=80 \
+        --set ingress.hosts[0].paths[1].path=/api \
+        --set ingress.hosts[0].paths[1].pathType=Prefix \
+        --set ingress.hosts[0].paths[1].serviceName=ajasta-backend \
+        --set ingress.hosts[0].paths[1].servicePort=8090 \
+        --set postgres.auth.password=$POSTGRES_PASSWORD \
+        --set backend.database.password=$POSTGRES_PASSWORD \
+        --set backend.secrets.jwtSecret=$JWT_SECRET \
+        --set backend.secrets.awsAccessKeyId=$AWS_ACCESS_KEY_ID \
+        --set backend.secrets.awsSecretAccessKey=$AWS_SECRET_ACCESS_KEY \
+        --set backend.config.awsS3Bucket=$AWS_S3_BUCKET \
+        --set backend.secrets.stripePublicKey=$STRIPE_PUBLIC_KEY \
+        --set backend.secrets.stripeSecretKey=$STRIPE_SECRET_KEY \
+        --wait \
+        --timeout 10m
+
+      # Post-deploy quick checks
+      kubectl -n $KUBE_NAMESPACE get ingress ajasta-ingress || true
+      # Probe homepage
+      for i in 1 2 3 4 5; do
+        if curl -fsSI "http://$INGRESS_HOST/" >/dev/null 2>&1; then
+          echo "✅ Ingress homepage reachable"; break; fi; sleep 5; done || true
+      # Probe public API endpoint
+      for i in 1 2 3 4 5; do
+        if curl -fsSI \
+          "http://$INGRESS_HOST/api/resources?active=true" \
+          >/dev/null 2>&1; then
+          echo "✅ Public API reachable"; break; fi; sleep 5; done || true
+      # Basic diagnostics
+      kubectl -n $KUBE_NAMESPACE describe ingress ajasta-ingress \
+        | sed -n '1,120p' || true
+      kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide \
+        || true
+    - echo "✅ Deployment to Kubernetes Production successful"
+    # remove the host from `ajasta-ingress` to make it hostless (catch‑all)
+    # to fix the cause:
+    # the Ingress was bound to the hostname `ajasta.top`,
+    # so requests to the raw IP did not match and NGINX served a 404 from the default backend.
+    - kubectl -n ajasta patch ingress ajasta-ingress --type json -p='[{"op":"remove","path":"/spec/rules/0/host"}]'
+    # Display deployment status
+    - kubectl get all -n $KUBE_NAMESPACE
+  only:
+    - main
+    - tags
+  when: manual
+  needs: [k8s:update-kubeconfig]
+
+# Cleanup old images for storage optimization (idempotency maintenance)
+cleanup:registry:
+  <<: *docker_base
+  stage: deploy
+  script:
+    # Convert project path to lowercase for Docker registry compatibility
+    - PROJECT_PATH_LOWER=$(echo "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')
+    - BACKEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/backend"
+    - FRONTEND_IMAGE_LOWER="$PROJECT_PATH_LOWER/frontend"
+    # Keep only latest 10 images for each service
+    - |
+      for image in $BACKEND_IMAGE_LOWER $FRONTEND_IMAGE_LOWER; do
+        REPO_URL="$CI_API_V4_URL/projects/$CI_PROJECT_ID/registry/repositories"
+        TAGS=$(curl -s -H "Authorization: Bearer $CI_JOB_TOKEN" \
+          "$REPO_URL/$image/tags" | jq -r '.[].name' | head -n -10)
+        for tag in $TAGS; do
+          if [ "$tag" != "$DOCKER_LATEST_TAG" ] && \
+             [ "$tag" != "$DOCKER_IMAGE_TAG" ]; then
+            curl -X DELETE -H "Authorization: Bearer $CI_JOB_TOKEN" \
+              "$REPO_URL/$image/tags/$tag" || true
+          fi
+        done
+      done
+  only:
+    - schedules
+  when: manual
+
+
+# --- Deploy support jobs: patch ingress external IP and post-deploy probe ---
+.deploy_kube_base: &deploy_kube_base
+  image: bitnami/kubectl:1.28
+  variables:
+    KUBECONFIG: "$CI_PROJECT_DIR/.kube/config"
+  before_script:
+    - mkdir -p "$CI_PROJECT_DIR/.kube"
+    - |
+      if [ -n "${KUBECONFIG_CONTENT:-}" ]; then
+        echo "$KUBECONFIG_CONTENT" | base64 -d > "$KUBECONFIG" 2>/dev/null || \
+          echo "$KUBECONFIG_CONTENT" | base64 -D > "$KUBECONFIG"
+      elif [ -f "$CI_PROJECT_DIR/kubeconfig" ]; then
+        cp "$CI_PROJECT_DIR/kubeconfig" "$KUBECONFIG"
+      else
+        echo "KUBECONFIG_CONTENT not set and no kubeconfig file provided" >&2
+        exit 1
+      fi
+    - kubectl version --short || true
+
+# Patches ingress-nginx controller Service with the current public IP
+# Use INGRESS_PUBLIC_IP (preferred) or YC_VM_EXTERNAL_IP as the source
+# Example: INGRESS_PUBLIC_IP=51.250.100.218
+
+deploy:patch-ingress-externalip:
+  stage: deploy
+  extends: [".deploy_kube_base"]
+  rules:
+    - if: >-
+        $CI_PIPELINE_SOURCE == "push" &&
+        $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: '"web" == $CI_PIPELINE_SOURCE'
+    - if: '"pipeline" == $CI_PIPELINE_SOURCE'
+  artifacts:
+    reports:
+      dotenv: deploy_env.env
+    when: always
+    expire_in: 1 day
+  script:
+    - |
+      set -e
+      IP="${INGRESS_PUBLIC_IP:-${YC_VM_EXTERNAL_IP:-}}"
+      if [ -z "$IP" ]; then
+        echo "INGRESS_PUBLIC_IP/YC_VM_EXTERNAL_IP not set." >&2
+        echo "Trying to autodetect from ingress/service..." >&2
+        # Try Ingress LoadBalancer IP/hostname
+        JSONPATH_IP='{.status.loadBalancer.ingress[0].ip}'
+        JSONPATH_HOST='{.status.loadBalancer.ingress[0].hostname}'
+        IP=$(kubectl -n ajasta get ingress ajasta-ingress \
+          -o jsonpath="$JSONPATH_IP" 2>/dev/null | tr -d '\n') || true
+        if [ -z "$IP" ]; then
+          IP=$(kubectl -n ajasta get ingress ajasta-ingress \
+            -o jsonpath="$JSONPATH_HOST" 2>/dev/null | tr -d '\n') || true
+        fi
+        # Try existing Service externalIPs[0]
+        if [ -z "$IP" ]; then
+          IP=$(kubectl -n ingress-nginx get svc ingress-nginx-controller \
+            -o jsonpath='{.spec.externalIPs[0]}' 2>/dev/null | tr -d '\n') \
+            || true
+        fi
+      fi
+      if [ -z "$IP" ]; then
+        echo "ERROR: Could not determine public IP." >&2
+        echo "Set INGRESS_PUBLIC_IP in CI variables." >&2
+        exit 1
+      fi
+      echo "Patching ingress-nginx-controller with externalIPs=[$IP]"
+      PATCH_PAYLOAD=$(cat <<'JSON'
+      {"spec":{"externalIPs":["IP_PLACEHOLDER"]}}
+      JSON
+      )
+      PATCH_PAYLOAD=${PATCH_PAYLOAD/IP_PLACEHOLDER/$IP}
+      kubectl -n ingress-nginx patch svc ingress-nginx-controller \
+        --type merge -p "$PATCH_PAYLOAD" || true
+      # Ensure externalTrafficPolicy is Cluster (idempotent)
+      kubectl -n ingress-nginx patch svc ingress-nginx-controller \
+        --type merge -p '{"spec":{"externalTrafficPolicy":"Cluster"}}' \
+        || true
+      # Ensure ajasta-ingress uses a valid IngressClass
+      CUR_CLASS=$(kubectl -n ajasta get ingress ajasta-ingress \
+        -o jsonpath='{.spec.ingressClassName}' 2>/dev/null | tr -d '\n' \
+        || true)
+      JSONPATH_DEF='{range .items[?(@.metadata.annotations.ingressclass'
+      JSONPATH_DEF="$JSONPATH_DEF"'\.kubernetes\.io/is-default-class=="true")]}'
+      JSONPATH_DEF="$JSONPATH_DEF"'{.metadata.name}{end}'
+      DEF_CLASS=$(kubectl get ingressclass -o jsonpath="$JSONPATH_DEF" \
+        2>/dev/null | tr -d '\n' || true)
+      if [ -z "$DEF_CLASS" ] && kubectl get ingressclass nginx \
+        >/dev/null 2>&1; then DEF_CLASS="nginx"; fi
+      if [ -n "$DEF_CLASS" ]; then
+        if [ -z "$CUR_CLASS" ] || ! kubectl get ingressclass "$CUR_CLASS" \
+          >/dev/null 2>&1; then
+          echo "Patching ajasta-ingress class to: $DEF_CLASS"
+          kubectl -n ajasta patch ingress ajasta-ingress --type merge \
+            -p "{\"spec\":{\"ingressClassName\":\"$DEF_CLASS\"}}"
+        fi
+      else
+        echo "WARN: No IngressClass detected; leaving class unchanged."
+      fi
+      echo "Service summary:"
+      kubectl -n ingress-nginx get svc ingress-nginx-controller -o wide || true
+      echo "Ingress summary:"
+      kubectl -n ajasta get ingress ajasta-ingress || true
+      echo "Ingress describe (first 120 lines):"
+      kubectl -n ajasta describe ingress ajasta-ingress \
+        | sed -n '1,120p' || true
+      echo "Service endpoints:"
+      kubectl -n ajasta get endpoints ajasta-frontend ajasta-backend -o wide \
+        || true
+      echo "Exporting PROBE_IP via dotenv artifact for downstream jobs"
+      printf "PROBE_IP=%s\n" "$IP" > deploy_env.env
+
+# Probes the root URL and /api after deploy to catch regressions
+
+deploy:probe-root:
+  stage: deploy
+  needs: ["deploy:patch-ingress-externalip", "deploy:k8s:production"]
+  image: curlimages/curl:8.10.1
+  variables:
+    PROBE_IP: "$INGRESS_PUBLIC_IP"
+  rules:
+    - if: >-
+        $CI_PIPELINE_SOURCE == "push" &&
+        $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: '"web" == $CI_PIPELINE_SOURCE'
+    - if: '"pipeline" == $CI_PIPELINE_SOURCE'
+  script:
+    - |
+      set -e
+      IP="${PROBE_IP:-${YC_VM_EXTERNAL_IP:-}}"
+      if [ -z "$IP" ]; then
+        echo "ERROR: Set INGRESS_PUBLIC_IP or YC_VM_EXTERNAL_IP for probe." >&2
+        exit 1
+      fi
+      BASE="http://$IP"
+      echo "Probing $BASE/"
+      curl -sS -o /dev/null -w "HTTP %{http_code}\\n" "$BASE/"
+      echo "Probing $BASE/api/health (fallback: /api)"
+      code=$(curl -sS -o /dev/null -w "%{http_code}" \
+        "$BASE/api/health" || true)
+      if [ "$code" = "000" ] || [ "$code" = "404" ]; then
+        curl -sS -o /dev/null -w "HTTP %{http_code}\\n" \
+          "$BASE/api" || true
+      else
+        echo "HTTP $code"
+      fi

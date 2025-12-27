@@ -1,0 +1,111 @@
+---
+# Ansible CI Global Variables
+# Configuration for Kubernetes bootstrap and application deployment
+
+# ============================================================================
+# YANDEX CLOUD CONTEXT
+# ============================================================================
+yc_cloud_id: ""
+yc_folder_id: ""
+yc_zone: "ru-central1-b"
+
+# ============================================================================
+# SSH CONFIGURATION
+# ============================================================================
+# SSH user for accessing VMs (must match Terraform configuration)
+ssh_username: "ajasta"
+
+# SSH private key path (derived from ~/.ssh/id_rsa or ~/.ssh/id_ed25519)
+# Leave empty to auto-detect from standard locations
+ssh_private_key_file: ""
+
+# SSH connection settings
+ssh_retry_attempts: 20
+ssh_retry_delay: 6
+ssh_cmd_timeout: 300
+
+# ============================================================================
+# KUBERNETES CONFIGURATION
+# ============================================================================
+# Kubernetes version
+kubernetes_version: "1.29.0"
+
+# Pod network CIDR (must match CNI plugin configuration)
+pod_network_cidr: "10.244.0.0/16"
+
+# Container registry for Kubernetes images
+container_registry: "registry.hpc.ut.ee/mirror/registry.k8s.io"
+
+# Pause image (sandbox image)
+pause_image_repo: "registry.hpc.ut.ee/mirror/registry.k8s.io/pause"
+pause_image_version: "3.10"
+
+# ============================================================================
+# CNI PLUGIN (Calico)
+# ============================================================================
+cni_plugin: "calico"
+calico_version: "v3.28.0"
+
+# ============================================================================
+# INGRESS CONTROLLER
+# ============================================================================
+ingress_controller_enabled: true
+ingress_controller_namespace: "ingress-nginx"
+ingress_controller_nginx_version: "v1.10.0"
+
+# ============================================================================
+# STORAGE (Longhorn)
+# ============================================================================
+longhorn_enabled: true
+longhorn_namespace: "longhorn-system"
+longhorn_version: "v1.6.0"
+
+# ============================================================================
+# RANCHER DASHBOARD (Optional)
+# ============================================================================
+rancher_enabled: false
+rancher_namespace: "cattle-system"
+rancher_hostname: "rancher.local"
+rancher_install_timeout: 900
+
+# ============================================================================
+# APPLICATION DEPLOYMENT
+# ============================================================================
+# Docker registry for application images
+docker_registry: "{{ lookup('env', 'CI_REGISTRY') | default('registry.gitlab.com', true) }}"
+docker_image_tag: "{{ lookup('env', 'CI_COMMIT_SHA') | default('latest', true) }}"
+
+# Application namespace
+app_namespace: "ajasta"
+app_namespace_production: "ajasta"
+app_namespace_staging: "ajasta-staging"
+
+# Helm charts location
+helm_charts_dir: "{{ playbook_dir }}/../helm"
+
+# ============================================================================
+# ANSIBLE CONFIGURATION
+# ============================================================================
+# Paths to scripts (relative to playbook directory)
+scripts_dir: "{{ playbook_dir }}/../scripts"
+
+# Become settings for privilege escalation
+ansible_become: true
+ansible_become_method: sudo
+ansible_become_timeout: 60
+
+# SSH pipelining for performance
+ansible_pipelining: true
+
+# SSH connection settings
+ansible_ssh_common_args: >-
+  -o BatchMode=yes
+  -o NumberOfPasswordPrompts=0
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o GlobalKnownHostsFile=/dev/null
+  -o CheckHostIP=no
+  -o ConnectTimeout=10
+  -o ServerAliveInterval=5
+  -o ServerAliveCountMax=3
+  -o ConnectionAttempts=10

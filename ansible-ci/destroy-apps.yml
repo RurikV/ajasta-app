@@ -1,0 +1,137 @@
+---
+# Destroy/Uninstall Ajasta applications from Kubernetes cluster
+# This playbook removes deployed applications and optionally namespaces
+
+- name: Destroy Ajasta Applications
+  hosts: k8s-master
+  become: false
+  gather_facts: false
+  vars:
+    app_namespace: "{{ app_namespace | default('ajasta') }}"
+    helm_release_name: "ajasta-app"
+    destroy_namespace: false  # Set to true to also delete the namespace
+
+  pre_tasks:
+    - name: Display destruction warning
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "⚠️  DANGER: Application Destruction"
+          - "=========================================="
+          - "This will UNINSTALL the Ajasta application"
+          - "Namespace: {{ app_namespace }}"
+          - "Helm Release: {{ helm_release_name }}"
+          - "Destroy Namespace: {{ destroy_namespace }}"
+          - ""
+          - "Press Ctrl+C to cancel..."
+          - ""
+
+    - name: Pause for confirmation (10 seconds)
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Ensure KUBECONFIG is set
+      ansible.builtin.set_fact:
+        kubeconfig_path: "{{ ansible_env.HOME }}/.kube/config"
+
+    - name: Verify KUBECONFIG exists
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: kubeconfig_stat
+      failed_when: not kubeconfig_stat.stat.exists
+
+  tasks:
+    - name: Check if Helm release exists
+      kubernetes.core.helm_info:
+        name: "{{ helm_release_name }}"
+        release_namespace: "{{ app_namespace }}"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: helm_release_info
+      failed_when: false
+      ignore_errors: true
+
+    - name: Uninstall application with Helm
+      when: helm_release_info is not failed
+      block:
+        - name: Uninstall Helm release
+          kubernetes.core.helm:
+            name: "{{ helm_release_name }}"
+            release_namespace: "{{ app_namespace }}"
+            state: absent
+          environment:
+            KUBECONFIG: "{{ kubeconfig_path }}"
+          register: helm_uninstall
+
+        - name: Display Helm uninstall status
+          ansible.builtin.debug:
+            msg: "✅ Helm release {{ helm_release_name }} uninstalled successfully"
+          when: helm_uninstall is changed
+
+    - name: Display release not found message
+      ansible.builtin.debug:
+        msg: "ℹ️  Helm release {{ helm_release_name }} not found in namespace {{ app_namespace }}"
+      when: helm_release_info is failed
+
+    - name: Remove application namespace (if requested)
+      when: destroy_namespace | default(false) | bool
+      block:
+        - name: Delete namespace
+          kubernetes.core.k8s:
+            name: "{{ app_namespace }}"
+            api_version: v1
+            kind: Namespace
+            state: absent
+          environment:
+            KUBECONFIG: "{{ kubeconfig_path }}"
+          register: namespace_delete
+
+        - name: Display namespace deletion status
+          ansible.builtin.debug:
+            msg: "✅ Namespace {{ app_namespace }} deleted successfully"
+          when: namespace_delete is changed
+
+    - name: Display remaining resources in namespace
+      when: not (destroy_namespace | default(false) | bool)
+      block:
+        - name: Get all resources in namespace
+          kubernetes.core.k8s_info:
+            kind: "{{ item }}"
+            namespace: "{{ app_namespace }}"
+          environment:
+            KUBECONFIG: "{{ kubeconfig_path }}"
+          loop:
+            - Pod
+            - Service
+            - ConfigMap
+            - Secret
+            - PersistentVolumeClaim
+          register: remaining_resources
+          ignore_errors: true
+
+        - name: Display remaining resources
+          ansible.builtin.debug:
+            msg: "{{ item.kind }}: {{ item.resources | length }} found"
+          loop: "{{ remaining_resources.results }}"
+          loop_control:
+            label: "{{ item.kind }}"
+          when: item.resources | default([]) | length > 0
+
+  post_tasks:
+    - name: Display destruction summary
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "================================================"
+          - "✅ Application Destruction Complete!"
+          - "================================================"
+          - ""
+          - "Helm Release: {{ helm_release_name }} (removed)"
+          - "Namespace: {{ app_namespace }} {% if destroy_namespace %}(removed){% else %}(preserved){% endif %}"
+          - ""
+          - "To completely remove the namespace:"
+          - "  kubectl delete namespace {{ app_namespace }}"
+          - ""
+          - "To redeploy the application:"
+          - "  ansible-playbook -i inventory.ini deploy-apps.yml"
+          - ""
