@@ -22,8 +22,8 @@ boot_disk_size = 50
 boot_disk_type = "network-ssd"
 
 # SSH access
-ssh_username = "ajasta"
-ssh_public_key_file = "../ssh-key-id_rsa_k8s.pub"  # Path to SSH public key file (relative to terraform/ directory)
+ssh_username        = "ajasta"
+ssh_public_key_file = "../ssh-key-id_rsa_k8s.pub" # Path to SSH public key file (relative to terraform/ directory)
 
 # Production labels and tags
 labels = {
