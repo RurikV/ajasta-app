@@ -16,8 +16,9 @@ yc_zone: "ru-central1-b"
 ssh_username: "ajasta"
 
 # SSH private key path (derived from ~/.ssh/id_rsa or ~/.ssh/id_ed25519)
-# Leave empty to auto-detect from standard locations
-ssh_private_key_file: ""
+# Specify the exact key that was used when Terraform created the VMs
+# Common options: ~/.ssh/id_rsa, ~/.ssh/id_rsa_k8s, ~/.ssh/id_ed25519
+ssh_private_key_file: "/Users/rurik/.ssh/id_rsa_k8s"
 
 # SSH connection settings
 ssh_retry_attempts: 20

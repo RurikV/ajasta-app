@@ -126,6 +126,27 @@ generate_inventory() {
     MASTER_IP=$(jq -r '.master_public_ip | if type == "object" and has("value") then .value elif type == "string" then . else . end' "${OUTPUTS_FILE}")
     WORKER_IPS=$(jq -r '.worker_public_ips | if type == "object" and has("value") then .value elif type == "object" then . else . end' "${OUTPUTS_FILE}")
 
+    # Read SSH username from group_vars
+    GROUP_VARS_FILE="${ANSIBLE_CI_DIR}/group_vars/all.yml"
+    if [[ -f "${GROUP_VARS_FILE}" ]]; then
+        SSH_USER=$(grep "^ssh_username:" "${GROUP_VARS_FILE}" | awk '{print $2}' | tr -d '"')
+        SSH_KEY=$(grep "^ssh_private_key_file:" "${GROUP_VARS_FILE}" | awk '{print $2}' | tr -d '"')
+    else
+        SSH_USER="ajasta"  # Default fallback
+        SSH_KEY=""  # Default fallback
+    fi
+
+    # Auto-detect SSH key if not specified
+    if [[ -z "${SSH_KEY}" ]]; then
+        # Try common SSH key locations
+        for key in "$HOME/.ssh/id_rsa" "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa_k8s"; do
+            if [[ -f "${key}" ]]; then
+                SSH_KEY="${key}"
+                break
+            fi
+        done
+    fi
+
     # Validate master IP
     if [[ -z "${MASTER_IP}" ]] || [[ "${MASTER_IP}" == "null" ]]; then
         log_error "Could not extract master_public_ip from Terraform outputs"
@@ -135,16 +156,29 @@ generate_inventory() {
     fi
 
     # Create inventory file
-    cat > "${INVENTORY_FILE}" << EOF
+    if [[ -n "${SSH_KEY}" ]]; then
+        cat > "${INVENTORY_FILE}" << EOF
 # Ansible inventory generated from Terraform outputs
 # Generated at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 # DO NOT EDIT MANUALLY - Use generate-inventory-from-terraform.sh to regenerate
 
 [k8s-master]
-k8s-master ansible_host=${MASTER_IP}
+k8s-master ansible_host=${MASTER_IP} ansible_user=${SSH_USER} ansible_ssh_private_key_file=${SSH_KEY}
 
 [k8s-workers]
 EOF
+    else
+        cat > "${INVENTORY_FILE}" << EOF
+# Ansible inventory generated from Terraform outputs
+# Generated at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+# DO NOT EDIT MANUALLY - Use generate-inventory-from-terraform.sh to regenerate
+
+[k8s-master]
+k8s-master ansible_host=${MASTER_IP} ansible_user=${SSH_USER}
+
+[k8s-workers]
+EOF
+    fi
 
     # Add workers to inventory
     WORKER_COUNT=0
@@ -153,7 +187,11 @@ EOF
         for key in $(echo "${WORKER_IPS}" | jq -r 'keys[]'); do
             WORKER_IP=$(echo "${WORKER_IPS}" | jq -r ".[\"${key}\"]")
             if [[ -n "${WORKER_IP}" ]] && [[ "${WORKER_IP}" != "null" ]]; then
-                echo "k8s-worker-${WORKER_COUNT} ansible_host=${WORKER_IP}" >> "${INVENTORY_FILE}"
+                if [[ -n "${SSH_KEY}" ]]; then
+                    echo "k8s-worker-${WORKER_COUNT} ansible_host=${WORKER_IP} ansible_user=${SSH_USER} ansible_ssh_private_key_file=${SSH_KEY}" >> "${INVENTORY_FILE}"
+                else
+                    echo "k8s-worker-${WORKER_COUNT} ansible_host=${WORKER_IP} ansible_user=${SSH_USER}" >> "${INVENTORY_FILE}"
+                fi
                 WORKER_COUNT=$((WORKER_COUNT + 1))
             fi
         done
