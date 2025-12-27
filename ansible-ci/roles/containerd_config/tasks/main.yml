@@ -197,6 +197,20 @@
     executable: /bin/bash
   when: not containerd_cfg.stat.exists
 
+- name: Copy CRI plugin fix script to target
+  ansible.builtin.copy:
+    src: fix-cri-plugin.sh
+    dest: /tmp/fix-cri-plugin.sh
+    mode: '0755'
+  become: true
+
+- name: Run CRI plugin fix script
+  ansible.builtin.shell: /tmp/fix-cri-plugin.sh
+  args:
+    executable: /bin/bash
+  become: true
+  register: cri_fix_result
+
 - name: Ensure SystemdCgroup = true in containerd config
   ansible.builtin.replace:
     path: "{{ containerd_config_path }}"

@@ -127,6 +127,9 @@
     - role: system_checks
       tags: ['checks', 'system']
 
+    - role: kubernetes_install
+      tags: ['kubernetes', 'install']
+
     - role: cri_ready
       tags: ['cri', 'ready']
 

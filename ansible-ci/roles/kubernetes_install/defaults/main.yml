@@ -1,0 +1,13 @@
+---
+# Kubernetes version configuration
+kubernetes_version: "1.29.0"
+kubernetes_yum_baseurl: "https://pkgs.k8s.io/core:/stable:/v1.29/rpm/"
+
+# Kubernetes packages to install
+kubernetes_packages:
+  - kubelet
+  - kubeadm
+  - kubectl
+
+# Allow package updates
+kubernetes_allow_downgrade: false
