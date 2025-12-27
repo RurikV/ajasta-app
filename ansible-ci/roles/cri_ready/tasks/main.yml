@@ -207,22 +207,102 @@
     timeout: 120
 
 - name: Give containerd time to initialize CRI plugin
-  ansible.builtin.wait_for:
-    timeout: 15
-  delegate_to: localhost
+  ansible.builtin.pause:
+    seconds: 15
 
-- name: Verify CRI is ready (prefer crictl; fallback to ctr plugin) with retries
-  ansible.builtin.shell: |
-    set -o pipefail
-    if command -v crictl >/dev/null 2>&1; then
-      crictl --runtime-endpoint={{ cri_runtime_endpoint }} info >/dev/null 2>&1
-    else
-      ctr plugins ls -q 2>/dev/null | grep -q '^io.containerd.grpc.v1.cri$'
-    fi
-  args:
-    executable: /bin/bash
-  register: cri_ready_check
-  changed_when: false
-  retries: 40
-  delay: 3
-  until: cri_ready_check.rc == 0
+- name: Verify CRI is ready with FULL diagnostics
+  block:
+    - name: Get detailed containerd status
+      ansible.builtin.shell: |
+        echo "=== Containerd Service Status ==="
+        systemctl is-active containerd
+        echo ""
+        echo "=== Containerd Socket ==="
+        ls -la /run/containerd/containerd.sock 2>&1 || echo "Socket not found"
+        echo ""
+        echo "=== Containerd Processes ==="
+        ps aux | grep containerd | grep -v grep || echo "No containerd processes"
+        echo ""
+        echo "=== Crictl Location ==="
+        which crictl || echo "crictl not found"
+        echo ""
+        echo "=== Crictl Version ==="
+        crictl --version || echo "Cannot get crictl version"
+        echo ""
+        echo "=== Test Crictl Connection (with FULL output) ==="
+        crictl --runtime-endpoint=unix:///run/containerd/containerd.sock info 2>&1 || echo "crictl connection failed with rc: $?"
+        echo ""
+        echo "=== Containerd Plugins ==="
+        ctr plugins ls 2>&1 | grep -i cri || echo "No CRI plugin found"
+        echo ""
+        echo "=== Containerd Config (sandbox_image) ==="
+        grep sandbox_image /etc/containerd/config.toml || echo "No sandbox_image in config"
+        echo ""
+        echo "=== Containerd Images ==="
+        ctr image ls | head -10 || echo "Cannot list images"
+        echo ""
+        echo "=== Recent Containerd Logs ==="
+        journalctl -u containerd -n 20 --no-pager
+      args:
+        executable: /bin/bash
+      register: cri_diagnostics
+      changed_when: false
+      failed_when: false
+
+    - name: Display full diagnostics
+      ansible.builtin.debug:
+        msg: "{{ cri_diagnostics.stdout_lines }}"
+
+    - name: Check if pause image actually exists
+      ansible.builtin.shell: ctr image ls | grep "pause.*3.10"
+      args:
+        executable: /bin/bash
+      register: pause_check
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if pause image missing
+      ansible.builtin.fail:
+        msg: |
+          CRITICAL: Pause image is missing!
+          This is why CRI plugin won't start.
+
+          Images found: {{ pause_check.stdout | default('NONE') }}
+
+          The CRI plugin NEEDS the pause image to be pre-loaded.
+      when: pause_check.rc != 0
+
+    - name: Final verification attempt with error output
+      ansible.builtin.shell: |
+        set -x  # Enable debug output
+        crictl --runtime-endpoint=unix:///run/containerd/containerd.sock info
+      args:
+        executable: /bin/bash
+      register: final_check
+      failed_when: false
+      changed_when: false
+
+    - name: Display final check result
+      ansible.builtin.debug:
+        msg:
+          - "Return code: {{ final_check.rc }}"
+          - "Stdout: {{ final_check.stdout_lines | default([]) }}"
+          - "Stderr: {{ final_check.stderr_lines | default([]) }}"
+
+  rescue:
+    - name: Failure diagnostics
+      ansible.builtin.debug:
+        msg: "CRI verification failed - see above output for details"
+
+    - name: Fail with helpful message
+      ansible.builtin.fail:
+        msg: |
+          CRI plugin is not ready after all retries.
+
+          Common causes:
+          1. Pause image not pre-loaded (most likely)
+          2. containerd service not running
+          3. CRI plugin disabled in config
+          4. Network/firewall blocking registry access
+
+          See diagnostic output above for exact failure reason.

@@ -129,11 +129,64 @@
     seconds: 10
   when: kubeadm_reset_output is defined and kubeadm_reset_output.changed
 
+- name: Get detailed system diagnostics before pre-flight checks
+  ansible.builtin.shell: |
+    set -euo pipefail
+
+    echo "=== SYSTEM DIAGNOSTICS ==="
+    echo ""
+
+    echo "--- Memory ---"
+    free -h
+    echo ""
+
+    echo "--- Disk Space ---"
+    df -h
+    echo ""
+
+    echo "--- Ports in use ---"
+    ss -tlnp 2>/dev/null | grep -E ':(6443|2379|10250)' || echo "No k8s ports in use"
+    echo ""
+
+    echo "--- crictl status ---"
+    crictl version 2>&1 || echo "crictl not working"
+    echo ""
+
+    echo "--- Container runtime info ---"
+    crictl info 2>&1 | head -20 || echo "Cannot get runtime info"
+    echo ""
+
+    echo "--- Kubernetes directories ---"
+    ls -la /etc/kubernetes/ 2>&1 || echo "No /etc/kubernetes directory"
+    echo ""
+
+    echo "--- Kubelet status ---"
+    systemctl status kubelet --no-pager -l || echo "kubelet not installed/running"
+    echo ""
+
+    echo "--- Containerd status ---"
+    systemctl status containerd --no-pager -l | head -15
+    echo ""
+
+    echo "--- Images in containerd ---"
+    ctr image ls | head -10 || echo "Cannot list images"
+    echo ""
+
+  args:
+    executable: /bin/bash
+  register: system_diagnostics
+  changed_when: false
+  failed_when: false
+
+- name: Display system diagnostics
+  ansible.builtin.debug:
+    msg: "{{ system_diagnostics.stdout_lines }}"
+
 - name: Pre-flight checks before kubeadm init
   ansible.builtin.shell: |
     set -euo pipefail
     EXIT_CODE=0
-    
+
     echo "=== Pre-flight Checks for kubeadm init ==="
     
     # Check 1: Memory (minimum 2GB recommended)
@@ -186,8 +239,13 @@
     done
     
     # Check 6: Container runtime accessible
-    if ! crictl version >/dev/null 2>&1; then
-      echo "ERROR: crictl not working. Container runtime may not be ready." >&2
+    # Use explicit runtime endpoint to ensure crictl can find containerd
+    if ! crictl --runtime-endpoint=unix:///run/containerd/containerd.sock version >/dev/null 2>&1; then
+      echo "ERROR: crictl not working. Trying with debug output..." >&2
+      echo "crictl version output:" >&2
+      crictl --runtime-endpoint=unix:///run/containerd/containerd.sock version 2>&1 || true >&2
+      echo "crictl info output:" >&2
+      crictl --runtime-endpoint=unix:///run/containerd/containerd.sock info 2>&1 || true >&2
       EXIT_CODE=1
     else
       echo "Container runtime: Accessible"
@@ -202,12 +260,23 @@
   failed_when: false
   when: (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
 
-- name: Show pre-flight check results
+- name: Show pre-flight check results (always show)
   ansible.builtin.debug:
-    var: preflight_checks.stdout_lines
+    msg: "{{ preflight_checks.stdout_lines | default(['No pre-flight output']) }}"
+
+- name: Display pre-flight check summary
+  ansible.builtin.debug:
+    msg: |
+      Pre-flight checks {{ 'PASSED' if preflight_checks.rc == 0 else 'FAILED' }}
+      Return code: {{ preflight_checks.rc }}
+
+      Full output:
+      {{ preflight_checks.stdout }}
+
+      Stderr:
+      {{ preflight_checks.stderr | default('None') }}
   when:
     - preflight_checks is defined
-    - preflight_checks is not skipped
 
 - name: Fail if critical pre-flight checks failed
   ansible.builtin.fail:
