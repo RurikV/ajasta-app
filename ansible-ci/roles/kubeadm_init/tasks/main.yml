@@ -272,80 +272,6 @@
   when: kubeadm_init_output is defined and kubeadm_init_output.stdout_lines is defined
 
 # ============================================================================
-# WORKER NODE JOIN LOGIC
-# ============================================================================
-- name: Create kubeadm join command on master (after init)
-  ansible.builtin.shell: |
-    kubeadm token create --print-join-command
-  args:
-    executable: /bin/bash
-  register: kubeadm_join_command
-  changed_when: false
-  when:
-    - is_master_node
-    - kube_admin_conf.stat.exists
-
-- name: Save join command to file on master
-  ansible.builtin.copy:
-    content: "{{ kubeadm_join_command.stdout }}"
-    dest: /tmp/kubeadm-join.sh
-    mode: '0755'
-  when:
-    - is_master_node
-    - kubeadm_join_command is defined
-    - kubeadm_join_command.stdout is defined
-
-- name: Fetch join command from master to control machine
-  ansible.builtin.fetch:
-    src: /tmp/kubeadm-join.sh
-    dest: /tmp/kubeadm-join.sh
-    flat: yes
-  when:
-    - is_master_node
-    - kubeadm_join_command is defined
-    - kubeadm_join_command.stdout is defined
-
-- name: Copy join command to worker nodes
-  ansible.builtin.copy:
-    src: /tmp/kubeadm-join.sh
-    dest: /tmp/kubeadm-join.sh
-    mode: '0755'
-  when: not is_master_node
-
-- name: Join worker nodes to the cluster
-  ansible.builtin.shell: |
-    set -euo pipefail
-    echo "[kubeadm_join] Joining worker {{ inventory_hostname }} to the cluster..."
-
-    # Reset if this was previously incorrectly initialized as a control plane
-    if [ -f /etc/kubernetes/admin.conf ]; then
-      echo "[kubeadm_join] This worker was incorrectly initialized as control plane. Resetting..."
-      kubeadm reset -f || true
-      rm -rf /etc/cni/net.d || true
-      rm -rf /var/lib/kubelet/* || true
-      rm -rf /etc/kubernetes/ || true
-      systemctl restart kubelet
-      sleep 5
-    fi
-
-    # Execute the join command
-    /tmp/kubeadm-join.sh
-  args:
-    executable: /bin/bash
-  register: kubeadm_join_output
-  when:
-    - not is_master_node
-    - not kube_admin_conf.stat.exists
-
-- name: Show kubeadm join output for debugging
-  ansible.builtin.debug:
-    var: kubeadm_join_output.stdout_lines
-  when:
-    - not is_master_node
-    - kubeadm_join_output is defined
-    - kubeadm_join_output.stdout_lines is defined
-
-# ============================================================================
 # COMMON TASKS (ALL NODES)
 # ============================================================================
 - name: Ensure kubelet service is enabled and started
@@ -402,11 +328,13 @@
     timeout: 60
   register: etcd_manifest_wait
   failed_when: false
+  when: is_master_node
 
 - name: Check if etcd manifest exists
   ansible.builtin.stat:
     path: /etc/kubernetes/manifests/etcd.yaml
   register: etcd_manifest_stat
+  when: is_master_node
 
 - name: Wait for etcd container to be created and running (up to 3 minutes)
   ansible.builtin.shell: |
@@ -421,7 +349,9 @@
   delay: 5
   until: etcd_container_check.rc == 0
   failed_when: false
-  when: etcd_manifest_stat.stat.exists
+  when:
+    - is_master_node
+    - etcd_manifest_stat.stat.exists
 
 - name: Check etcd container status
   ansible.builtin.shell: |
@@ -433,10 +363,12 @@
   register: etcd_status_check
   changed_when: false
   failed_when: false
+  when: is_master_node
 
 - name: Show etcd container status
   ansible.builtin.debug:
     var: etcd_status_check.stdout_lines
+  when: is_master_node
 
 - name: Get etcd container logs if exists
   ansible.builtin.shell: |
@@ -453,10 +385,12 @@
   register: etcd_logs
   changed_when: false
   failed_when: false
+  when: is_master_node
 
 - name: Show etcd logs
   ansible.builtin.debug:
     var: etcd_logs.stdout_lines
+  when: is_master_node
 
 - name: Wait for etcd to be healthy on port 2379 (up to 2 minutes)
   ansible.builtin.shell: |
@@ -471,6 +405,7 @@
   delay: 5
   until: etcd_port_check.rc == 0
   failed_when: false
+  when: is_master_node
 
 - name: Show etcd port status
   ansible.builtin.shell: |
@@ -482,14 +417,17 @@
   register: etcd_port_status
   changed_when: false
   failed_when: false
+  when: is_master_node
 
 - name: Show etcd port binding
   ansible.builtin.debug:
     var: etcd_port_status.stdout_lines
+  when: is_master_node
 
 - name: Pause briefly to let etcd stabilize before API server checks
   ansible.builtin.pause:
     seconds: 10
+  when: is_master_node
 
 - name: Wait for etcd to actually accept connections (health check)
   ansible.builtin.shell:
@@ -511,10 +449,12 @@
   retries: 36
   delay: 5
   until: etcd_health_check.rc == 0
+  when: is_master_node
 
 - name: Show etcd health check result
   ansible.builtin.debug:
     msg: "etcd health check {{ 'PASSED' if etcd_health_check.rc == 0 else 'FAILED after retries' }}"
+  when: is_master_node
 
 - name: Fail if etcd is not healthy
   ansible.builtin.fail:
@@ -534,7 +474,7 @@
         crictl ps -a | grep etcd
         crictl logs <container-id>
         journalctl -u kubelet | grep etcd
-  when: etcd_health_check.rc != 0
+  when: is_master_node and etcd_health_check.rc != 0
 
 # Diagnostic tasks to understand API server startup
 - name: Check kubelet service status
@@ -629,7 +569,9 @@
   register: etcd_precheck
   changed_when: false
   failed_when: false
-  when: (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
+  when:
+    - is_master_node
+    - (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
 
 - name: Fail early if etcd is not healthy
   ansible.builtin.fail:
@@ -642,6 +584,7 @@
         crictl logs <etcd-container-id>
         journalctl -u kubelet | grep etcd
   when:
+    - is_master_node
     - etcd_precheck.rc is defined
     - etcd_precheck.rc != 0
     - (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
@@ -655,7 +598,9 @@
   register: apiserver_exists_check
   changed_when: false
   failed_when: false
-  when: (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
+  when:
+    - is_master_node
+    - (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
 
 - name: Fail early if API server container doesn't exist
   ansible.builtin.fail:
@@ -668,6 +613,7 @@
         journalctl -u kubelet -n 50 | grep apiserver
         crictl ps -a
   when:
+    - is_master_node
     - apiserver_exists_check.rc is defined
     - apiserver_exists_check.rc != 0
     - (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
@@ -803,12 +749,14 @@
             crictl logs <container-id>
             journalctl -u kubelet -n 100
             kubectl --kubeconfig=/etc/kubernetes/admin.conf get --raw=/readyz
+  when: is_master_node
 
 - name: Generate a reusable join command token (best-effort)
   ansible.builtin.shell: kubeadm token create --print-join-command
   register: join_cmd
   changed_when: false
   failed_when: false
+  when: is_master_node
 
 - name: Save join command to /root/join-worker.sh (best-effort)
   ansible.builtin.copy:
@@ -818,3 +766,58 @@
     group: root
     content: "{{ (join_cmd.stdout | default('')) | trim }}\n"
   when: (join_cmd.stdout | default('') | trim | length) > 0
+
+# ============================================================================
+# WORKER NODE JOIN LOGIC - Execute after join command is ready
+# ============================================================================
+- name: Fetch join command from master to control machine
+  ansible.builtin.fetch:
+    src: /root/join-worker.sh
+    dest: /tmp/kubeadm-join.sh
+    flat: yes
+  when:
+    - is_master_node
+    - join_cmd.stdout is defined
+
+- name: Copy join command to worker nodes
+  ansible.builtin.copy:
+    src: /tmp/kubeadm-join.sh
+    dest: /tmp/kubeadm-join.sh
+    mode: '0755'
+  when: not is_master_node
+
+- name: Join worker nodes to the cluster
+  ansible.builtin.shell: |
+    set -euo pipefail
+    echo "[kubeadm_join] Joining worker {{ inventory_hostname }} to the cluster..."
+
+    # Reset if this was previously incorrectly initialized as a control plane
+    if [ -f /etc/kubernetes/admin.conf ]; then
+      echo "[kubeadm_join] This worker was incorrectly initialized as control plane. Resetting..."
+      kubeadm reset -f || true
+      rm -rf /etc/cni/net.d || true
+      rm -rf /var/lib/kubelet/* || true
+      rm -rf /etc/kubernetes/ || true
+      systemctl restart kubelet
+      sleep 5
+    fi
+
+    # Execute the join command
+    /tmp/kubeadm-join.sh
+  args:
+    executable: /bin/bash
+  register: kubeadm_join_output
+  when:
+    - not is_master_node
+  retries: 3
+  delay: 10
+  until: kubeadm_join_output.rc == 0
+  failed_when: false
+
+- name: Show kubeadm join output for debugging
+  ansible.builtin.debug:
+    var: kubeadm_join_output.stdout_lines
+  when:
+    - not is_master_node
+    - kubeadm_join_output is defined
+    - kubeadm_join_output.stdout_lines is defined
