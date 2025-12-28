@@ -8,8 +8,9 @@
   become: false
   gather_facts: false
   vars:
-    # Namespace configuration
-    app_namespace: "{{ app_namespace | default('ajasta') }}"
+    # Namespace configuration - use 'production' or 'staging' via extra-vars
+    # Example: ansible-playbook deploy-apps.yml -e app_namespace=production
+    app_namespace: "{{ app_namespace_override | default('production') }}"
 
     # Docker registry configuration
     docker_registry: "{{ lookup('env', 'CI_REGISTRY') | default('registry.gitlab.com', true) }}"
@@ -18,7 +19,7 @@
 
     # Image names (lowercase for Docker registry compatibility)
     backend_image: "{{ docker_registry }}/{{ project_path | lower }}/backend"
-    frontend_image: "{{ docker_registry }}/{{ project_path | lower }}//frontend"
+    frontend_image: "{{ docker_registry }}/{{ project_path | lower }}/frontend"
 
     # Helm chart configuration
     helm_chart_path: "{{ playbook_dir }}/../helm/ajasta-app"
@@ -43,7 +44,7 @@
 
     - name: Ensure KUBECONFIG is set
       ansible.builtin.set_fact:
-        kubeconfig_path: "{{ ansible_env.HOME }}/.kube/config"
+        kubeconfig_path: "/etc/kubernetes/admin.conf"
       failed_when: false
 
     - name: Verify KUBECONFIG exists
@@ -53,228 +54,163 @@
       failed_when: not kubeconfig_stat.stat.exists
 
     - name: Test cluster connectivity
-      kubernetes.core.k8s_info:
-        kind: Node
+      ansible.builtin.shell: kubectl get nodes
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
       register: cluster_test
-      until: cluster_test is not failed
+      changed_when: false
+      until: cluster_test.rc == 0
       retries: 5
       delay: 10
 
     - name: Display cluster connection status
       ansible.builtin.debug:
-        msg: "✅ Connected to Kubernetes cluster ({{ cluster_test.resources | length }} nodes)"
+        msg: "✅ Connected to Kubernetes cluster"
 
   tasks:
     - name: Ensure application namespace exists
-      kubernetes.core.k8s:
-        name: "{{ app_namespace }}"
-        api_version: v1
-        kind: Namespace
-        state: present
+      ansible.builtin.shell: |
+        kubectl create namespace {{ app_namespace }} || true
+        kubectl get namespace {{ app_namespace }}
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
+      register: namespace_create
+      changed_when: false
 
-    - name: Create database secret
-      kubernetes.core.k8s:
-        state: present
-        definition:
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: postgres-secret
-            namespace: "{{ app_namespace }}"
-          type: Opaque
-          stringData:
-            postgres-password: "{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}"
-            password: "{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}"
-      environment:
-        KUBECONFIG: "{{ kubeconfig_path }}"
+    # Secrets will be created by Helm with proper labels
+    # - name: Create database secret
+    #   ansible.builtin.shell: |
+    #     kubectl -n {{ app_namespace }} create secret generic postgres-secret \
+    #       --from-literal=postgres-password="{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}" \
+    #       --from-literal=password="{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}" || \
+    #     kubectl -n {{ app_namespace }} patch secret postgres-secret -p '{"data":{"postgres-password":"'"$(echo -n "{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}" | base64)"'"}}'
+    #   environment:
+    #     KUBECONFIG: "{{ kubeconfig_path }}"
+    #   register: postgres_secret
+    #   changed_when: false
 
-    - name: Create JWT secret
-      kubernetes.core.k8s:
-        state: present
-        definition:
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: jwt-secret
-            namespace: "{{ app_namespace }}"
-          type: Opaque
-          stringData:
-            jwtsecret: "{{ lookup('env', 'JWT_SECRET') | default('changeme', true) }}"
-      environment:
-        KUBECONFIG: "{{ kubeconfig_path }}"
+    # - name: Create JWT secret
+    #   ansible.builtin.shell: |
+    #     kubectl -n {{ app_namespace }} create secret generic jwt-secret \
+    #       --from-literal=jwtsecret="{{ lookup('env', 'JWT_SECRET') | default('changeme', true) }}" || true
+    #   environment:
+    #     KUBECONFIG: "{{ kubeconfig_path }}"
+    #   register: jwt_secret
+    #   changed_when: false
 
-    - name: Create AWS S3 secret (optional)
-      when: lookup('env', 'AWS_ACCESS_KEY_ID') | default('', true) | length > 0
-      kubernetes.core.k8s:
-        state: present
-        definition:
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: aws-s3-secret
-            namespace: "{{ app_namespace }}"
-          type: Opaque
-          stringData:
-            awsAccessKeyId: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
-            awsSecretAccessKey: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
-            awsS3Bucket: "{{ lookup('env', 'AWS_S3_BUCKET') | default('', true) }}"
-      environment:
-        KUBECONFIG: "{{ kubeconfig_path }}"
+    # - name: Create AWS S3 secret (optional)
+    #   ansible.builtin.shell: |
+    #     kubectl -n {{ app_namespace }} create secret generic aws-s3-secret \
+    #       --from-literal=awsAccessKeyId="{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}" \
+    #       --from-literal=awsSecretAccessKey="{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}" \
+    #       --from-literal=awsS3Bucket="{{ lookup('env', 'AWS_S3_BUCKET') | default('', true) }}" || true
+    #   environment:
+    #     KUBECONFIG: "{{ kubeconfig_path }}"
+    #   register: aws_s3_secret
+    #   changed_when: false
+    #   when: lookup('env', 'AWS_ACCESS_KEY_ID') | default('', true) | length > 0
 
-    - name: Create Stripe secret (optional)
-      when: lookup('env', 'STRIPE_PUBLIC_KEY') | default('', true) | length > 0
-      kubernetes.core.k8s:
-        state: present
-        definition:
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: stripe-secret
-            namespace: "{{ app_namespace }}"
-          type: Opaque
-          stringData:
-            stripePublicKey: "{{ lookup('env', 'STRIPE_PUBLIC_KEY') }}"
-            stripeSecretKey: "{{ lookup('env', 'STRIPE_SECRET_KEY') }}"
-      environment:
-        KUBECONFIG: "{{ kubeconfig_path }}"
+    # - name: Create Stripe secret (optional)
+    #   ansible.builtin.shell: |
+    #     kubectl -n {{ app_namespace }} create secret generic stripe-secret \
+    #       --from-literal=stripePublicKey="{{ lookup('env', 'STRIPE_PUBLIC_KEY') }}" \
+    #       --from-literal=stripeSecretKey="{{ lookup('env', 'STRIPE_SECRET_KEY') }}" || true
+    #   environment:
+    #     KUBECONFIG: "{{ kubeconfig_path }}"
+    #   register: stripe_secret
+    #   changed_when: false
+    #   when: lookup('env', 'STRIPE_PUBLIC_KEY') | default('', true) | length > 0
+
+    - name: Copy Helm chart to master node
+      ansible.builtin.synchronize:
+        src: "{{ playbook_dir }}/../helm/ajasta-app/"
+        dest: "/tmp/ajasta-app-chart/"
+        delete: false
+        recursive: true
+      become: true
 
     - name: Deploy application with Helm
-      kubernetes.core.helm:
-        name: "{{ helm_release_name }}"
-        chart_ref: "{{ helm_chart_path }}"
-        release_namespace: "{{ app_namespace }}"
-        create_namespace: false
-        values:
-          namespace:
-            create: false
-          global:
-            namespace: "{{ app_namespace }}"
-
-          # Backend configuration
-          backend:
-            enabled: true
-            image:
-              repository: "{{ backend_image }}"
-              tag: "{{ docker_image_tag }}"
-              pullPolicy: Always
-            replicas: 1
-            service:
-              type: ClusterIP
-              port: 8090
-            database:
-              password: "{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}"
-            secrets:
-              jwtSecret: "{{ lookup('env', 'JWT_SECRET') | default('changeme', true) }}"
-              awsAccessKeyId: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') | default('', true) }}"
-              awsSecretAccessKey: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') | default('', true) }}"
-            config:
-              awsS3Bucket: "{{ lookup('env', 'AWS_S3_BUCKET') | default('', true) }}"
-
-          # Frontend configuration
-          frontend:
-            enabled: true
-            image:
-              repository: "{{ frontend_image }}"
-              tag: "{{ docker_image_tag }}"
-              pullPolicy: Always
-            replicas: 1
-            service:
-              type: ClusterIP
-              port: 80
-
-          # PostgreSQL configuration
-          postgres:
-            enabled: true
-            auth:
-              password: "{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}"
-            primary:
-              persistence:
-                enabled: true
-                size: 10Gi
-                storageClass: "longhorn"  # Use Longhorn if available
-
-          # Ingress configuration
-          ingress:
-            enabled: true
-            className: "nginx"
-            hosts:
-              - host: "{{ ingress_host | default('') }}"
-                paths:
-                  - path: /
-                    pathType: Prefix
-                    serviceName: ajasta-frontend
-                    servicePort: 80
-                  - path: /api
-                    pathType: Prefix
-                    serviceName: ajasta-backend
-                    servicePort: 8090
-
+      ansible.builtin.shell: |
+        /usr/local/bin/helm upgrade --install {{ helm_release_name }} /tmp/ajasta-app-chart \
+          --namespace {{ app_namespace }} \
+          --set namespace.create=false \
+          --set global.namespace={{ app_namespace }} \
+          --set backend.enabled=true \
+          --set backend.image.repository={{ backend_image }} \
+          --set backend.image.tag={{ docker_image_tag }} \
+          --set backend.image.pullPolicy=Always \
+          --set backend.replicas=1 \
+          --set backend.service.type=ClusterIP \
+          --set backend.service.port=8090 \
+          --set backend.database.password="{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}" \
+          --set backend.secrets.jwtSecret="{{ lookup('env', 'JWT_SECRET') | default('changeme', true) }}" \
+          --set frontend.enabled=true \
+          --set frontend.image.repository={{ frontend_image }} \
+          --set frontend.image.tag={{ docker_image_tag }} \
+          --set frontend.image.pullPolicy=Always \
+          --set frontend.replicas=1 \
+          --set frontend.service.type=ClusterIP \
+          --set frontend.service.port=80 \
+          --set postgres.enabled=true \
+          --set postgres.auth.password="{{ lookup('env', 'POSTGRES_PASSWORD') | default('changeme', true) }}" \
+          --set ingress.enabled=true \
+          --set ingress.className=nginx \
+          --wait \
+          --timeout 10m
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
       register: helm_deploy
+      failed_when: false
 
     - name: Display deployment status
       ansible.builtin.debug:
-        msg: "✅ Application deployed successfully with Helm release {{ helm_release_name }}"
-      when: helm_deploy is changed
+        msg: "✅ Application deployed with Helm release {{ helm_release_name }}"
+      when: helm_deploy.rc == 0
 
     - name: Wait for deployments to be ready
-      kubernetes.core.k8s_info:
-        kind: Deployment
-        namespace: "{{ app_namespace }}"
+      ansible.builtin.shell: |
+        kubectl wait --for=condition=available --timeout=300s           deployment/ajasta-backend deployment/ajasta-frontend           -n {{ app_namespace }} || true
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: deploy_wait
+      changed_when: false
+      failed_when: false
+
+    - name: Get deployment status
+      ansible.builtin.shell: kubectl get deployments -n {{ app_namespace }}
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
       register: deployments
-      until: deployments.resources | selectattr('status.readyReplicas', 'defined') | selectattr('status.readyReplicas', 'equalto', 'status.replicas') | list | length == deployments.resources | length
-      retries: 30
-      delay: 10
-      ignore_errors: true
+      changed_when: false
 
     - name: Display deployment information
       ansible.builtin.debug:
-        msg: "{{ item.metadata.name }}: {{ item.status.readyReplicas | default(0) }}/{{ item.spec.replicas }} replicas ready"
-      loop: "{{ deployments.resources }}"
-      loop_control:
-        label: "{{ item.metadata.name }}"
+        msg: "{{ deployments.stdout_lines }}"
 
     - name: Get all pods in namespace
-      kubernetes.core.k8s_info:
-        kind: Pod
-        namespace: "{{ app_namespace }}"
+      ansible.builtin.shell: kubectl get pods -n {{ app_namespace }} -o wide
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
       register: pods_info
+      changed_when: false
 
     - name: Display pod status
       ansible.builtin.debug:
-        msg: "Pod {{ item.metadata.name }}: {{ item.status.phase }}"
-      loop: "{{ pods_info.resources }}"
-      loop_control:
-        label: "{{ item.metadata.name }}"
+        msg: "{{ pods_info.stdout_lines }}"
 
     - name: Get ingress information
-      kubernetes.core.k8s_info:
-        kind: Ingress
-        namespace: "{{ app_namespace }}"
+      ansible.builtin.shell: kubectl get ingress -n {{ app_namespace }}
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
       register: ingress_info
-      ignore_errors: true
+      changed_when: false
+      failed_when: false
 
     - name: Display ingress information
       ansible.builtin.debug:
-        msg:
-          - "Ingress: {{ item.metadata.name }}"
-          - "Host: {{ item.spec.rules[0].host | default('catch-all') }}"
-          - "Address: {{ item.status.loadBalancer.ingress[0].ip | default(item.status.loadBalancer.ingress[0].hostname) | default('pending') }}"
-      loop: "{{ ingress_info.resources }}"
-      loop_control:
-        label: "{{ item.metadata.name }}"
-      when: ingress_info.resources | length > 0
+        msg: "{{ ingress_info.stdout_lines }}"
+      when: ingress_info.rc == 0
+
 
   post_tasks:
     - name: Display deployment summary

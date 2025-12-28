@@ -3,6 +3,14 @@
 # Goal: make API readiness reliable by ensuring the kubeconfig points to a
 # locally reachable endpoint (127.0.0.1) instead of the cloud public IP.
 # Keep this role idempotent and minimal.
+#
+# This role now supports both:
+# - kubeadm init on master node
+# - kubeadm join on worker nodes
+
+- name: Check if this node is the master
+  ansible.builtin.set_fact:
+    is_master_node: "{{ 'k8s-master' in group_names or inventory_hostname == 'k8s-master' }}"
 
 - name: Check if kubeadm admin.conf already exists
   ansible.builtin.stat:
@@ -14,13 +22,17 @@
     path: "/etc/kubernetes/manifests/kube-apiserver.yaml"
   register: apiserver_manifest
 
+- name: Display node role
+  ansible.builtin.debug:
+    msg: "Node {{ inventory_hostname }} is {{ 'MASTER' if is_master_node else 'WORKER' }}"
+
 # Ensure swap is disabled (required by kubelet/kubeadm)
 - name: Disable swap at runtime
   ansible.builtin.command: swapoff -a
   changed_when: false
   failed_when: false
 
-- name: Remove active swap entries from /etc/fstab (idempotent)
+- name: Remove active swap entries from /etc/fstab (MASTER ONLY)
   ansible.builtin.lineinfile:
     path: /etc/fstab
     regexp: '^\s*[^#].*\s+swap\s+'
@@ -230,17 +242,17 @@
     - preflight_checks is not skipped
     - preflight_checks.rc != 0
 
-- name: Initialize control plane with kubeadm when not initialized or manifests missing
+- name: Initialize control plane with kubeadm when not initialized or manifests missing (MASTER ONLY)
   ansible.builtin.shell: |
     set -euo pipefail
     INTERNAL_IP="{{ detected_advertise_address.stdout }}"
     echo "[kubeadm_init] Using advertise address: $INTERNAL_IP"
-    
+
     # Show system resources before init
     echo "[kubeadm_init] System resources:"
     free -h | head -2
     df -h / | tail -1
-    
+
     kubeadm init \
       --pod-network-cidr={{ pod_cidr }} \
       --image-repository={{ kubeadm_repo_chosen | default(kubeadm_image_repository_fallback) }} \
@@ -250,20 +262,99 @@
   args:
     executable: /bin/bash
   register: kubeadm_init_output
-  when: (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
+  when:
+    - is_master_node
+    - (not kube_admin_conf.stat.exists) or (not apiserver_manifest.stat.exists)
 
 - name: Show kubeadm init output for debugging
   ansible.builtin.debug:
     var: kubeadm_init_output.stdout_lines
   when: kubeadm_init_output is defined and kubeadm_init_output.stdout_lines is defined
 
+# ============================================================================
+# WORKER NODE JOIN LOGIC
+# ============================================================================
+- name: Create kubeadm join command on master (after init)
+  ansible.builtin.shell: |
+    kubeadm token create --print-join-command
+  args:
+    executable: /bin/bash
+  register: kubeadm_join_command
+  changed_when: false
+  when:
+    - is_master_node
+    - kube_admin_conf.stat.exists
+
+- name: Save join command to file on master
+  ansible.builtin.copy:
+    content: "{{ kubeadm_join_command.stdout }}"
+    dest: /tmp/kubeadm-join.sh
+    mode: '0755'
+  when:
+    - is_master_node
+    - kubeadm_join_command is defined
+    - kubeadm_join_command.stdout is defined
+
+- name: Fetch join command from master to control machine
+  ansible.builtin.fetch:
+    src: /tmp/kubeadm-join.sh
+    dest: /tmp/kubeadm-join.sh
+    flat: yes
+  when:
+    - is_master_node
+    - kubeadm_join_command is defined
+    - kubeadm_join_command.stdout is defined
+
+- name: Copy join command to worker nodes
+  ansible.builtin.copy:
+    src: /tmp/kubeadm-join.sh
+    dest: /tmp/kubeadm-join.sh
+    mode: '0755'
+  when: not is_master_node
+
+- name: Join worker nodes to the cluster
+  ansible.builtin.shell: |
+    set -euo pipefail
+    echo "[kubeadm_join] Joining worker {{ inventory_hostname }} to the cluster..."
+
+    # Reset if this was previously incorrectly initialized as a control plane
+    if [ -f /etc/kubernetes/admin.conf ]; then
+      echo "[kubeadm_join] This worker was incorrectly initialized as control plane. Resetting..."
+      kubeadm reset -f || true
+      rm -rf /etc/cni/net.d || true
+      rm -rf /var/lib/kubelet/* || true
+      rm -rf /etc/kubernetes/ || true
+      systemctl restart kubelet
+      sleep 5
+    fi
+
+    # Execute the join command
+    /tmp/kubeadm-join.sh
+  args:
+    executable: /bin/bash
+  register: kubeadm_join_output
+  when:
+    - not is_master_node
+    - not kube_admin_conf.stat.exists
+
+- name: Show kubeadm join output for debugging
+  ansible.builtin.debug:
+    var: kubeadm_join_output.stdout_lines
+  when:
+    - not is_master_node
+    - kubeadm_join_output is defined
+    - kubeadm_join_output.stdout_lines is defined
+
+# ============================================================================
+# COMMON TASKS (ALL NODES)
+# ============================================================================
 - name: Ensure kubelet service is enabled and started
   ansible.builtin.service:
     name: kubelet
     enabled: true
     state: started
 
-- name: Ensure root kubeconfig directory exists
+- name: Ensure root kubeconfig directory exists (MASTER ONLY)
   ansible.builtin.file:
     path: /root/.kube
     state: directory
@@ -271,7 +362,7 @@
     group: root
     mode: '0700'
 
-- name: Copy admin.conf for root kubectl convenience (idempotent)
+- name: Copy admin.conf for root kubectl convenience (MASTER ONLY)
   ansible.builtin.copy:
     src: "{{ kubeconfig_path }}"
     dest: /root/.kube/config
