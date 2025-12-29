@@ -1,6 +1,7 @@
 ---
 # Install a simple CNI (Flannel) and make the cluster schedulable on a single control-plane node.
 # This role runs on all k8s hosts but only performs actions on the master.
+# Flannel is chosen over Calico for better stability and resilience to API server failures.
 
 - name: Determine kubeconfig path (prefer admin.conf)
   ansible.builtin.set_fact:
@@ -104,4 +105,109 @@
   register: coredns_rollout
   changed_when: false
   failed_when: false
+  when: is_master_host
+
+# ============================================================================
+# POST-CNI STABILITY VERIFICATION
+# Ensure control plane is still healthy after CNI installation
+# ============================================================================
+- name: Pause to allow cluster to stabilize after CNI installation
+  ansible.builtin.pause:
+    seconds: 15
+  when: is_master_host
+
+- name: Verify API server is still responsive after CNI installation
+  ansible.builtin.shell: |
+    set -o pipefail
+    KUBECONFIG={{ cni_kubeconfig }} kubectl --request-timeout=5s get --raw=/readyz >/dev/null 2>&1
+  args:
+    executable: /bin/bash
+  register: post_cni_apiserver_check
+  changed_when: false
+  retries: 20
+  delay: 5
+  until: post_cni_apiserver_check.rc == 0
+  when: is_master_host
+
+- name: Display post-CNI API server health status
+  ansible.builtin.debug:
+    msg: "✅ API server is healthy after CNI installation"
+  when:
+    - is_master_host
+    - post_cni_apiserver_check.rc == 0
+
+- name: Verify control plane pods are running after CNI
+  ansible.builtin.shell: |
+    set -o pipefail
+    KUBECONFIG={{ cni_kubeconfig }} kubectl get pods -n kube-system -l 'tier in (control-plane)' -o jsonpath='{.items[*].status.phase}'
+  args:
+    executable: /bin/bash
+  register: control_plane_pods
+  changed_when: false
+  retries: 15
+  delay: 5
+  until:
+    - control_plane_pods.rc == 0
+    - control_plane_pods.stdout.split() | select('match', '^Running$') | list | length == control_plane_pods.stdout.split() | length
+  when: is_master_host
+
+- name: Display control plane pod status
+  ansible.builtin.debug:
+    msg: "✅ All control plane pods are Running after CNI installation"
+  when:
+    - is_master_host
+    - control_plane_pods.rc == 0
+
+- name: Verify etcd is healthy after CNI installation
+  ansible.builtin.shell: |
+    set -o pipefail
+    KUBECONFIG={{ cni_kubeconfig }} kubectl get -n kube-system pods -l component=etcd -o jsonpath='{.items[0].status.phase}'
+  args:
+    executable: /bin/bash
+  register: post_cni_etcd_check
+  changed_when: false
+  retries: 10
+  delay: 3
+  until: post_cni_etcd_check.stdout | default('') == 'Running'
+  when: is_master_host
+
+- name: Display post-CNI etcd health status
+  ansible.builtin.debug:
+    msg: "✅ etcd is healthy after CNI installation"
+  when:
+    - is_master_host
+    - post_cni_etcd_check.stdout | default('') == 'Running'
+
+- name: Get all system pods status after CNI installation
+  ansible.builtin.shell: |
+    set -euo pipefail
+    KUBECONFIG={{ cni_kubeconfig }} kubectl get pods -n kube-system
+  args:
+    executable: /bin/bash
+  register: post_cni_pods_status
+  changed_when: false
+  failed_when: false
+  when: is_master_host
+
+- name: Display all system pods status
+  ansible.builtin.debug:
+    msg: "{{ post_cni_pods_status.stdout_lines | default(['Unable to get pod status']) }}"
+  when: is_master_host
+
+- name: Final cluster health verification after CNI
+  ansible.builtin.shell: |
+    set -o pipefail
+    KUBECONFIG={{ cni_kubeconfig }} kubectl get nodes
+  args:
+    executable: /bin/bash
+  register: post_cni_nodes_check
+  changed_when: false
+  retries: 10
+  delay: 3
+  until: post_cni_nodes_check.rc == 0
+  when: is_master_host
+
+- name: Display final cluster status after CNI installation
+  ansible.builtin.debug:
+    msg: "{{ post_cni_nodes_check.stdout_lines | default(['Unable to get nodes']) }}"
   when: is_master_host

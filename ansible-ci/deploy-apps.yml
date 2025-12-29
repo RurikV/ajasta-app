@@ -60,12 +60,23 @@
       register: cluster_test
       changed_when: false
       until: cluster_test.rc == 0
-      retries: 5
+      retries: 10
+      delay: 5
+
+    - name: Verify all nodes are ready
+      ansible.builtin.shell: kubectl get nodes -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}'
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: nodes_ready
+      changed_when: false
+      until: nodes_ready.stdout.split() | select('match', '^True$') | list | length == nodes_ready.stdout.split() | length
+      retries: 20
       delay: 10
+      failed_when: false
 
     - name: Display cluster connection status
       ansible.builtin.debug:
-        msg: "✅ Connected to Kubernetes cluster"
+        msg: "✅ Connected to Kubernetes cluster with {{ nodes_ready.stdout.split() | length }} nodes"
 
   tasks:
     - name: Ensure application namespace exists
@@ -167,21 +178,38 @@
         msg: "✅ Application deployed with Helm release {{ helm_release_name }}"
       when: helm_deploy.rc == 0
 
+    - name: Pause for cluster stabilization after Helm deployment
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Verify API server is responsive after deployment
+      ansible.builtin.shell: kubectl get endpoints -n kube-system kube-dns
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: api_health_check
+      changed_when: false
+      until: api_health_check.rc == 0
+      retries: 10
+      delay: 5
+
     - name: Wait for deployments to be ready
       ansible.builtin.shell: |
-        kubectl wait --for=condition=available --timeout=300s           deployment/ajasta-backend deployment/ajasta-frontend           -n {{ app_namespace }} || true
+        kubectl wait --for=condition=available --timeout=300s deployment/ajasta-backend deployment/ajasta-frontend -n {{ app_namespace }} || true
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
       register: deploy_wait
       changed_when: false
       failed_when: false
 
-    - name: Get deployment status
+    - name: Get deployment status with retry logic
       ansible.builtin.shell: kubectl get deployments -n {{ app_namespace }}
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
       register: deployments
       changed_when: false
+      until: deployments.rc == 0
+      retries: 10
+      delay: 5
 
     - name: Display deployment information
       ansible.builtin.debug:
@@ -193,6 +221,9 @@
         KUBECONFIG: "{{ kubeconfig_path }}"
       register: pods_info
       changed_when: false
+      until: pods_info.rc == 0
+      retries: 5
+      delay: 3
 
     - name: Display pod status
       ansible.builtin.debug:
@@ -205,6 +236,9 @@
       register: ingress_info
       changed_when: false
       failed_when: false
+      until: ingress_info.rc == 0 or ingress_info.rc == 1
+      retries: 5
+      delay: 3
 
     - name: Display ingress information
       ansible.builtin.debug:

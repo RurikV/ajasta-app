@@ -62,9 +62,15 @@ crictl_arch_map:
 
 
 # ============================================================================
-# CNI PLUGIN (Calico)
+# CNI PLUGIN
 # ============================================================================
-cni_plugin: "calico"
+# NOTE: Using Flannel instead of Calico for better cluster stability
+# - Flannel is simpler and more resilient to API server failures
+# - Calico has been observed to create deadlock conditions when API server crashes
+# - Flannel doesn't depend on API server for pod cleanup operations
+# CNI plugin type (currently only Flannel is supported by cni_install role)
+cni_plugin: "flannel"
+# Calico version (kept for reference if manually installing)
 calico_version: "v3.28.0"
 
 # ============================================================================
