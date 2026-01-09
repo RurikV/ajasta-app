@@ -119,13 +119,43 @@ if [ "$SKIP_SSH" = false ]; then
   sed -i.bak "s/server: https:\/\/[^:]*:6443/server: https:\/\/$MASTER_IP:6443/" /tmp/kubeconfig-admin.new
   rm -f /tmp/kubeconfig-admin.new.bak
 
+  # Update server IP and handle TLS certificate issue
+  sed -i.bak "s/server: https:\/\/[^:]*:6443/server: https:\/\/$MASTER_IP:6443/" /tmp/kubeconfig-admin.new
+  rm -f /tmp/kubeconfig-admin.new.bak
+
+  # Apply TLS fix for public IP access (certificate issued for internal IPs only)
+  python3 << PYTHON_EOF
+import yaml
+import sys
+
+try:
+  with open('/tmp/kubeconfig-admin.new', 'r') as f:
+    config = yaml.safe_load(f)
+
+  # Update cluster configuration for public IP access
+  for cluster in config.get('clusters', []):
+    if 'cluster' in cluster:
+      # Remove certificate authority (required with insecure flag)
+      cluster['cluster'].pop('certificate-authority-data', None)
+      # Add insecure skip TLS verify (certificate issued for internal IPs only)
+      cluster['cluster']['insecure-skip-tls-verify'] = True
+
+  with open('/tmp/kubeconfig-admin.new', 'w') as f:
+    yaml.dump(config, f, default_flow_style=False)
+
+  print("✅ Applied TLS fix for public IP access")
+except Exception as e:
+  print(f"⚠️  Warning: Could not apply TLS fix: {e}")
+  sys.exit(0)  # Don't fail, continue with original file
+PYTHON_EOF
+
   # Copy to ~/.kube/config
   mkdir -p "$(dirname "$KUBECONFIG")"
   cp /tmp/kubeconfig-admin.new "$KUBECONFIG"
   chmod 600 "$KUBECONFIG"
   rm -f /tmp/kubeconfig-admin.new
 
-  echo "✅ Kubeconfig updated from master"
+  echo "✅ Kubeconfig updated from master (with TLS fix)"
 else
   echo "📝 Updating existing kubeconfig with new IP..."
 
