@@ -117,7 +117,9 @@ terraform:plan:staging:
         -backend-config="password=${TF_HTTP_PASSWORD}" \
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5"
+        -backend-config="retry_wait_min=5" \
+        -backend-config="retry_wait_max=30" \
+        -backend-config="max_retries=5"
 
     # Load staging variables
     - |
@@ -186,7 +188,9 @@ terraform:plan:production:
         -backend-config="password=${TF_HTTP_PASSWORD}" \
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5"
+        -backend-config="retry_wait_min=5" \
+        -backend-config="retry_wait_max=30" \
+        -backend-config="max_retries=5"
 
     # Load production variables
     - |
@@ -264,7 +268,9 @@ terraform:apply:staging:
         -backend-config="password=${TF_HTTP_PASSWORD}" \
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5"
+        -backend-config="retry_wait_min=5" \
+        -backend-config="retry_wait_max=30" \
+        -backend-config="max_retries=5"
 
     # Load staging variables
     - |
@@ -277,6 +283,18 @@ terraform:apply:staging:
     - |
       if terraform output -json &>/dev/null; then
         echo "✅ Apply completed successfully"
+
+        # Check if state upload failed and errored.tfstate exists
+        if [ -f "errored.tfstate" ]; then
+          echo "⚠️  State upload failed during apply, attempting to push errored state..."
+          if terraform state push errored.tfstate; then
+            echo "✅ State pushed successfully"
+            rm -f errored.tfstate
+          else
+            echo "❌ Failed to push state - may need manual intervention"
+            exit 1
+          fi
+        fi
       else
         echo "❌ Apply failed - resources may not have been created"
         exit 1
@@ -351,7 +369,9 @@ terraform:apply:production:
         -backend-config="password=${TF_HTTP_PASSWORD}" \
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5"
+        -backend-config="retry_wait_min=5" \
+        -backend-config="retry_wait_max=30" \
+        -backend-config="max_retries=5"
 
     # Load production variables
     - |
@@ -364,6 +384,18 @@ terraform:apply:production:
     - |
       if terraform output -json &>/dev/null; then
         echo "✅ Apply completed successfully"
+
+        # Check if state upload failed and errored.tfstate exists
+        if [ -f "errored.tfstate" ]; then
+          echo "⚠️  State upload failed during apply, attempting to push errored state..."
+          if terraform state push errored.tfstate; then
+            echo "✅ State pushed successfully"
+            rm -f errored.tfstate
+          else
+            echo "❌ Failed to push state - may need manual intervention"
+            exit 1
+          fi
+        fi
       else
         echo "❌ Apply failed - resources may not have been created"
         exit 1
@@ -514,7 +546,9 @@ terraform:destroy:staging:
         -backend-config="password=${TF_HTTP_PASSWORD}" \
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5"
+        -backend-config="retry_wait_min=5" \
+        -backend-config="retry_wait_max=30" \
+        -backend-config="max_retries=5"
 
     # Load staging variables
     - |
@@ -539,6 +573,18 @@ terraform:destroy:staging:
     - terraform apply -input=false -auto-approve -lock=false destroy.tfplan
     - |
       # After destroy, resources should be gone (no outputs expected)
+
+      # Check if state upload failed and errored.tfstate exists
+      if [ -f "errored.tfstate" ]; then
+        echo "⚠️  State upload failed during destroy, attempting to push errored state..."
+        if terraform state push errored.tfstate; then
+          echo "✅ State pushed successfully"
+          rm -f errored.tfstate
+        else
+          echo "❌ Failed to push state - resources destroyed but state not updated"
+          # Don't fail the job since destroy already succeeded
+        fi
+      fi
       echo "✅ Destroy completed successfully"
 
     - echo "Staging infrastructure destroyed successfully"
@@ -592,7 +638,9 @@ terraform:destroy:production:
         -backend-config="password=${TF_HTTP_PASSWORD}" \
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5"
+        -backend-config="retry_wait_min=5" \
+        -backend-config="retry_wait_max=30" \
+        -backend-config="max_retries=5"
 
     # Load production variables
     - |
@@ -617,6 +665,18 @@ terraform:destroy:production:
     - terraform apply -input=false -auto-approve -lock=false destroy.tfplan
     - |
       # After destroy, resources should be gone (no outputs expected)
+
+      # Check if state upload failed and errored.tfstate exists
+      if [ -f "errored.tfstate" ]; then
+        echo "⚠️  State upload failed during destroy, attempting to push errored state..."
+        if terraform state push errored.tfstate; then
+          echo "✅ State pushed successfully"
+          rm -f errored.tfstate
+        else
+          echo "❌ Failed to push state - resources destroyed but state not updated"
+          # Don't fail the job since destroy already succeeded
+        fi
+      fi
       echo "✅ Destroy completed successfully"
 
     - echo "Production infrastructure destroyed successfully"
