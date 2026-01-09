@@ -118,8 +118,7 @@ terraform:plan:staging:
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
         -backend-config="retry_wait_min=5" \
-        -backend-config="retry_wait_max=30" \
-        -backend-config="max_retries=5"
+        -backend-config="retry_wait_max=30"
 
     # Load staging variables
     - |
@@ -189,8 +188,7 @@ terraform:plan:production:
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
         -backend-config="retry_wait_min=5" \
-        -backend-config="retry_wait_max=30" \
-        -backend-config="max_retries=5"
+        -backend-config="retry_wait_max=30"
 
     # Load production variables
     - |
@@ -269,8 +267,7 @@ terraform:apply:staging:
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
         -backend-config="retry_wait_min=5" \
-        -backend-config="retry_wait_max=30" \
-        -backend-config="max_retries=5"
+        -backend-config="retry_wait_max=30"
 
     # Load staging variables
     - |
@@ -370,8 +367,7 @@ terraform:apply:production:
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
         -backend-config="retry_wait_min=5" \
-        -backend-config="retry_wait_max=30" \
-        -backend-config="max_retries=5"
+        -backend-config="retry_wait_max=30"
 
     # Load production variables
     - |
@@ -547,8 +543,7 @@ terraform:destroy:staging:
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
         -backend-config="retry_wait_min=5" \
-        -backend-config="retry_wait_max=30" \
-        -backend-config="max_retries=5"
+        -backend-config="retry_wait_max=30"
 
     # Load staging variables
     - |
@@ -639,8 +634,7 @@ terraform:destroy:production:
         -backend-config="lock_method=POST" \
         -backend-config="unlock_method=POST" \
         -backend-config="retry_wait_min=5" \
-        -backend-config="retry_wait_max=30" \
-        -backend-config="max_retries=5"
+        -backend-config="retry_wait_max=30"
 
     # Load production variables
     - |
