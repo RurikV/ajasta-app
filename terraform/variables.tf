@@ -163,6 +163,12 @@ variable "boot_disk_type" {
   default     = "network-hdd"
 }
 
+variable "boot_disk_size" {
+  description = "Boot disk size in GB"
+  type        = number
+  default     = 30
+}
+
 variable "master_core_fraction" {
   description = "Master CPU core fraction (5, 20, 50, 100)"
   type        = number

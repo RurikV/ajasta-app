@@ -276,29 +276,36 @@ terraform:apply:staging:
       fi
 
     # Apply the plan with locking disabled to prevent lock acquisition failures
-    - terraform apply -input=false -auto-approve -lock=false plan.tfplan
+    - terraform apply -input=false -auto-approve -lock=false plan.tfplan; APPLY_EXIT_CODE=$?
     - |
-      if terraform output -json &>/dev/null; then
-        echo "✅ Apply completed successfully"
-
-        # Check if state upload failed and errored.tfstate exists
-        if [ -f "errored.tfstate" ]; then
-          echo "⚠️  State upload failed during apply, attempting to push errored state..."
-          if terraform state push errored.tfstate; then
-            echo "✅ State pushed successfully"
-            rm -f errored.tfstate
-          else
-            echo "❌ Failed to push state - may need manual intervention"
-            exit 1
-          fi
+      # Check if state upload failed and errored.tfstate exists
+      if [ -f "errored.tfstate" ]; then
+        echo "⚠️  State upload failed during apply, attempting to push errored state..."
+        if terraform state push -lock=false errored.tfstate; then
+          echo "✅ State pushed successfully"
+          rm -f errored.tfstate
+          APPLY_EXIT_CODE=0  # Override exit code since state was recovered
+        else
+          echo "❌ Failed to push state - resources created but state not saved"
+          APPLY_EXIT_CODE=1
         fi
-      else
+      fi
+
+      # Check apply result
+      if [ $APPLY_EXIT_CODE -ne 0 ]; then
         echo "❌ Apply failed - resources may not have been created"
         exit 1
       fi
+      echo "✅ Apply completed successfully"
 
-    # Output results
+    # Output results (always generate outputs even after state recovery)
     - terraform output -json > outputs.json
+    - |
+      if [ -s outputs.json ]; then
+        echo "✅ Outputs generated successfully"
+      else
+        echo "⚠️  Warning: outputs.json is empty"
+      fi
     - |
       echo "Staging deployment completed successfully!"
       echo ""
@@ -376,29 +383,36 @@ terraform:apply:production:
       fi
 
     # Apply the plan with locking disabled to prevent lock acquisition failures
-    - terraform apply -input=false -auto-approve -lock=false plan.tfplan
+    - terraform apply -input=false -auto-approve -lock=false plan.tfplan; APPLY_EXIT_CODE=$?
     - |
-      if terraform output -json &>/dev/null; then
-        echo "✅ Apply completed successfully"
-
-        # Check if state upload failed and errored.tfstate exists
-        if [ -f "errored.tfstate" ]; then
-          echo "⚠️  State upload failed during apply, attempting to push errored state..."
-          if terraform state push errored.tfstate; then
-            echo "✅ State pushed successfully"
-            rm -f errored.tfstate
-          else
-            echo "❌ Failed to push state - may need manual intervention"
-            exit 1
-          fi
+      # Check if state upload failed and errored.tfstate exists
+      if [ -f "errored.tfstate" ]; then
+        echo "⚠️  State upload failed during apply, attempting to push errored state..."
+        if terraform state push -lock=false errored.tfstate; then
+          echo "✅ State pushed successfully"
+          rm -f errored.tfstate
+          APPLY_EXIT_CODE=0  # Override exit code since state was recovered
+        else
+          echo "❌ Failed to push state - resources created but state not saved"
+          APPLY_EXIT_CODE=1
         fi
-      else
+      fi
+
+      # Check apply result
+      if [ $APPLY_EXIT_CODE -ne 0 ]; then
         echo "❌ Apply failed - resources may not have been created"
         exit 1
       fi
+      echo "✅ Apply completed successfully"
 
-    # Output results
+    # Output results (always generate outputs even after state recovery)
     - terraform output -json > outputs.json
+    - |
+      if [ -s outputs.json ]; then
+        echo "✅ Outputs generated successfully"
+      else
+        echo "⚠️  Warning: outputs.json is empty"
+      fi
     - |
       echo "Production deployment completed successfully!"
       echo ""
