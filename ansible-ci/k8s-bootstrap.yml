@@ -352,13 +352,40 @@
           - "To access the cluster:"
           - "  1. SSH to master: ssh {{ ssh_username }}@{{ groups['k8s-master'][0] }}"
           - "  2. Use kubectl: kubectl get nodes"
-          - "  3. Copy kubeconfig: scp {{ ssh_username }}@{{ groups['k8s-master'][0] }}:~/.kube/config ~/.kube/config"
+          - "  3. Update local kubeconfig: ./scripts/update-kubeconfig.sh"
           - ""
           - "Cluster is ready!"
           - "Check nodes: kubectl get nodes"
           - "Check pods: kubectl get pods -A"
           - ""
           - "Next steps:"
-          - "  - Deploy applications with: ansible-playbook -i inventory.ini deploy-apps.yml"
-          - "  - Or use Helm: helm install ajasta-app ../helm/ajasta-app"
+          - "  - Update kubeconfig: ./scripts/update-kubeconfig.sh"
+          - "  - Deploy applications: ansible-playbook -i inventory.ini deploy-apps.yml"
           - ""
+
+# ============================================================================
+# UPDATE LOCAL KUBECONFIG
+# ============================================================================
+- name: Update local kubeconfig with new cluster
+  hosts: local
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Update local kubeconfig
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "🔄 Updating local kubeconfig..."
+          - ""
+
+    - name: Run update-kubeconfig script
+      ansible.builtin.shell: |
+        {{ playbook_dir }}/scripts/update-kubeconfig.sh
+      register: kubeconfig_update
+      changed_when: false
+      failed_when: false
+
+    - name: Display kubeconfig update result
+      ansible.builtin.debug:
+        msg: "{{ kubeconfig_update.stdout_lines | default(['Kubeconfig update skipped or failed']) }}"
