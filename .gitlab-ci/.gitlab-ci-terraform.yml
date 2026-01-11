@@ -26,10 +26,17 @@
     # Navigate to terraform directory
     - cd ${TF_ROOT}
 
-    # Clean up any existing Terraform state files
-    - rm -f .terraform/terraform.tfstate .terraform.lock.hcl || true
+    # Clean up ALL local state and cache to ensure fresh start
+    - echo "🧹 Cleaning up local Terraform state and cache..."
+    - rm -rf .terraform || true
+    - rm -f .terraform.lock.hcl || true
     - rm -f terraform.tfstate* || true
+    - rm -f *.tfstate || true
+    - rm -f errored.tfstate || true
     - rm -f .terraform/environment || true
+    - find . -name "*.tfstate*" -type f -delete 2>/dev/null || true
+    - find . -name ".terraform" -type d -exec rm -rf {} + 2>/dev/null || true
+    - echo "✅ Cleanup complete"
 
     # Show versions
     - terraform --version
