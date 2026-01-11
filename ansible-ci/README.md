@@ -68,35 +68,67 @@ ansible-ci/
     ├── install-k8s.sh                     # Interactive installation script
     ├── upgrade-k8s.sh                     # Interactive upgrade script
     ├── update-kubeconfig.sh               # Update local kubeconfig from master
-    └── generate-inventory-from-terraform.sh  # Generate inventory from Terraform outputs
+    ├── generate-inventory-from-terraform.sh  # Generate inventory from Terraform outputs (with validation)
+    ├── update-and-generate-inventory.sh   # Orchestrated workflow: fetch + verify + generate
+    └── generate-inventory-from-yc.sh      # Fallback: generate inventory directly from Yandex Cloud
 ```
 
 ## Quick Start
 
 ### ⚠️ Important: GitLab Terraform Backend
 
-If you're using GitLab CI/CD with HTTP backend (which you are), the Terraform state is stored in GitLab, not locally. You need to fetch outputs first:
+If you're using GitLab CI/CD with HTTP backend (which you are), the Terraform state is stored in GitLab, not locally. You need to fetch outputs first.
+
+**Three Methods Available:**
+
+#### Method 1: Orchestrated Workflow (Recommended)
+
+Automatically fetches fresh outputs, validates against actual infrastructure, generates inventory, and tests connectivity:
 
 ```bash
-# Option 1: Automated (Recommended)
 cd ansible-ci
 export GITLAB_PAT="glpat-your-token-here"
-./scripts/generate-inventory-from-terraform.sh
+./scripts/update-and-generate-inventory.sh production
+```
 
-# Option 2: Manual step-by-step
-# Step 1: Set GitLab token
-export GITLAB_PAT="glpat-xxxxxxxxxxxxxxxxxxxx"
+**What it does:**
+1. Fetches fresh Terraform outputs from GitLab
+2. Verifies outputs match actual Yandex Cloud VMs
+3. Generates Ansible inventory with proper naming
+4. Tests SSH connectivity to all nodes
+5. Reports any issues with actionable steps
 
-# Step 2: Fetch outputs from GitLab
-cd ../../scripts
-./get-terraform-outputs-from-gitlab.sh production
+#### Method 2: Terraform-Based (When Outputs Are Fresh)
 
-# Step 3: Generate inventory
-cd ../ansible-ci
+Generate inventory from existing `terraform/outputs.json`:
+
+```bash
+cd ansible-ci
 ./scripts/generate-inventory-from-terraform.sh
 ```
 
-**See:** [GITLAB_TERRAFORM_WORKFLOW.md](GITLAB_TERRAFORM_WORKFLOW.md) for detailed instructions.
+**Features:**
+- Checks outputs.json age (warns if >60 minutes old)
+- Tests SSH connectivity to all nodes
+- Validates inventory format
+- Clear error messages if issues detected
+
+#### Method 3: Yandex Cloud Fallback (When Terraform Is Broken)
+
+Generate inventory directly from actual running VMs:
+
+```bash
+cd ansible-ci
+./scripts/generate-inventory-from-yc.sh
+```
+
+**Use when:**
+- GitLab PAT is unavailable/expired
+- Terraform state is stale or corrupted
+- Quick recovery during incidents
+- You need absolute certainty about actual VMs
+
+**See:** [GITLAB_TERRAFORM_WORKFLOW.md](GITLAB_TERRAFORM_WORKFLOW.md) for detailed GitLab workflow instructions.
 
 ### 1. Generate Inventory from Terraform
 
@@ -107,17 +139,26 @@ cd ansible-ci
 ./scripts/generate-inventory-from-terraform.sh
 ```
 
-This creates `inventory.ini` with VM IPs from Terraform outputs.
+This creates `inventory.ini` with VM IPs from Terraform outputs and validates connectivity.
 
 ### 2. Test Inventory Connectivity
 
 ```bash
 # Test master node
-ansible k8s-master -i inventory.ini -m ping
+ansible master-node -i inventory.ini -m ping
 
 # Test all nodes
-ansible k8s-master,k8s-workers -i inventory.ini -m ping
+ansible k8s -i inventory.ini -m ping
+
+# Test specific groups
+ansible cluster_master -i inventory.ini -m ping  # Master only
+ansible cluster_workers -i inventory.ini -m ping  # Workers only
 ```
+
+**Note:** The inventory uses a new naming convention to avoid Ansible warnings:
+- `master-node` (instead of `k8s-master` which conflicted with group name)
+- `worker-node-0`, `worker-node-1`, etc.
+- Group aliases: `k8s_master`, `k8s_workers`, `k8s` still work
 
 ### 3. Install Kubernetes
 
@@ -438,7 +479,7 @@ ansible-playbook -i inventory.ini k8s-install.yml -e kubernetes_version=1.34.3
 **Solution:**
 ```bash
 # Check if workers can reach master
-ansible k8s-workers -i inventory.ini -m shell -a "ping -c 3 {{ hostvars['k8s-master']['ansible_host'] }}"
+ansible cluster_workers -i inventory.ini -m shell -a "ping -c 3 {{ hostvars['master-node']['ansible_host'] }}"
 
 # Rejoin workers manually
 ansible-playbook -i inventory.ini k8s-join-workers.yml
@@ -446,12 +487,88 @@ ansible-playbook -i inventory.ini k8s-join-workers.yml
 
 ### Inventory Issues
 
-**Problem:** `k8s-master group not found in inventory`
+#### Problem: All Nodes Unreachable
 
-**Solution:** Run the inventory generation script:
+**Symptoms:**
+```
+✗ UNREACHABLE: master-node
+✗ UNREACHABLE: worker-node-0
+✗ UNREACHABLE: worker-node-1
+✗ UNREACHABLE: worker-node-2
+```
+
+**Root Cause:** Stale IPs in `terraform/outputs.json`
+
+**Solutions (in order):**
+
+**1. Use Yandex Cloud Fallback (Quickest):**
 ```bash
+cd ansible-ci
+./scripts/generate-inventory-from-yc.sh
+```
+This queries actual running VMs directly from Yandex Cloud.
+
+**2. Refresh Terraform Outputs:**
+```bash
+cd /Users/rurik/IdeaProjects/petrelevich/ajasta-app
 export GITLAB_PAT="glpat-your-token-here"
+./scripts/get-terraform-outputs-from-gitlab.sh production
+
+cd ansible-ci
 ./scripts/generate-inventory-from-terraform.sh
+```
+
+**3. Check Actual Infrastructure:**
+```bash
+# Compare outputs.json with actual VMs
+cat terraform/outputs.json | jq '.master_public_ip'
+yc compute instance list | grep k8s-master
+```
+
+#### Problem: outputs.json is Stale
+
+**Symptoms:**
+```
+⚠️ outputs.json is 120 minutes old (might be stale)
+```
+
+**Solution:**
+```bash
+# Refresh outputs
+cd /Users/rurik/IdeaProjects/petrelevich/ajasta-app
+export GITLAB_PAT="glpat-your-token-here"
+./scripts/get-terraform-outputs-from-gitlab.sh production
+```
+
+#### Problem: GitLab State is Out of Sync
+
+**Symptoms:**
+```
+✗ Outputs mismatch!
+  Actual master IP:    89.169.168.149
+  Outputs master IP:   158.160.92.226
+```
+
+**Solution:** Run terraform:apply in GitLab CI/CD to update state, OR use YC fallback:
+```bash
+cd ansible-ci
+./scripts/generate-inventory-from-yc.sh
+```
+
+#### Problem: "401 Unauthorized" from GitLab
+
+**Root Cause:** Expired or invalid GitLab PAT
+
+**Solution:**
+```bash
+# Check PAT is set
+echo $GITLAB_PAT
+
+# Regenerate PAT at:
+# https://otusteam.gitlab.yandexcloud.net/-/user_settings/personal_access_tokens
+# Required scope: api
+
+export GITLAB_PAT="glpat-new-token-here"
 ```
 
 ### SSH Connection Issues
@@ -568,14 +685,26 @@ The upgrade process:
 If you don't want to use the inventory generation script, create `inventory.ini` manually:
 
 ```ini
-[k8s-master]
-k8s-master ansible_host=158.160.69.86 ansible_user=ajasta ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
+[cluster_master]
+master-node ansible_host=89.169.168.149 ansible_user=ajasta ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
 
-[k8s-workers]
-k8s-worker-0 ansible_host=158.160.93.192 ansible_user=ajasta ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
-k8s-worker-1 ansible_host=158.160.91.136 ansible_user=ajasta ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
-k8s-worker-2 ansible_host=158.160.93.82 ansible_user=ajasta ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
+[cluster_workers]
+worker-node-0 ansible_host=89.169.180.229 ansible_user=ajasta ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
+worker-node-1 ansible_host=89.169.169.24 ansible_user=ajasta ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
+worker-node-2 ansible_host=89.169.180.211 ansible_user=ajasta ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
+
+[k8s_master:children]
+cluster_master
+
+[k8s_workers:children]
+cluster_workers
+
+[k8s:children]
+k8s_master
+k8s_workers
 ```
+
+**Note:** Using the new naming convention prevents Ansible warnings about duplicate group/host names.
 
 ### Multi-Environment Deployment
 
@@ -657,8 +786,19 @@ For issues or questions:
    - [K8S_INSTALLATION_UPGRADE_GUIDE.md](K8S_INSTALLATION_UPGRADE_GUIDE.md) - Complete installation & upgrade guide
    - [K8S_INSTALLATION_SUCCESS.md](K8S_INSTALLATION_SUCCESS.md) - Installation summary
    - [GITLAB_TERRAFORM_WORKFLOW.md](GITLAB_TERRAFORM_WORKFLOW.md) - GitLab workflow details
+   - [INVENTORY_GENERATION_FIX.md](INVENTORY_GENERATION_FIX.md) - Complete inventory generation guide and troubleshooting
 
 ## Version History
+
+### v2.1 (January 12, 2026) - Inventory Generation Overhaul
+- ✅ Complete rewrite of inventory generation system
+- ✅ Added connectivity validation and testing
+- ✅ Fixed Ansible naming conflicts (master-node, worker-node-X)
+- ✅ Added outputs.json age validation (warns if >60 min old)
+- ✅ Created orchestrated workflow script (fetch + verify + generate)
+- ✅ Added Yandex Cloud fallback (queries actual VMs directly)
+- ✅ Improved error messages with actionable steps
+- ✅ Comprehensive troubleshooting documentation
 
 ### v2.0 (January 2026) - Complete Rewrite
 - ✅ Version-flexible Kubernetes installation (any version)
@@ -688,6 +828,14 @@ For issues or questions:
 - ✅ All control plane pods running (0 restarts)
 - ✅ All worker nodes Ready
 - ✅ Package pinning enabled
+- ✅ Inventory generation system operational
+- ✅ All 4 nodes reachable (master + 3 workers)
+
+**Infrastructure:**
+- Master: 89.169.168.149
+- Worker-0: 89.169.180.229
+- Worker-1: 89.169.169.24
+- Worker-2: 89.169.180.211
 - ✅ Installation and upgrade systems operational
 
 ## License

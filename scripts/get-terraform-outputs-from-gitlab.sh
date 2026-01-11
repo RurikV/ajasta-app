@@ -157,11 +157,21 @@ detect_gitlab_info() {
 fetch_terraform_state() {
     print_header "Fetching Terraform State from GitLab"
 
+    # Remove old outputs file to ensure we don't use stale data
+    if [[ -f "${OUTPUTS_FILE}" ]]; then
+        log_info "Removing old outputs file: ${OUTPUTS_FILE}"
+        rm -f "${OUTPUTS_FILE}"
+    fi
+
     local state_url="${GITLAB_API_URL}/projects/${PROJECT_ID}/terraform/state/${ENVIRONMENT}"
 
     log_info "Fetching state from: ${state_url}"
 
-    STATE_RESPONSE=$(curl -s --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "${state_url}")
+    STATE_RESPONSE=$(curl -s \
+        --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+        --header "Cache-Control: no-cache, no-store, must-revalidate" \
+        --header "Pragma: no-cache" \
+        "${state_url}")
 
     # Check if state exists
     if echo "${STATE_RESPONSE}" | jq -e '.message' &> /dev/null; then
@@ -176,6 +186,12 @@ fetch_terraform_state() {
         echo "  4. Project ID is correct: ${PROJECT_ID}"
         echo "  5. GitLab instance URL is correct: ${GITLAB_API_URL}"
         exit 1
+    fi
+
+    # Display state update time for verification
+    STATE_UPDATED_AT=$(echo "${STATE_RESPONSE}" | jq -r '.updated_at // empty')
+    if [[ -n "${STATE_UPDATED_AT}" ]] && [[ "${STATE_UPDATED_AT}" != "null" ]]; then
+        log_info "State last updated: ${STATE_UPDATED_AT}"
     fi
 
     log_success "Terraform state fetched successfully"
@@ -204,8 +220,12 @@ extract_outputs() {
 
         log_info "Downloading state file from GitLab..."
 
-        # Download state file
-        STATE_JSON=$(curl -s --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "${STATE_DOWNLOAD_URL}")
+        # Download state file with cache-busting to ensure fresh data
+        STATE_JSON=$(curl -s \
+            --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+            --header "Cache-Control: no-cache, no-store, must-revalidate" \
+            --header "Pragma: no-cache" \
+            "${STATE_DOWNLOAD_URL}")
 
         # Extract outputs from state
         OUTPUTS=$(echo "${STATE_JSON}" | jq -r '.outputs // empty')
