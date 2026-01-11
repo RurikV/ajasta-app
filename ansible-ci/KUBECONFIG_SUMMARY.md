@@ -260,13 +260,6 @@ ssh -i ~/.ssh/id_rsa_k8s ajasta@<MASTER_IP> hostname
 ssh -i ~/.ssh/id_rsa_k8s ajasta@<MASTER_IP> "sudo kubectl get nodes"
 ```
 
-### Terraform Outputs Missing
-```bash
-# Generate outputs manually
-cd terraform
-./scripts/generate-outputs.sh
-```
-
 ### kubectl Shows Wrong Cluster
 ```bash
 # Check which config is being used
