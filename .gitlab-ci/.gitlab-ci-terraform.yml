@@ -579,20 +579,29 @@ terraform:destroy:staging:
     - terraform show -no-color destroy.tfplan
 
     # Apply destroy with locking disabled to prevent lock acquisition failures
-    - terraform apply -input=false -auto-approve -lock=false destroy.tfplan
+    # Use || true to allow error handling for state upload failures
+    - terraform apply -input=false -auto-approve -lock=false destroy.tfplan || DESTROY_APPLY_FAILED=true
     - |
       # After destroy, resources should be gone (no outputs expected)
 
       # Check if state upload failed and errored.tfstate exists
       if [ -f "errored.tfstate" ]; then
         echo "⚠️  State upload failed during destroy, attempting to push errored state..."
-        if terraform state push errored.tfstate; then
+        if terraform state push -lock=false errored.tfstate; then
           echo "✅ State pushed successfully"
           rm -f errored.tfstate
+          unset DESTROY_APPLY_FAILED
         else
           echo "❌ Failed to push state - resources destroyed but state not updated"
-          # Don't fail the job since destroy already succeeded
+          echo "⚠️  This is non-critical - resources are already destroyed"
+          unset DESTROY_APPLY_FAILED
         fi
+      fi
+
+      # Only fail if destroy itself failed (not just state upload)
+      if [ "${DESTROY_APPLY_FAILED:-false}" = "true" ]; then
+        echo "❌ Destroy apply failed - resources may not have been destroyed"
+        exit 1
       fi
       echo "✅ Destroy completed successfully"
 
@@ -670,20 +679,29 @@ terraform:destroy:production:
     - terraform show -no-color destroy.tfplan
 
     # Apply destroy with locking disabled to prevent lock acquisition failures
-    - terraform apply -input=false -auto-approve -lock=false destroy.tfplan
+    # Use || true to allow error handling for state upload failures
+    - terraform apply -input=false -auto-approve -lock=false destroy.tfplan || DESTROY_APPLY_FAILED=true
     - |
       # After destroy, resources should be gone (no outputs expected)
 
       # Check if state upload failed and errored.tfstate exists
       if [ -f "errored.tfstate" ]; then
         echo "⚠️  State upload failed during destroy, attempting to push errored state..."
-        if terraform state push errored.tfstate; then
+        if terraform state push -lock=false errored.tfstate; then
           echo "✅ State pushed successfully"
           rm -f errored.tfstate
+          unset DESTROY_APPLY_FAILED
         else
           echo "❌ Failed to push state - resources destroyed but state not updated"
-          # Don't fail the job since destroy already succeeded
+          echo "⚠️  This is non-critical - resources are already destroyed"
+          unset DESTROY_APPLY_FAILED
         fi
+      fi
+
+      # Only fail if destroy itself failed (not just state upload)
+      if [ "${DESTROY_APPLY_FAILED:-false}" = "true" ]; then
+        echo "❌ Destroy apply failed - resources may not have been destroyed"
+        exit 1
       fi
       echo "✅ Destroy completed successfully"
 
