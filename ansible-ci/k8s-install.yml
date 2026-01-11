@@ -1,0 +1,91 @@
+---
+# Initial Kubernetes Installation Playbook
+# This playbook installs Kubernetes on existing VMs
+# Usage: ansible-playbook -i inventory.ini k8s-install.yml -e kubernetes_version=1.29.15
+
+- name: Initial Kubernetes Installation
+  hosts: k8s-master, k8s-workers
+  become: true
+  gather_facts: true
+
+  vars:
+    # Default version - can be overridden with extra-vars
+    kubernetes_version: "{{ lookup('env', 'KUBERNETES_VERSION') | default('1.29.15', true) }}"
+
+  pre_tasks:
+    - name: Display installation information
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Kubernetes Installation"
+          - "=========================================="
+          - "Kubernetes version: {{ kubernetes_version }}"
+          - "Target nodes:"
+          - "  - Master: {{ groups['k8s-master'] | default([]) }}"
+          - "  - Workers: {{ groups['k8s-workers'] | default([]) }}"
+          - "=========================================="
+
+    - name: Verify inventory has required groups
+      ansible.builtin.assert:
+        that:
+          - groups['k8s-master'] is defined
+          - groups['k8s-master'] | length > 0
+        fail_msg: "k8s-master group must be defined in inventory with at least one node"
+
+  roles:
+    - role: ports_verify
+    - role: containerd_config
+    - role: registry
+    - role: system_checks
+    - role: kubernetes_install
+      kubernetes_version: "{{ kubernetes_version }}"
+    - role: cri_ready
+
+  post_tasks:
+    - name: Display installation complete message
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Kubernetes Installation Complete!"
+          - "=========================================="
+          - "Version installed: {{ kubernetes_version }}"
+          - "Next steps:"
+          - "  1. Initialize cluster: ansible-playbook -i inventory.ini k8s-init.yml"
+          - "  2. Join workers: ansible-playbook -i inventory.ini k8s-join-workers.yml"
+          - "=========================================="
+
+- name: Initialize Kubernetes Cluster on Master
+  hosts: k8s-master
+  become: true
+  gather_facts: true
+
+  vars:
+    kubernetes_version: "{{ lookup('env', 'KUBERNETES_VERSION') | default('1.29.15', true) }}"
+
+  roles:
+    - role: kubeadm_init
+      kubernetes_version: "{{ kubernetes_version }}"
+
+  post_tasks:
+    - name: Display master initialization complete
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Master node initialized successfully!"
+          - "=========================================="
+          - "Next: Join worker nodes"
+          - "  ansible-playbook -i inventory.ini k8s-join-workers.yml"
+          - "=========================================="
+
+- name: Install CNI Plugin
+  hosts: k8s-master
+  become: true
+  gather_facts: false
+
+  roles:
+    - role: cni_install
+
+  post_tasks:
+    - name: Display CNI installation complete
+      ansible.builtin.debug:
+        msg: "CNI (Flannel) installed successfully"

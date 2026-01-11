@@ -1,0 +1,304 @@
+---
+# Upgrade Kubernetes cluster to a new version
+# This follows the official Kubernetes upgrade process:
+# 1. Upgrade master node (control plane)
+# 2. Upgrade worker nodes one by one
+
+- name: Display upgrade plan
+  ansible.builtin.debug:
+    msg:
+      - "=========================================="
+      - "Kubernetes Cluster Upgrade"
+      - "=========================================="
+      - "Target version: {{ kubernetes_target_version }}"
+      - "Current version: {{ kubernetes_version }}"
+      - "Node role: {{ inventory_hostname }}"
+      - "=========================================="
+
+- name: Verify kubeadm can upgrade to target version
+  ansible.builtin.command: kubeadm version -o short
+  register: current_kubeadm_version
+  changed_when: false
+  failed_when: false
+
+- name: Show current version
+  ansible.builtin.debug:
+    msg: "Current kubeadm version: {{ current_kubeadm_version.stdout }}"
+
+# ============================================================================
+# PRE-UPGRADE CHECKS
+# ============================================================================
+
+- name: Check if cluster is healthy
+  ansible.builtin.shell: kubectl get cs 2>/dev/null || kubectl get componentstatuses 2>/dev/null || echo "Using API server health check"
+  run_once: true
+  delegate_to: "{{ groups['k8s-master'][0] }}"
+  become: false
+  register: cluster_health
+  failed_when: false
+  changed_when: false
+
+- name: Show cluster health status
+  ansible.builtin.debug:
+    msg: "Cluster health: {{ cluster_health.stdout }}"
+
+# ============================================================================
+# MASTER NODE UPGRADE
+# ============================================================================
+- name: Upgrade master node (control plane)
+  when: "'k8s-master' in group_names or inventory_hostname.startswith('k8s-master')"
+  block:
+    - name: Mark master as unschedulable
+      ansible.builtin.command: kubectl cordon {{ inventory_hostname }}
+      become: false
+      register: master_cordon
+      changed_when: false
+      failed_when: false
+
+    - name: Show master cordoned status
+      ansible.builtin.debug:
+        msg: "Master node {{ inventory_hostname }} marked as unschedulable"
+
+    # Upgrade kubeadm first
+    - name: Upgrade kubeadm to {{ kubernetes_target_version }} (RedHat)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        dnf -y install --disableexcludes=kubernetes \
+          kubeadm-{{ kubernetes_target_version }}-*
+      become: true
+      when: ansible_os_family == 'RedHat'
+      register: kubeadm_upgrade_rh
+      failed_when: kubeadm_upgrade_rh.rc != 0
+
+    - name: Upgrade kubeadm to {{ kubernetes_target_version }} (Debian)
+      ansible.builtin.apt:
+        name: "kubeadm={{ kubernetes_target_version }}*"
+        state: present
+        force: yes
+        update_cache: yes
+      become: true
+      when: ansible_os_family == 'Debian'
+      register: kubeadm_upgrade_deb
+
+    - name: Verify kubeadm version after upgrade
+      ansible.builtin.command: kubeadm version -o short
+      become: true
+      register: kubeadm_version_after
+      changed_when: false
+
+    - name: Show kubeadm version
+      ansible.builtin.debug:
+        msg: "Kubeadm upgraded to: {{ kubeadm_version_after.stdout }}"
+
+    # Plan the upgrade
+    - name: Plan Kubernetes control plane upgrade
+      ansible.builtin.command: kubeadm upgrade plan {{ kubernetes_target_version }}
+      become: true
+      register: kubeadm_upgrade_plan
+      changed_when: false
+      failed_when: false
+
+    - name: Show upgrade plan
+      ansible.builtin.debug:
+        msg: "{{ kubeadm_upgrade_plan.stdout_lines }}"
+      when: kubeadm_upgrade_plan.rc == 0
+
+    # Apply the upgrade
+    - name: Apply Kubernetes control plane upgrade
+      ansible.builtin.command: kubeadm upgrade apply {{ kubernetes_target_version }} --yes
+      become: true
+      register: kubeadm_upgrade_apply
+      failed_when: kubeadm_upgrade_apply.rc != 0
+
+    - name: Show control plane upgrade output
+      ansible.builtin.debug:
+        msg: "{{ kubeadm_upgrade_apply.stdout_lines }}"
+
+    # Upgrade kubelet and kubectl
+    - name: Upgrade kubelet and kubectl to {{ kubernetes_target_version }} (RedHat)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        dnf -y install --disableexcludes=kubernetes \
+          kubelet-{{ kubernetes_target_version }}-* \
+          kubectl-{{ kubernetes_target_version }}-*
+      become: true
+      when: ansible_os_family == 'RedHat'
+      register: kubelet_kubectl_upgrade_rh
+      failed_when: kubelet_kubectl_upgrade_rh.rc != 0
+
+    - name: Upgrade kubelet and kubectl to {{ kubernetes_target_version }} (Debian)
+      ansible.builtin.apt:
+        name:
+          - "kubelet={{ kubernetes_target_version }}*"
+          - "kubectl={{ kubernetes_target_version }}*"
+        state: present
+        force: yes
+      become: true
+      when: ansible_os_family == 'Debian'
+      register: kubelet_kubectl_upgrade_deb
+
+    - name: Hold Kubernetes packages at upgraded version
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+      become: true
+      when:
+        - kubernetes_hold_packages_after_upgrade | default(true)
+        - ansible_os_family == 'Debian'
+
+    - name: Restart kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+        daemon_reload: true
+      become: true
+
+    - name: Wait for kubelet to be healthy
+      ansible.builtin.wait_for:
+        timeout: 60
+      delegate_to: localhost
+
+    - name: Verify node is Ready
+      ansible.builtin.shell: kubectl get node {{ inventory_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      become: false
+      register: node_ready_status
+      changed_when: false
+      failed_when: node_ready_status.stdout != "True"
+      retries: 10
+      delay: 10
+
+    - name: Show master upgrade complete
+      ansible.builtin.debug:
+        msg: "Master node {{ inventory_hostname }} upgraded to {{ kubernetes_target_version }} successfully"
+
+# ============================================================================
+# WORKER NODE UPGRADE
+# ============================================================================
+- name: Upgrade worker node
+  when: "'k8s-workers' in group_names or inventory_hostname.startswith('k8s-worker')"
+  block:
+    - name: Drain worker node
+      ansible.builtin.command: |
+        kubectl drain {{ inventory_hostname }} \
+          --ignore-daemonsets={{ kubernetes_upgrade_drain_ignore_daemonsets | bool }} \
+          --delete-local-data={{ kubernetes_upgrade_drain_delete_local_data | bool }} \
+          --timeout={{ kubernetes_upgrade_drain_timeout }}s \
+          --force={{ kubernetes_upgrade_force | bool }}
+      become: false
+      delegate_to: "{{ groups['k8s-master'][0] }}"
+      register: worker_drain
+      failed_when: worker_drain.rc != 0
+
+    - name: Show worker drained
+      ansible.builtin.debug:
+        msg: "Worker node {{ inventory_hostname }} drained successfully"
+
+    # Upgrade kubeadm
+    - name: Upgrade kubeadm on worker to {{ kubernetes_target_version }} (RedHat)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        dnf -y install --disableexcludes=kubernetes \
+          kubeadm-{{ kubernetes_target_version }}-*
+      become: true
+      when: ansible_os_family == 'RedHat'
+
+    - name: Upgrade kubeadm on worker to {{ kubernetes_target_version }} (Debian)
+      ansible.builtin.apt:
+        name: "kubeadm={{ kubernetes_target_version }}*"
+        state: present
+        force: yes
+      become: true
+      when: ansible_os_family == 'Debian'
+
+    # Upgrade kubelet and kubectl
+    - name: Upgrade kubelet and kubectl on worker to {{ kubernetes_target_version }} (RedHat)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        dnf -y install --disableexcludes=kubernetes \
+          kubelet-{{ kubernetes_target_version }}-* \
+          kubectl-{{ kubernetes_target_version }}-*
+      become: true
+      when: ansible_os_family == 'RedHat'
+
+    - name: Upgrade kubelet and kubectl on worker to {{ kubernetes_target_version }} (Debian)
+      ansible.builtin.apt:
+        name:
+          - "kubelet={{ kubernetes_target_version }}*"
+          - "kubectl={{ kubernetes_target_version }}*"
+        state: present
+        force: yes
+      become: true
+      when: ansible_os_family == 'Debian'
+
+    - name: Hold Kubernetes packages at upgraded version
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+      become: true
+      when:
+        - kubernetes_hold_packages_after_upgrade | default(true)
+        - ansible_os_family == 'Debian'
+
+    - name: Restart kubelet on worker
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+        daemon_reload: true
+      become: true
+
+    # Uncordon the worker
+    - name: Uncordon worker node
+      ansible.builtin.command: kubectl uncordon {{ inventory_hostname }}
+      become: false
+      delegate_to: "{{ groups['k8s-master'][0] }}"
+      register: worker_uncordon
+      changed_when: false
+
+    - name: Wait for worker to be Ready
+      ansible.builtin.shell: kubectl get node {{ inventory_hostname }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      become: false
+      delegate_to: "{{ groups['k8s-master'][0] }}"
+      register: worker_ready_status
+      changed_when: false
+      failed_when: worker_ready_status.stdout != "True"
+      retries: 10
+      delay: 10
+
+    - name: Show worker upgrade complete
+      ansible.builtin.debug:
+        msg: "Worker node {{ inventory_hostname }} upgraded to {{ kubernetes_target_version }} successfully"
+
+# ============================================================================
+# POST-UPGRADE VERIFICATION
+# ============================================================================
+
+- name: Verify all nodes are Ready after upgrade
+  ansible.builtin.shell: kubectl get nodes -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}'
+  become: false
+  run_once: true
+  delegate_to: "{{ groups['k8s-master'][0] }}"
+  register: all_nodes_ready
+  changed_when: false
+  retries: 10
+  delay: 5
+
+- name: Show cluster status after upgrade
+  ansible.builtin.shell: kubectl get nodes
+  become: false
+  run_once: true
+  delegate_to: "{{ groups['k8s-master'][0] }}"
+  register: cluster_nodes_after
+  changed_when: false
+
+- name: Display final cluster status
+  ansible.builtin.debug:
+    msg: "{{ cluster_nodes_after.stdout_lines }}"
+  run_once: true

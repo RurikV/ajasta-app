@@ -1,0 +1,21 @@
+---
+# Kubernetes upgrade configuration
+# These variables should be passed via extra-vars during upgrade
+
+# Target version to upgrade TO
+kubernetes_target_version: "1.30.0"
+kubernetes_target_version_base: "{{ kubernetes_target_version | regex_replace('^([0-9]+)\\.[0-9]+\\..*$', '\\1') }}"
+
+# Dynamic repository URLs for target version
+kubernetes_yum_baseurl_target: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_target_version_base }}/rpm/"
+kubernetes_apt_url_target: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_target_version_base }}/deb"
+kubernetes_apt_key_target: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_target_version_base }}/deb/Release.key"
+
+# Upgrade settings
+kubernetes_upgrade_drain_timeout: 300
+kubernetes_upgrade_drain_ignore_daemonsets: true
+kubernetes_upgrade_drain_delete_local_data: false
+kubernetes_upgrade_force: false
+
+# Hold packages after upgrade
+kubernetes_hold_packages_after_upgrade: true

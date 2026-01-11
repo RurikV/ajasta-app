@@ -57,22 +57,23 @@
     - name: Add Kubernetes YUM repository
       ansible.builtin.yum_repository:
         name: kubernetes
-        description: Kubernetes
+        description: Kubernetes {{ kubernetes_version }}
         baseurl: "{{ kubernetes_yum_baseurl }}"
         enabled: true
         gpgcheck: true
         gpgkey: "{{ kubernetes_yum_baseurl }}/repodata/repomd.xml.key"
         exclude:
-          - kubelet
-          - kubeadm
-          - kubectl
+          - kubelet*
+          - kubeadm*
+          - kubectl*
       become: true
 
-    - name: Install Kubernetes packages with timeout/retries
+    - name: Install Kubernetes packages (version {{ kubernetes_version }})
       ansible.builtin.shell: |
         set -euo pipefail
         for i in {1..3}; do
-          timeout 180 dnf -y install --disableexcludes=kubernetes kubelet kubeadm kubectl && exit 0
+          timeout 180 dnf -y install --disableexcludes=kubernetes \
+            kubelet kubeadm kubectl && exit 0
           echo "[kubernetes_install] dnf install attempt $i failed, retrying in 5s..." >&2
           sleep 5
         done
@@ -83,6 +84,16 @@
       become: true
       changed_when: k8s_install_rh.rc == 0
       failed_when: k8s_install_rh.rc != 0
+
+    - name: Verify installed Kubernetes versions
+      ansible.builtin.shell: |
+        kubelet --version
+        kubeadm version
+        kubectl version --client
+      args:
+        executable: /bin/bash
+      register: k8s_versions_check
+      changed_when: false
 
     - name: Enable kubelet service (don't start - kubeadm will do it)
       ansible.builtin.service:
@@ -111,33 +122,34 @@
         update_cache: yes
       become: true
 
-    - name: Download Kubernetes GPG key
+    - name: Download Kubernetes GPG key for version {{ kubernetes_version_base }}
       ansible.builtin.get_url:
-        url: "https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key"
+        url: "{{ kubernetes_apt_key }}"
         dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
         mode: '0644'
         timeout: 30
       become: true
 
-    - name: Add Kubernetes APT repository
+    - name: Add Kubernetes APT repository for version {{ kubernetes_version_base }}
       ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] {{ kubernetes_apt_url }}/ /"
         state: present
         filename: kubernetes
         update_cache: yes
       become: true
 
-    - name: Install Kubernetes packages
+    - name: Install specific Kubernetes packages version {{ kubernetes_version }}
       ansible.builtin.apt:
         name:
-          - kubelet
-          - kubeadm
-          - kubectl
+          - kubelet={{ kubernetes_version }}*
+          - kubeadm={{ kubernetes_version }}*
+          - kubectl={{ kubernetes_version }}*
         state: present
         update_cache: yes
+        force: yes
       become: true
 
-    - name: Hold Kubernetes packages at current version
+    - name: Hold Kubernetes packages at version {{ kubernetes_version }}
       ansible.builtin.dpkg_selections:
         name: "{{ item }}"
         selection: hold
@@ -146,6 +158,7 @@
         - kubeadm
         - kubectl
       become: true
+      when: kubernetes_hold_packages | default(true)
 
     - name: Enable kubelet service (don't start - kubeadm will do it)
       ansible.builtin.service:

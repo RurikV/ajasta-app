@@ -1,0 +1,88 @@
+---
+# Join worker nodes to the Kubernetes cluster
+# Usage: ansible-playbook -i inventory.ini k8s-join-workers.yml
+
+- name: Join Worker Nodes to Cluster
+  hosts: k8s-master
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Display worker join information
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Join Worker Nodes to Cluster"
+          - "=========================================="
+          - "This playbook will join {{ groups['k8s-workers'] | length }} worker nodes"
+          - "=========================================="
+
+    - name: Generate kubeadm join command
+      ansible.builtin.shell: |
+        kubeadm token create --print-join-command
+      register: kubeadm_join_command
+      changed_when: false
+
+    - name: Display join command (for reference)
+      ansible.builtin.debug:
+        msg: "{{ kubeadm_join_command.stdout }}"
+
+    - name: Set join command fact
+      ansible.builtin.set_fact:
+        kubernetes_join_command: "{{ kubeadm_join_command.stdout }}"
+
+- name: Execute join on worker nodes
+  hosts: k8s-workers
+  become: true
+  gather_facts: true
+
+  vars:
+    # Get join command from master
+    kubernetes_join_command: "{{ hostvars[groups['k8s-master'][0]]['kubernetes_join_command'] }}"
+
+  pre_tasks:
+    - name: Display join information for this worker
+      ansible.builtin.debug:
+        msg: "Joining {{ inventory_hostname }} to the cluster..."
+
+  tasks:
+    - name: Join worker to cluster
+      ansible.builtin.shell: |
+        {{ kubernetes_join_command }}
+      register: worker_join
+      changed_when: worker_join.rc == 0
+      failed_when: worker_join.rc != 0
+
+    - name: Display worker join result
+      ansible.builtin.debug:
+        msg: "Worker {{ inventory_hostname }} joined successfully"
+
+- name: Verify all nodes are Ready
+  hosts: k8s-master
+  become: true
+  gather_facts: false
+
+  post_tasks:
+    - name: Wait for nodes to be Ready
+      ansible.builtin.shell: |
+        kubectl get nodes -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}'
+      register: nodes_ready
+      changed_when: false
+      until: nodes_ready.stdout.split() | select('match', '^True$') | list | length == nodes_ready.stdout.split() | length
+      retries: 20
+      delay: 10
+      timeout: 300
+
+    - name: Display cluster nodes
+      ansible.builtin.shell: kubectl get nodes
+      register: cluster_nodes
+      changed_when: false
+
+    - name: Show cluster status
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Worker Nodes Joined Successfully!"
+          - "=========================================="
+          - "{{ cluster_nodes.stdout_lines }}"
+          - "=========================================="

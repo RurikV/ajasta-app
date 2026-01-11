@@ -1,0 +1,156 @@
+---
+# Kubernetes Cluster Upgrade Playbook
+# This playbook upgrades a Kubernetes cluster from one version to another
+# Usage: ansible-playbook -i inventory.ini k8s-upgrade.yml -e kubernetes_target_version=1.30.0
+
+- name: Upgrade Kubernetes Cluster
+  hosts: k8s-master, k8s-workers
+  become: true
+  gather_facts: true
+
+  vars:
+    # Target version to upgrade TO
+    kubernetes_target_version: "{{ lookup('env', 'KUBERNETES_TARGET_VERSION') | default('1.30.0', true) }}"
+
+    # Current version (auto-detected from installed packages)
+    kubernetes_version: "{{ lookup('env', 'KUBERNETES_VERSION') | default('', true) }}"
+
+  pre_tasks:
+    - name: Display upgrade plan
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Kubernetes Cluster Upgrade"
+          - "=========================================="
+          - "Target version: {{ kubernetes_target_version }}"
+          - "Current version: {{ kubernetes_version | default('Auto-detected') }}"
+          - "Nodes to upgrade:"
+          - "  - Master: {{ groups['k8s-master'] | default([]) }}"
+          - "  - Workers: {{ groups['k8s-workers'] | default([]) }}"
+          - ""
+          - "IMPORTANT: This will:"
+          - "  1. Upgrade master node first (control plane)"
+          - "  2. Upgrade worker nodes one by one"
+          - "  3. Drain nodes during upgrade (downtime for workloads)"
+          - ""
+          - "Press Ctrl+C to cancel or continue..."
+          - "=========================================="
+
+    - name: Pause for confirmation (10 seconds)
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Detect current Kubernetes version
+      ansible.builtin.shell: kubectl version --short 2>&1 | grep 'Server Version' || kubeadm version -o short
+      run_once: true
+      delegate_to: "{{ groups['k8s-master'][0] }}"
+      register: detected_k8s_version
+      changed_when: false
+      failed_when: false
+
+    - name: Set detected version if not provided
+      ansible.builtin.set_fact:
+        kubernetes_version: "{{ detected_k8s_version.stdout | regex_replace('.*v([0-9.]+).*', '\\1') }}"
+      when:
+        - (kubernetes_version | default('') | length) == 0
+        - detected_k8s_version.rc == 0
+
+    - name: Display version information
+      ansible.builtin.debug:
+        msg:
+          - "Current Kubernetes version: {{ kubernetes_version | default('Unknown') }}"
+          - "Target Kubernetes version: {{ kubernetes_target_version }}"
+      run_once: true
+
+    - name: Verify upgrade path is valid
+      ansible.builtin.assert:
+        that:
+          - kubernetes_target_version is version(kubernetes_version | default('0.0.0'), '>=')
+        fail_msg: "Target version must be greater than or equal to current version"
+        any_errors_fatal: true
+      run_once: true
+
+    - name: Check if cluster is healthy before upgrade
+      ansible.builtin.shell: kubectl get endpoints kube-dns -n kube-system -o jsonpath='{.subsets[*].addresses[*].ip}'
+      run_once: true
+      delegate_to: "{{ groups['k8s-master'][0] }}"
+      register: cluster_health
+      changed_when: false
+      failed_when: cluster_health.rc != 0
+
+    - name: Show cluster health status
+      ansible.builtin.debug:
+        msg: "Cluster is healthy: {{ 'YES' if cluster_health.rc == 0 else 'NO' }}"
+      run_once: true
+
+  roles:
+    - role: kubernetes_upgrade
+
+  post_tasks:
+    - name: Verify cluster after upgrade
+      block:
+        - name: Wait for API server to be ready
+          ansible.builtin.wait_for:
+            host: "{{ inventory_hostname }}"
+            port: 6443
+            timeout: 120
+          delegate_to: localhost
+          run_once: true
+          when: "'k8s-master' in group_names"
+
+        - name: Get cluster version
+          ansible.builtin.shell: kubectl version --short
+          run_once: true
+          delegate_to: "{{ groups['k8s-master'][0] }}"
+          register: cluster_version_after
+          changed_when: false
+          retries: 5
+          delay: 5
+
+        - name: Display cluster version after upgrade
+          ansible.builtin.debug:
+            msg: "{{ cluster_version_after.stdout_lines }}"
+          run_once: true
+
+        - name: Get all nodes status
+          ansible.builtin.shell: kubectl get nodes
+          run_once: true
+          delegate_to: "{{ groups['k8s-master'][0] }}"
+          register: nodes_after_upgrade
+          changed_when: false
+
+        - name: Display upgrade complete message
+          ansible.builtin.debug:
+            msg:
+              - "=========================================="
+              - "✅ Kubernetes Cluster Upgrade Complete!"
+              - "=========================================="
+              - "Upgraded from: {{ kubernetes_version | default('Unknown') }}"
+              - "Upgraded to: {{ kubernetes_target_version }}"
+              - ""
+              - "Cluster nodes:"
+              - "{{ nodes_after_upgrade.stdout_lines }}"
+              - ""
+              - "Recommended next steps:"
+              - "  1. Verify workloads are running: kubectl get pods -A"
+              - "  2. Check cluster health: kubectl get cs"
+              - "  3. Run application tests"
+              - "=========================================="
+          run_once: true
+
+- name: Update local kubeconfig
+  hosts: local
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Run update-kubeconfig script
+      ansible.builtin.shell: |
+        {{ playbook_dir }}/scripts/update-kubeconfig.sh
+      register: kubeconfig_update
+      changed_when: false
+      failed_when: false
+
+    - name: Display kubeconfig update result
+      ansible.builtin.debug:
+        msg: "{{ kubeconfig_update.stdout_lines | default(['Kubeconfig update skipped or failed']) }}"

@@ -1,14 +1,22 @@
-# Ansible CI - Kubernetes Bootstrap & Application Deployment
+# Ansible CI - Kubernetes Installation & Application Deployment
 
-This directory contains Ansible playbooks for bootstrapping Kubernetes on Terraform-provisioned VMs and deploying the Ajasta application.
+This directory contains Ansible playbooks for installing Kubernetes on Terraform-provisioned VMs and deploying the Ajasta application.
 
 ## Purpose
 
 `ansible-ci` is designed to work with infrastructure created by Terraform in the `terraform/` directory. Unlike `ansible-k8s` (which provisions VMs and bootstraps K8s), `ansible-ci` focuses on:
 
-1. **Bootstrapping Kubernetes** on VMs already created by Terraform
-2. **Deploying applications** using Helm charts
-3. **Managing the application lifecycle** (deploy, upgrade, destroy, status)
+1. **Installing Kubernetes** on VMs already created by Terraform
+2. **Upgrading Kubernetes** to new versions safely
+3. **Deploying applications** using Helm charts
+4. **Managing the application lifecycle** (deploy, upgrade, destroy, status)
+
+## Key Features
+
+- **Version-Flexible Installation**: Install any Kubernetes version (1.29.x, 1.30.x, 1.34.x, etc.)
+- **Safe Upgrade System**: Automated Kubernetes upgrades with node draining and rollback support
+- **Modular Design**: Separate playbooks for installation, worker join, and upgrades
+- **Production-Ready**: Package pinning, health checks, and automatic backups
 
 ## Prerequisites
 
@@ -36,24 +44,30 @@ pip3 install kubernetes.core helm
 
 ```
 ansible-ci/
-├── README.md                           # This file
-├── k8s-bootstrap.yml                   # Bootstrap K8s on Terraform VMs
-├── deploy-apps.yml                     # Deploy Ajasta applications
-├── destroy-apps.yml                    # Uninstall applications
-├── status.yml                          # Check cluster and app status
+├── README.md                              # This file
+├── k8s-install.yml                        # Initial Kubernetes installation (version-flexible)
+├── k8s-join-workers.yml                   # Join worker nodes to cluster
+├── k8s-upgrade.yml                        # Upgrade Kubernetes to new version
+├── deploy-apps.yml                        # Deploy Ajasta applications
+├── destroy-apps.yml                       # Uninstall applications
+├── status.yml                             # Check cluster and app status
+├── inventory.ini                          # Generated from Terraform outputs
 ├── group_vars/
-│   └── all.yml                         # Global variables
-├── inventory/
-│   └── (generated dynamically)         # Ansible inventory from Terraform
+│   └── all.yml                            # Global variables
 ├── roles/
-│   ├── containerd_config/              # Configure containerd CRI
-│   ├── cri_ready/                      # Prepare CRI for Kubernetes
-│   ├── cni_install/                    # Install Calico CNI
-│   ├── kubeadm_init/                   # Initialize cluster with kubeadm
-│   ├── ports_verify/                   # Verify required ports
-│   ├── registry/                       # Configure container registry
-│   └── system_checks/                  # System prerequisite checks
+│   ├── containerd_config/                 # Configure containerd CRI
+│   ├── cri_ready/                         # Prepare CRI for Kubernetes
+│   ├── cni_install/                       # Install Flannel CNI
+│   ├── kubeadm_init/                      # Initialize cluster with kubeadm
+│   ├── kubernetes_install/                # Install Kubernetes packages (version-flexible)
+│   ├── kubernetes_upgrade/                # Upgrade Kubernetes cluster safely
+│   ├── ports_verify/                      # Verify required ports
+│   ├── registry/                          # Configure container registry
+│   └── system_checks/                     # System prerequisite checks
 └── scripts/
+    ├── install-k8s.sh                     # Interactive installation script
+    ├── upgrade-k8s.sh                     # Interactive upgrade script
+    ├── update-kubeconfig.sh               # Update local kubeconfig from master
     └── generate-inventory-from-terraform.sh  # Generate inventory from Terraform outputs
 ```
 
@@ -66,7 +80,8 @@ If you're using GitLab CI/CD with HTTP backend (which you are), the Terraform st
 ```bash
 # Option 1: Automated (Recommended)
 cd ansible-ci
-./scripts/generate-inventory-auto.sh
+export GITLAB_PAT="glpat-your-token-here"
+./scripts/generate-inventory-from-terraform.sh
 
 # Option 2: Manual step-by-step
 # Step 1: Set GitLab token
@@ -89,7 +104,7 @@ After fetching outputs, generate the Ansible inventory:
 
 ```bash
 cd ansible-ci
-./scripts/generate-inventory-auto.sh
+./scripts/generate-inventory-from-terraform.sh
 ```
 
 This creates `inventory.ini` with VM IPs from Terraform outputs.
@@ -101,30 +116,46 @@ This creates `inventory.ini` with VM IPs from Terraform outputs.
 ansible k8s-master -i inventory.ini -m ping
 
 # Test all nodes
-ansible k8s -i inventory.ini -m ping
+ansible k8s-master,k8s-workers -i inventory.ini -m ping
 ```
 
-### 3. Bootstrap Kubernetes Cluster
+### 3. Install Kubernetes
 
 Deploy Kubernetes on the Terraform-provisioned VMs:
 
 ```bash
-ansible-playbook -i inventory.ini k8s-bootstrap.yml
+# Install specific version (e.g., 1.34.3)
+ansible-playbook -i inventory.ini k8s-install.yml -e kubernetes_version=1.34.3
+
+# OR use the interactive script
+./scripts/install-k8s.sh --version 1.34.3
 ```
 
 This will:
 - Configure containerd on all nodes
-- Install Kubernetes components (kubeadm, kubelet, kubectl)
-- Initialize the cluster (on master)
-- Join worker nodes
-- Install Calico CNI plugin
-- Install NGINX Ingress Controller
-- Install Longhorn storage (optional)
-- Install Rancher dashboard (optional)
+- Install Kubernetes packages (kubelet, kubeadm, kubectl) with version pinning
+- Initialize the cluster on master
+- Install Flannel CNI plugin
+- Join worker nodes to cluster
 
-### 4. Deploy Applications
+### 4. Update Local Kubeconfig
 
-After Kubernetes is bootstrapped, deploy the Ajasta application:
+```bash
+./scripts/update-kubeconfig.sh
+```
+
+This configures your local `kubectl` to access the cluster.
+
+### 5. Verify Cluster
+
+```bash
+kubectl get nodes
+kubectl get pods -A
+```
+
+### 6. Deploy Applications
+
+After Kubernetes is installed, deploy the Ajasta application:
 
 ```bash
 ansible-playbook -i inventory.ini deploy-apps.yml
@@ -138,7 +169,7 @@ This will:
 - Configure Ingress for external access
 - Create necessary secrets
 
-### 5. Check Status
+### 7. Check Status
 
 Verify the deployment:
 
@@ -157,22 +188,16 @@ Edit `group_vars/all.yml` to customize:
 ssh_username: "ajasta"
 ssh_private_key_file: ""  # Auto-detected if empty
 
-# Kubernetes
-kubernetes_version: "1.29.0"
+# Kubernetes (default - can be overridden via CLI)
+kubernetes_version: "1.29.15"  # Can be any version: 1.29.x, 1.30.x, 1.34.x, etc.
 pod_network_cidr: "10.244.0.0/16"
 
 # CNI
-cni_plugin: "calico"
-calico_version: "v3.28.0"
+cni_plugin: "flannel"  # Changed from calico
+flannel_version: "v0.26.2"
 
-# Ingress
-ingress_controller_enabled: true
-
-# Storage
-longhorn_enabled: true
-
-# Rancher
-rancher_enabled: false
+# Package management
+kubernetes_hold_packages: true  # Prevent auto-upgrades
 ```
 
 ### Environment Variables
@@ -204,24 +229,66 @@ export K8S_INGRESS_HOST="ajasta.local"  # Leave empty for catch-all
 
 ## Playbooks
 
-### k8s-bootstrap.yml
+### k8s-install.yml
 
-Bootstraps Kubernetes cluster on existing VMs.
+Initial Kubernetes installation with version flexibility.
 
-**Tags:**
-- `verify` - Verify ports only
-- `containerd` - Configure containerd only
-- `cri` - Configure CRI only
-- `kubeadm` - Initialize cluster only
-- `cni` - Install CNI only
+**Features:**
+- Version-flexible installation (any 1.29.x, 1.30.x, 1.34.x, etc.)
+- Automatic repository URL construction based on version
+- Package pinning to prevent auto-upgrades
+- Pre-flight checks and verification
+
+**Parameters:**
+- `kubernetes_version` - Kubernetes version to install (default: 1.29.15)
 
 **Examples:**
 ```bash
-# Full bootstrap
-ansible-playbook -i inventory.ini k8s-bootstrap.yml
+# Install default version
+ansible-playbook -i inventory.ini k8s-install.yml
 
-# Bootstrap only CNI (skip other steps)
-ansible-playbook -i inventory.ini k8s-bootstrap.yml --tags cni
+# Install specific version
+ansible-playbook -i inventory.ini k8s-install.yml -e kubernetes_version=1.34.3
+
+# Use environment variable
+export KUBERNETES_VERSION=1.30.0
+ansible-playbook -i inventory.ini k8s-install.yml
+```
+
+### k8s-join-workers.yml
+
+Join worker nodes to the cluster (run automatically by k8s-install.yml).
+
+**Use when:**
+- Workers need to rejoin after reset
+- Adding new workers to existing cluster
+
+**Example:**
+```bash
+ansible-playbook -i inventory.ini k8s-join-workers.yml
+```
+
+### k8s-upgrade.yml
+
+Upgrade Kubernetes cluster to a new version safely.
+
+**Features:**
+- Automatic cluster state backup
+- Node draining before upgrade
+- Control plane upgraded first, then workers
+- Automatic rollback on failure
+- Post-upgrade health checks
+
+**Parameters:**
+- `kubernetes_target_version` - Target version to upgrade to
+
+**Examples:**
+```bash
+# Upgrade to 1.34.3
+ansible-playbook -i inventory.ini k8s-upgrade.yml -e kubernetes_target_version=1.34.3
+
+# Use interactive script
+./scripts/upgrade-k8s.sh --version 1.34.3
 ```
 
 ### deploy-apps.yml
@@ -280,18 +347,40 @@ cd ..
 
 # 2. Generate Ansible inventory
 cd ansible-ci
+export GITLAB_PAT="glpat-your-token-here"
 ./scripts/generate-inventory-from-terraform.sh
 
-# 3. Bootstrap Kubernetes
-ansible-playbook -i inventory.ini k8s-bootstrap.yml
+# 3. Install Kubernetes (version-flexible)
+ansible-playbook -i inventory.ini k8s-install.yml -e kubernetes_version=1.34.3
 
-# 4. Deploy applications
+# 4. Update local kubeconfig
+./scripts/update-kubeconfig.sh
+
+# 5. Verify cluster
+kubectl get nodes
+kubectl get pods -A
+
+# 6. Deploy applications
 export POSTGRES_PASSWORD="changeme"
 export JWT_SECRET="changeme"
 ansible-playbook -i inventory.ini deploy-apps.yml
 
-# 5. Check status
+# 7. Check status
 ansible-playbook -i inventory.ini status.yml
+```
+
+### Kubernetes Upgrade Workflow
+
+```bash
+# 1. Check current version
+kubectl version --short
+
+# 2. Upgrade to new version (e.g., 1.35.0)
+./scripts/upgrade-k8s.sh --version 1.35.0
+
+# 3. Verify upgrade
+kubectl get nodes
+kubectl get pods -A
 ```
 
 ### Application Update Workflow
@@ -317,8 +406,9 @@ ansible-playbook -i inventory.ini status.yml
 # 1. Destroy applications
 ansible-playbook -i inventory.ini destroy-apps.yml -e destroy_namespace=true
 
-# 2. (Optional) Destroy Kubernetes cluster
-ansible-playbook -i ansible-k8s/inventory.ini k8s-destroy.yml
+# 2. (Optional) Reset Kubernetes cluster
+# Run on all nodes via SSH
+sudo kubeadm reset --force
 
 # 3. Destroy Terraform infrastructure
 cd terraform
@@ -327,18 +417,46 @@ terraform destroy
 
 ## Troubleshooting
 
+### Installation Fails with 403 Forbidden
+
+**Problem:** Package repository returns 403 Forbidden errors
+
+**Root Cause:** Incorrect Kubernetes version extraction causing wrong repository URL
+
+**Solution:**
+```bash
+# Verify version format (must be x.y.z)
+ansible-playbook -i inventory.ini k8s-install.yml -e kubernetes_version=1.34.3
+
+# Check roles/kubernetes_install/defaults/main.yml for correct regex
+```
+
+### Workers Not Joining
+
+**Problem:** Worker nodes not joining cluster
+
+**Solution:**
+```bash
+# Check if workers can reach master
+ansible k8s-workers -i inventory.ini -m shell -a "ping -c 3 {{ hostvars['k8s-master']['ansible_host'] }}"
+
+# Rejoin workers manually
+ansible-playbook -i inventory.ini k8s-join-workers.yml
+```
+
 ### Inventory Issues
 
 **Problem:** `k8s-master group not found in inventory`
 
 **Solution:** Run the inventory generation script:
 ```bash
+export GITLAB_PAT="glpat-your-token-here"
 ./scripts/generate-inventory-from-terraform.sh
 ```
 
 ### SSH Connection Issues
 
-**Problem:** `SSH connection refused`
+**Problem:** `SSH connection refused` or `Permission denied`
 
 **Solution:** Check SSH access:
 ```bash
@@ -347,6 +465,22 @@ ssh -i ~/.ssh/id_rsa ajasta@<master-ip>
 
 # Check if VM is running
 yc compute instance list
+
+# Verify correct SSH key
+ls -la ~/.ssh/id_rsa*
+```
+
+### Kubectl Connection Refused
+
+**Problem:** `The connection to the server <server-ip>:6443 was refused`
+
+**Solution:**
+```bash
+# Update kubeconfig
+./scripts/update-kubeconfig.sh
+
+# Verify cluster is running
+ssh -i ~/.ssh/id_rsa ajasta@<master-ip> "sudo kubectl get nodes"
 ```
 
 ### Helm Chart Issues
@@ -370,22 +504,77 @@ kubectl describe pod <pod-name> -n ajasta
 
 ## Advanced Usage
 
+### Version-Flexible Kubernetes Installation
+
+The installation system supports any Kubernetes version. Examples:
+
+```bash
+# Install Kubernetes 1.29.15 (current stable)
+ansible-playbook -i inventory.ini k8s-install.yml -e kubernetes_version=1.29.15
+
+# Install Kubernetes 1.34.3 (latest)
+ansible-playbook -i inventory.ini k8s-install.yml -e kubernetes_version=1.34.3
+
+# Install specific patch version
+ansible-playbook -i inventory.ini k8s-install.yml -e kubernetes_version=1.30.5
+
+# Use environment variable
+export KUBERNETES_VERSION=1.31.2
+ansible-playbook -i inventory.ini k8s-install.yml
+```
+
+### Kubernetes Cluster Upgrades
+
+Safely upgrade your cluster to a new version:
+
+```bash
+# Interactive upgrade with automatic backup
+./scripts/upgrade-k8s.sh --version 1.35.0
+
+# Manual upgrade
+ansible-playbook -i inventory.ini k8s-upgrade.yml -e kubernetes_target_version=1.35.0
+```
+
+The upgrade process:
+1. Creates automatic backup of cluster state
+2. Drains nodes gracefully
+3. Upgrades control plane first (master)
+4. Upgrades worker nodes one by one
+5. Performs health checks after each step
+6. Automatic rollback on failure
+
+### Wrapper Scripts
+
+**install-k8s.sh** - Interactive installation script
+```bash
+./scripts/install-k8s.sh --version 1.34.3
+./scripts/install-k8s.sh --version 1.34.3 --inventory inventory.ini
+```
+
+**upgrade-k8s.sh** - Interactive upgrade script
+```bash
+./scripts/upgrade-k8s.sh --version 1.35.0
+# Automatic backup created before upgrade
+```
+
+**update-kubeconfig.sh** - Update local kubeconfig
+```bash
+./scripts/update-kubeconfig.sh
+# Fetches admin.conf from master and configures TLS for public IP
+```
+
 ### Custom Inventory
 
 If you don't want to use the inventory generation script, create `inventory.ini` manually:
 
 ```ini
 [k8s-master]
-k8s-master ansible_host=51.250.100.218
+k8s-master ansible_host=158.160.69.86 ansible_user=ajasta ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
 
 [k8s-workers]
-k8s-worker-0 ansible_host=10.10.0.4
-k8s-worker-1 ansible_host=10.10.0.5
-k8s-worker-2 ansible_host=10.10.0.6
-
-[k8s:children]
-k8s-master
-k8s-workers
+k8s-worker-0 ansible_host=158.160.93.192 ansible_user=ajasta ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
+k8s-worker-1 ansible_host=158.160.91.136 ansible_user=ajasta ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
+k8s-worker-2 ansible_host=158.160.93.82 ansible_user=ajasta ansible_ssh_private_key_file=~/.ssh/id_rsa_k8s
 ```
 
 ### Multi-Environment Deployment
@@ -411,23 +600,52 @@ ansible-playbook -i inventory.ini deploy-apps.yml \
 
 ## Comparison with ansible-k8s
 
-| Feature | ansible-k8s | ansible-ci |
-|---------|-------------|------------|
+| Feature | ansible-k8s | ansible-ci (NEW) |
+|---------|-------------|-------------------|
 | VM Provisioning | ✅ Yes (via scripts) | ❌ No (Terraform only) |
-| K8s Bootstrap | ✅ Yes | ✅ Yes |
+| K8s Bootstrap | ✅ Yes (hardcoded 1.29.0) | ✅ Yes (version-flexible) |
+| K8s Upgrades | ❌ No | ✅ Yes (automated & safe) |
 | App Deployment | ❌ No | ✅ Yes (Helm) |
+| Version Management | Manual | Flexible (any 1.29.x, 1.30.x, 1.34.x) |
+| Package Pinning | No | Yes (prevents auto-upgrades) |
 | Inventory | Manual/static | Dynamic from Terraform |
-| Use Case | Full IaC workflow | CI/CD deployment |
+| Wrapper Scripts | No | Yes (user-friendly) |
+| Use Case | Full IaC workflow | CI/CD + K8s management |
 
 ## Best Practices
 
 1. **Always run inventory generation** after Terraform apply
-2. **Test SSH connectivity** before bootstrapping
-3. **Use tags** for partial re-runs (e.g., `--tags cni`)
-4. **Store secrets in environment variables**, never in Git
-5. **Check status** after deployments
-6. **Use version tags** for Docker images in production
-7. **Keep backups** of important data (Longhorn snapshots)
+2. **Test SSH connectivity** before installation
+3. **Use version-flexible installation** - specify exact Kubernetes version
+4. **Keep Kubernetes pinned** - prevents unexpected auto-upgrades
+5. **Test upgrades in staging** before production
+6. **Create backups** before major upgrades (automatic with upgrade script)
+7. **Use wrapper scripts** for easier operations
+8. **Store secrets in environment variables**, never in Git
+9. **Check status** after deployments
+10. **Use version tags** for Docker images in production
+11. **Monitor cluster health** - especially control plane pods
+12. **Keep Longhorn snapshots** before major changes
+
+### Version Management
+
+- **Pin Kubernetes versions** to avoid unexpected upgrades
+- **Test new versions** in non-production environments first
+- **Upgrade one minor version at a time** (e.g., 1.29.x → 1.30.x → 1.31.x)
+- **Keep backups** before upgrading
+- **Monitor after upgrade** - check pod restarts and node status
+
+### Production Checklist
+
+Before deploying to production:
+- [ ] Terraform infrastructure applied successfully
+- [ ] Inventory generated with correct IPs
+- [ ] SSH connectivity verified to all nodes
+- [ ] Kubernetes version tested in staging
+- [ ] Firewall rules allow cluster communication
+- [ ] Sufficient resources on all nodes (CPU, RAM, disk)
+- [ ] Backup strategy configured
+- [ ] Monitoring and logging in place
 
 ## Support
 
@@ -435,6 +653,42 @@ For issues or questions:
 1. Check playbook logs: `-vvv` flag for verbose output
 2. Review Terraform outputs in `terraform/outputs.json`
 3. Check cluster logs: `kubectl logs -n <namespace> <pod>`
+4. See detailed documentation:
+   - [K8S_INSTALLATION_UPGRADE_GUIDE.md](K8S_INSTALLATION_UPGRADE_GUIDE.md) - Complete installation & upgrade guide
+   - [K8S_INSTALLATION_SUCCESS.md](K8S_INSTALLATION_SUCCESS.md) - Installation summary
+   - [GITLAB_TERRAFORM_WORKFLOW.md](GITLAB_TERRAFORM_WORKFLOW.md) - GitLab workflow details
+
+## Version History
+
+### v2.0 (January 2026) - Complete Rewrite
+- ✅ Version-flexible Kubernetes installation (any version)
+- ✅ Automated Kubernetes upgrade system
+- ✅ Package pinning to prevent auto-upgrades
+- ✅ Wrapper scripts for easy operations
+- ✅ Changed from Calico to Flannel CNI
+- ✅ Improved error handling and recovery
+- ✅ Comprehensive documentation
+
+### v1.0 (Previous)
+- Hardcoded Kubernetes 1.29.0 installation
+- Basic bootstrap with kubeadm
+- Calico CNI plugin
+- Manual inventory management
+
+## Current Status
+
+**Last tested configuration:**
+- Kubernetes: 1.34.3 (all nodes healthy)
+- CNI: Flannel v0.26.2
+- Container Runtime: containerd 2.2.1
+- OS: CentOS Stream 9
+- Platform: Yandex Cloud
+
+**Cluster Health:**
+- ✅ All control plane pods running (0 restarts)
+- ✅ All worker nodes Ready
+- ✅ Package pinning enabled
+- ✅ Installation and upgrade systems operational
 
 ## License
 

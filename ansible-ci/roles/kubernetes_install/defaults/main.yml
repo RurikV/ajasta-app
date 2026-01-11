@@ -1,7 +1,13 @@
 ---
 # Kubernetes version configuration
-kubernetes_version: "1.29.0"
-kubernetes_yum_baseurl: "https://pkgs.k8s.io/core:/stable:/v1.29/rpm/"
+# Default to 1.29.15, can be overridden via extra-vars
+kubernetes_version: "1.29.15"
+kubernetes_version_base: "{{ kubernetes_version | regex_replace('^([0-9]+\\.[0-9]+)\\..*$', '\\1') }}"
+
+# Dynamic repository URLs based on version
+kubernetes_yum_baseurl: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version_base }}/rpm/"
+kubernetes_apt_url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version_base }}/deb"
+kubernetes_apt_key: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version_base }}/deb/Release.key"
 
 # Kubernetes packages to install
 kubernetes_packages:
@@ -11,3 +17,6 @@ kubernetes_packages:
 
 # Allow package updates
 kubernetes_allow_downgrade: false
+
+# Hold packages after installation (prevent auto-upgrades)
+kubernetes_hold_packages: true
