@@ -9,6 +9,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # Default paths
 TERRAFORM_OUTPUTS="${PROJECT_ROOT}/terraform/outputs.json"
+INVENTORY_FILE="${SCRIPT_DIR}/../inventory.ini"
 KUBECONFIG="${HOME}/.kube/config"
 KUBECONFIG_BACKUP="${KUBECONFIG}.backup.$(date +%Y%m%d_%H%M%S)"
 SSH_USER="ajasta"
@@ -43,9 +44,13 @@ while [[ $# -gt 0 ]]; do
       echo "  -h, --help         Show this help message"
       echo ""
       echo "This script:"
-      echo "  1. Reads master IP from Terraform outputs"
+      echo "  1. Reads master IP from Terraform outputs OR inventory.ini"
       echo "  2. Fetches admin kubeconfig from master node"
       echo "  3. Updates ~/.kube/config with new master IP"
+      echo ""
+      echo "Sources for master IP (in order of preference):"
+      echo "  - terraform/outputs.json (if available)"
+      echo "  - ansible-ci/inventory.ini (fallback)"
       echo ""
       exit 0
       ;;
@@ -57,24 +62,43 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Step 1: Check if Terraform outputs exist
-if [ ! -f "$TERRAFORM_OUTPUTS" ]; then
-  echo "❌ Terraform outputs not found: $TERRAFORM_OUTPUTS"
-  echo "   Run terraform apply first or generate outputs manually"
-  exit 1
+# Step 1: Extract master IP from Terraform outputs or inventory.ini
+MASTER_IP=""
+
+# Try Terraform outputs first
+if [ -f "$TERRAFORM_OUTPUTS" ]; then
+  echo "📖 Reading Terraform outputs..."
+  MASTER_IP=$(jq -r '.master_public_ip // .master_public_ip.value' "$TERRAFORM_OUTPUTS" 2>/dev/null || echo "")
+
+  if [ -n "$MASTER_IP" ] && [ "$MASTER_IP" != "null" ]; then
+    echo "✅ Master IP from Terraform: $MASTER_IP"
+  fi
 fi
 
-# Step 2: Extract master IP from Terraform outputs
-echo "📖 Reading Terraform outputs..."
-MASTER_IP=$(jq -r '.master_public_ip // .master_public_ip.value' "$TERRAFORM_OUTPUTS" 2>/dev/null || echo "")
-
+# Fallback: Try reading from inventory.ini
 if [ -z "$MASTER_IP" ] || [ "$MASTER_IP" = "null" ]; then
-  echo "❌ Failed to extract master IP from Terraform outputs"
-  echo "   Check that terraform/outputs.json is valid"
-  exit 1
+  if [ -f "$INVENTORY_FILE" ]; then
+    echo "📖 Reading from inventory.ini (Terraform outputs not found)..."
+    MASTER_IP=$(grep -E "^master-node.*ansible_host=" "$INVENTORY_FILE" | sed -E 's/.*ansible_host=([0-9.]+).*/\1/' | head -1)
+
+    if [ -n "$MASTER_IP" ]; then
+      echo "✅ Master IP from inventory: $MASTER_IP"
+    fi
+  else
+    echo "❌ Neither Terraform outputs nor inventory.ini found"
+    echo "   Expected one of:"
+    echo "   - $TERRAFORM_OUTPUTS"
+    echo "   - $INVENTORY_FILE"
+    exit 1
+  fi
 fi
 
-echo "✅ Master IP: $MASTER_IP"
+# Final validation
+if [ -z "$MASTER_IP" ] || [ "$MASTER_IP" = "null" ]; then
+  echo "❌ Failed to extract master IP"
+  echo "   Check that Terraform outputs or inventory.ini is valid"
+  exit 1
+fi
 
 if [ "$PRINT_IP_ONLY" = true ]; then
   echo "$MASTER_IP"

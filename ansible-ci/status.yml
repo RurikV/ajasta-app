@@ -3,7 +3,7 @@
 # Quick health check and overview playbook
 
 - name: Check Kubernetes Cluster and Application Status
-  hosts: k8s-master
+  hosts: k8s_master
   become: false
   gather_facts: false
   vars:

@@ -10,7 +10,7 @@
 
 - name: Check if this node is the master
   ansible.builtin.set_fact:
-    is_master_node: "{{ 'k8s-master' in group_names or inventory_hostname == 'k8s-master' }}"
+    is_master_node: "{{ 'k8s_master' in group_names or inventory_hostname in groups.get('k8s_master', []) }}"
 
 - name: Check if kubeadm admin.conf already exists
   ansible.builtin.stat:

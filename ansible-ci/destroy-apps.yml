@@ -3,7 +3,7 @@
 # This playbook removes deployed applications and optionally namespaces
 
 - name: Destroy Ajasta Applications
-  hosts: k8s-master
+  hosts: k8s_master
   become: false
   gather_facts: false
   vars:

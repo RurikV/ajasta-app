@@ -4,7 +4,7 @@
 # Usage: ansible-playbook -i inventory.ini k8s-upgrade.yml -e kubernetes_target_version=1.30.0
 
 - name: Upgrade Kubernetes Cluster
-  hosts: k8s-master, k8s-workers
+  hosts: k8s
   become: true
   gather_facts: true
 
@@ -25,8 +25,8 @@
           - "Target version: {{ kubernetes_target_version }}"
           - "Current version: {{ kubernetes_version | default('Auto-detected') }}"
           - "Nodes to upgrade:"
-          - "  - Master: {{ groups['k8s-master'] | default([]) }}"
-          - "  - Workers: {{ groups['k8s-workers'] | default([]) }}"
+          - "  - Master: {{ groups['k8s_master'] | default([]) }}"
+          - "  - Workers: {{ groups['k8s_workers'] | default([]) }}"
           - ""
           - "IMPORTANT: This will:"
           - "  1. Upgrade master node first (control plane)"
@@ -43,7 +43,7 @@
     - name: Detect current Kubernetes version
       ansible.builtin.shell: kubectl version --short 2>&1 | grep 'Server Version' || kubeadm version -o short
       run_once: true
-      delegate_to: "{{ groups['k8s-master'][0] }}"
+      delegate_to: "{{ groups['k8s_master'][0] }}"
       register: detected_k8s_version
       changed_when: false
       failed_when: false
@@ -73,7 +73,7 @@
     - name: Check if cluster is healthy before upgrade
       ansible.builtin.shell: kubectl get endpoints kube-dns -n kube-system -o jsonpath='{.subsets[*].addresses[*].ip}'
       run_once: true
-      delegate_to: "{{ groups['k8s-master'][0] }}"
+      delegate_to: "{{ groups['k8s_master'][0] }}"
       register: cluster_health
       changed_when: false
       failed_when: cluster_health.rc != 0
@@ -96,12 +96,12 @@
             timeout: 120
           delegate_to: localhost
           run_once: true
-          when: "'k8s-master' in group_names"
+          when: "'k8s_master' in group_names"
 
         - name: Get cluster version
           ansible.builtin.shell: kubectl version --short
           run_once: true
-          delegate_to: "{{ groups['k8s-master'][0] }}"
+          delegate_to: "{{ groups['k8s_master'][0] }}"
           register: cluster_version_after
           changed_when: false
           retries: 5
@@ -115,7 +115,7 @@
         - name: Get all nodes status
           ansible.builtin.shell: kubectl get nodes
           run_once: true
-          delegate_to: "{{ groups['k8s-master'][0] }}"
+          delegate_to: "{{ groups['k8s_master'][0] }}"
           register: nodes_after_upgrade
           changed_when: false
 

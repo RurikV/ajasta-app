@@ -3,7 +3,7 @@
 # Usage: ansible-playbook -i inventory.ini k8s-join-workers.yml
 
 - name: Join Worker Nodes to Cluster
-  hosts: k8s-master
+  hosts: k8s_master
   become: true
   gather_facts: true
 
@@ -14,7 +14,7 @@
           - "=========================================="
           - "Join Worker Nodes to Cluster"
           - "=========================================="
-          - "This playbook will join {{ groups['k8s-workers'] | length }} worker nodes"
+          - "This playbook will join {{ groups['k8s_workers'] | length }} worker nodes"
           - "=========================================="
 
     - name: Generate kubeadm join command
@@ -32,13 +32,13 @@
         kubernetes_join_command: "{{ kubeadm_join_command.stdout }}"
 
 - name: Execute join on worker nodes
-  hosts: k8s-workers
+  hosts: k8s_workers
   become: true
   gather_facts: true
 
   vars:
     # Get join command from master
-    kubernetes_join_command: "{{ hostvars[groups['k8s-master'][0]]['kubernetes_join_command'] }}"
+    kubernetes_join_command: "{{ hostvars[groups['k8s_master'][0]]['kubernetes_join_command'] }}"
 
   pre_tasks:
     - name: Display join information for this worker
@@ -58,7 +58,7 @@
         msg: "Worker {{ inventory_hostname }} joined successfully"
 
 - name: Verify all nodes are Ready
-  hosts: k8s-master
+  hosts: k8s_master
   become: true
   gather_facts: false
 

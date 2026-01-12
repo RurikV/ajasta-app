@@ -4,7 +4,7 @@
 # Usage: ansible-playbook -i inventory.ini k8s-install.yml -e kubernetes_version=1.29.15
 
 - name: Initial Kubernetes Installation
-  hosts: k8s-master, k8s-workers
+  hosts: k8s
   become: true
   gather_facts: true
 
@@ -21,16 +21,16 @@
           - "=========================================="
           - "Kubernetes version: {{ kubernetes_version }}"
           - "Target nodes:"
-          - "  - Master: {{ groups['k8s-master'] | default([]) }}"
-          - "  - Workers: {{ groups['k8s-workers'] | default([]) }}"
+          - "  - Master: {{ groups['k8s_master'] | default([]) }}"
+          - "  - Workers: {{ groups['k8s_workers'] | default([]) }}"
           - "=========================================="
 
     - name: Verify inventory has required groups
       ansible.builtin.assert:
         that:
-          - groups['k8s-master'] is defined
-          - groups['k8s-master'] | length > 0
-        fail_msg: "k8s-master group must be defined in inventory with at least one node"
+          - groups['k8s_master'] is defined
+          - groups['k8s_master'] | length > 0
+        fail_msg: "k8s_master group must be defined in inventory with at least one node"
 
   roles:
     - role: ports_verify
@@ -55,7 +55,7 @@
           - "=========================================="
 
 - name: Initialize Kubernetes Cluster on Master
-  hosts: k8s-master
+  hosts: k8s_master
   become: true
   gather_facts: true
 
@@ -78,7 +78,7 @@
           - "=========================================="
 
 - name: Install CNI Plugin
-  hosts: k8s-master
+  hosts: k8s_master
   become: true
   gather_facts: false
 

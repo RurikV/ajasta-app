@@ -91,9 +91,9 @@
     - name: Verify master IP is available in inventory
       ansible.builtin.assert:
         that:
-          - groups['k8s-master'] is defined
-          - groups['k8s-master'] | length > 0
-        fail_msg: "k8s-master group not found in inventory. Run ./scripts/generate-inventory-from-terraform.sh first"
+          - groups['k8s_master'] is defined
+          - groups['k8s_master'] | length > 0
+        fail_msg: "k8s_master group not found in inventory. Run ./scripts/generate-inventory-from-terraform.sh first"
 
 # ============================================================================
 # MAIN KUBERNETES BOOTSTRAP PLAYBOOK
@@ -150,7 +150,7 @@
 # INSTALL HELM (when needed for optional components)
 # ============================================================================
 - name: Install Helm package manager
-  hosts: k8s-master
+  hosts: k8s_master
   become: true
   gather_facts: true
   tasks:
@@ -165,7 +165,7 @@
 # INSTALL INGRESS CONTROLLER
 # ============================================================================
 - name: Install NGINX Ingress Controller
-  hosts: k8s-master
+  hosts: k8s_master
   become: false
   gather_facts: false
   vars:
@@ -222,7 +222,7 @@
 # INSTALL LONGHORN STORAGE (Optional)
 # ============================================================================
 - name: Install Longhorn Storage
-  hosts: k8s-master
+  hosts: k8s_master
   become: false
   gather_facts: false
   vars:
@@ -294,7 +294,7 @@
         - name: Get master IP from inventory
           ansible.builtin.add_host:
             name: master_temp
-            ansible_host: "{{ groups['k8s-master'][0] }}"
+            ansible_host: "{{ groups['k8s_master'][0] }}"
 
         - name: Install Rancher using script
           ansible.builtin.shell: |
@@ -312,7 +312,7 @@
 # POST-BOOTSTRAP VERIFICATION
 # ============================================================================
 - name: Verify Kubernetes cluster
-  hosts: k8s-master
+  hosts: k8s_master
   become: false
   gather_facts: false
 
@@ -350,7 +350,7 @@
           - "================================================"
           - ""
           - "To access the cluster:"
-          - "  1. SSH to master: ssh {{ ssh_username }}@{{ groups['k8s-master'][0] }}"
+          - "  1. SSH to master: ssh {{ ssh_username }}@{{ groups['k8s_master'][0] }}"
           - "  2. Use kubectl: kubectl get nodes"
           - "  3. Update local kubeconfig: ./scripts/update-kubeconfig.sh"
           - ""
