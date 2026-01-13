@@ -7,10 +7,10 @@
 # 4. Creates test Longhorn workload
 # 5. Migrates MinIO to use Longhorn volumes
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 14-deploy-longhorn-storage.yml
+#   ansible-playbook -i inventory.ini 14-deploy-longhorn-storage.yml
 
 - name: Deploy Persistent Storage Infrastructure
-  hosts: k8s_masters
+  hosts: k8s_master
   become: yes
   gather_facts: yes
 

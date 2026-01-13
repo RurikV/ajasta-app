@@ -1,10 +1,10 @@
 ---
 # Join worker nodes to the Kubernetes cluster
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 04-join-workers.yml
+#   ansible-playbook -i inventory.ini 04-join-workers.yml
 
 - name: Get cluster join information and set as host variables
-  hosts: k8s_masters
+  hosts: k8s_master
   become: yes
   gather_facts: yes
   tasks:
@@ -150,7 +150,7 @@
           - "================================================================"
 
 - name: Verify cluster nodes
-  hosts: k8s_masters
+  hosts: k8s_master
   become: yes
   gather_facts: yes
 

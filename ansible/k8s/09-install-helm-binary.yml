@@ -2,10 +2,10 @@
 # Install Helm package manager on Kubernetes nodes
 # Helm is required for deploying Kubernetes Dashboard and other Helm charts
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 09-install-helm-binary.yml
+#   ansible-playbook -i inventory.ini 09-install-helm-binary.yml
 
 - name: Install Helm on all nodes
-  hosts: k8s_masters,k8s_workers
+  hosts: k8s_master,k8s_workers
   become: yes
   gather_facts: yes
 
@@ -171,7 +171,7 @@
           - "Helm has been installed on all Kubernetes nodes."
           - ""
           - "Next step: Deploy Kubernetes Dashboard"
-          - "  ansible-playbook -i inventory/k8s-exam.ini 10-deploy-kubernetes-dashboard.yml"
+          - "  ansible-playbook -i inventory.ini 10-deploy-kubernetes-dashboard.yml"
           - ""
           - "Or deploy any other Helm chart:"
           - "  helm search repo <keyword>"

@@ -4,10 +4,10 @@
 # Repository: https://github.com/kubernetes/dashboard
 # Helm Chart: https://artifacthub.io/packages/helm/k8s-dashboard/kubernetes-dashboard
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 10-deploy-kubernetes-dashboard.yml
+#   ansible-playbook -i inventory.ini 10-deploy-kubernetes-dashboard.yml
 
 - name: Deploy Kubernetes Dashboard
-  hosts: k8s_masters
+  hosts: k8s_master
   become: yes
   gather_facts: yes
 

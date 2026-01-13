@@ -1,7 +1,7 @@
 ---
 # Install containerd, nerdctl, CNI plugins, and related tools
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 5-install-containerd-nerdctl.yml
+#   ansible-playbook -i inventory.ini 5-install-containerd-nerdctl.yml
 
 - name: Install containerd, nerdctl, CNI plugins and build tools
   hosts: k8s_cluster
@@ -67,18 +67,25 @@
       args:
         creates: /etc/containerd/config.toml
 
+    - name: Enable CRI plugin in containerd (remove from disabled_plugins)
+      ansible.builtin.lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '^disabled_plugins\s*='
+        line: 'disabled_plugins = []'
+        state: present
+
     - name: Configure containerd to use SystemdCgroup
       ansible.builtin.lineinfile:
         path: /etc/containerd/config.toml
         regexp: '^\s*SystemdCgroup\s*='
-        insertafter: '^\[plugins\."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options\]\s*$'
+        insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\.options\]'
         line: '            SystemdCgroup = true'
-      when: false  # Will be configured manually if needed
+        state: present
 
-    - name: Start and enable containerd service
+    - name: Restart containerd service to apply configuration
       ansible.builtin.systemd:
         name: containerd
-        state: started
+        state: restarted
         enabled: yes
         daemon_reload: yes
 
@@ -209,6 +216,7 @@
         cmd: ctr images pull registry.hpc.ut.ee/mirror/library/redis:alpine
       register: ctr_pull
       changed_when: false
+      failed_when: false  # Registry may be unreachable, not critical
 
     - name: Display ctr pull result
       ansible.builtin.debug:
@@ -245,6 +253,7 @@
         cmd: nerdctl pull registry.hpc.ut.ee/mirror/library/nginx:alpine
       register: nerdctl_pull
       changed_when: false
+      failed_when: false  # Registry may be unreachable, not critical
 
     - name: Display nerdctl pull result
       ansible.builtin.debug:
@@ -362,7 +371,7 @@
           - "  4. Join worker nodes"
           - ""
           - "Verification commands:"
-          - "  ansible -i inventory/k8s-exam.ini k8s_cluster -m shell -a 'containerd --version'"
-          - "  ansible -i inventory/k8s-exam.ini k8s_cluster -m shell -a 'nerdctl version'"
-          - "  ansible -i inventory/k8s-exam.ini k8s_cluster -m shell -a 'ctr version'"
+          - "  ansible -i inventory.ini k8s_cluster -m shell -a 'containerd --version'"
+          - "  ansible -i inventory.ini k8s_cluster -m shell -a 'nerdctl version'"
+          - "  ansible -i inventory.ini k8s_cluster -m shell -a 'ctr version'"
           - "================================================================"

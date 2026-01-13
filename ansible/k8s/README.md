@@ -159,7 +159,7 @@ kubectl get pods -A
 | `10-deploy-kubernetes-dashboard.yml` | Deploy Kubernetes Dashboard |
 | `13-deploy-ingress-nginx-controller.yml` | Deploy NGINX Ingress Controller |
 | `14-deploy-longhorn-storage.yml` | Deploy Longhorn distributed storage |
-| `3-disable-firewall-install-consul.yml` | Disable firewall and install Consul |
+| `3-disable-firewall.yml` | Disable firewall and install Consul |
 | `5-install-containerd-nerdctl.yml` | Install containerd and nerdctl |
 | `17-deploy-nginx-chart.yml` | Deploy nginx via Helm |
 | `19-deploy-cloudnativepg.yml` | Deploy CloudNativePG operator |

@@ -2,7 +2,7 @@
 # Prepare nodes for Kubernetes installation
 # Configure containerd, system settings, and install Kubernetes packages
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 01-prepare-nodes.yml
+#   ansible-playbook -i inventory.ini 01-prepare-nodes.yml
 
 - name: Prepare all nodes for Kubernetes
   hosts: k8s_cluster
@@ -106,49 +106,6 @@
           - ipset
         state: present
 
-    # ============== CONFIGURE CONTAINERD ==============
-    - name: Generate containerd default configuration
-      ansible.builtin.shell:
-        cmd: containerd config default > /etc/containerd/config.toml
-      args:
-        creates: /etc/containerd/config.toml
-
-    - name: Enable CRI plugin in containerd (remove from disabled_plugins)
-      ansible.builtin.lineinfile:
-        path: /etc/containerd/config.toml
-        regexp: '^disabled_plugins\s*='
-        line: 'disabled_plugins = []'
-        state: present
-
-    - name: Configure SystemdCgroup in containerd
-      ansible.builtin.lineinfile:
-        path: /etc/containerd/config.toml
-        regexp: '^\s*SystemdCgroup\s*='
-        insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\.options\]'
-        line: '            SystemdCgroup = true'
-        state: present
-
-    - name: Update pause image version in containerd
-      ansible.builtin.lineinfile:
-        path: /etc/containerd/config.toml
-        regexp: '^\s*sandbox_image\s*='
-        insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\]'
-        line: '    sandbox_image = "registry.k8s.io/pause:{{ pause_image_version }}"'
-
-    - name: Restart containerd service
-      ansible.builtin.systemd:
-        name: containerd
-        state: restarted
-        daemon_reload: yes
-
-    - name: Wait for containerd to be ready
-      ansible.builtin.pause:
-        seconds: 3
-
-    - name: Display containerd configured
-      ansible.builtin.debug:
-        msg: "Containerd configured with SystemdCgroup and pause:{{ pause_image_version }}"
-
     # ============== INSTALL KUBERNETES PACKAGES ==============
     - name: Install Kubernetes packages
       ansible.builtin.dnf:
@@ -232,7 +189,7 @@
           - "  4. Run: 04-join-workers.yml - Join worker nodes"
           - ""
           - "Verification commands:"
-          - "  ansible -i inventory/k8s-exam.ini k8s_cluster -m shell -a 'kubeadm version'"
-          - "  ansible -i inventory/k8s-exam.ini k8s_cluster -m shell -a 'kubectl version --client'"
-          - "  ansible -i inventory/k8s-exam.ini k8s_cluster -m shell -a 'systemctl status kubelet'"
+          - "  ansible -i inventory.ini k8s_cluster -m shell -a 'kubeadm version'"
+          - "  ansible -i inventory.ini k8s_cluster -m shell -a 'kubectl version --client'"
+          - "  ansible -i inventory.ini k8s_cluster -m shell -a 'systemctl status kubelet'"
           - "================================================================"

@@ -1,10 +1,10 @@
 ---
 # Expose Hubble UI via NodePort service
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 05-expose-hubble.yml
+#   ansible-playbook -i inventory.ini 05-expose-hubble.yml
 
 - name: Expose Hubble UI via NodePort
-  hosts: k8s_masters
+  hosts: k8s_master
   become: yes
   gather_facts: yes
 
@@ -148,5 +148,5 @@
           - "  http://<any-node-ip>:31000"
           - ""
           - "Next step: Deploy test applications"
-          - "  ansible-playbook -i inventory/k8s-exam.ini 06-deploy-test-app.yml"
+          - "  ansible-playbook -i inventory.ini 06-deploy-test-app.yml"
           - "================================================================"

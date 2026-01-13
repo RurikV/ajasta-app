@@ -5,10 +5,10 @@
 # 2. Creates a PostgreSQL cluster with 2 instances
 # 3. Configures resources and persistent storage
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 19-deploy-cloudnativepg.yml
+#   ansible-playbook -i inventory.ini 19-deploy-cloudnativepg.yml
 
 - name: Deploy CloudNativePG and PostgreSQL Cluster
-  hosts: k8s_masters
+  hosts: k8s_master
   become: yes
   gather_facts: yes
 

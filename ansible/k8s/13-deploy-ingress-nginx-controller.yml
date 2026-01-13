@@ -5,10 +5,10 @@
 # 2. Verifies the installation (pods, services)
 # 3. Creates an Ingress for echoserver
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 13-deploy-ingress-nginx-controller.yml
+#   ansible-playbook -i inventory.ini 13-deploy-ingress-nginx-controller.yml
 
 - name: Deploy ingress-nginx and create echoserver Ingress
-  hosts: k8s_masters
+  hosts: k8s_master
   become: yes
   gather_facts: yes
 

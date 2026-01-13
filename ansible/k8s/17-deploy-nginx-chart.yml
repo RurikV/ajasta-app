@@ -2,10 +2,10 @@
 # Deploy NGINX via Helm from stable repository to test namespace
 # This deploys the nginx-ingress chart from the stable Helm repository
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 17-deploy-nginx-chart.yml
+#   ansible-playbook -i inventory.ini 17-deploy-nginx-chart.yml
 
 - name: Deploy NGINX Helm Chart from Stable Repository
-  hosts: k8s_masters
+  hosts: k8s_master
   become: yes
   gather_facts: yes
 

@@ -1,10 +1,10 @@
 ---
 # Deploy test applications to Kubernetes cluster
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 06-deploy-test-app.yml
+#   ansible-playbook -i inventory.ini 06-deploy-test-app.yml
 
 - name: Deploy test applications
-  hosts: k8s_masters
+  hosts: k8s_master
   become: yes
   gather_facts: yes
 

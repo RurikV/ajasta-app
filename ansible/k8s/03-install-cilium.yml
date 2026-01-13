@@ -1,10 +1,10 @@
 ---
 # Install Cilium CNI on Kubernetes cluster
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 03-install-cilium.yml
+#   ansible-playbook -i inventory.ini 03-install-cilium.yml
 
 - name: Install Cilium CNI
-  hosts: k8s_masters
+  hosts: k8s_master
   become: yes
   gather_facts: yes
 
@@ -224,10 +224,10 @@
           - "================================================================"
           - ""
           - "Next step: Join worker nodes"
-          - "  ansible-playbook -i inventory/k8s-exam.ini 04-join-workers.yml"
+          - "  ansible-playbook -i inventory.ini 04-join-workers.yml"
           - ""
           - "Then expose Hubble UI:"
-          - "  ansible-playbook -i inventory/k8s-exam.ini 05-expose-hubble.yml"
+          - "  ansible-playbook -i inventory.ini 05-expose-hubble.yml"
           - ""
           - "Verification commands:"
           - "  ssh centos@<master-ip> 'kubectl get nodes'"

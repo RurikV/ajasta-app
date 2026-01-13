@@ -1,10 +1,10 @@
 ---
 # Initialize Kubernetes control plane on master node
 # Usage:
-#   ansible-playbook -i inventory/k8s-exam.ini 02-init-master.yml
+#   ansible-playbook -i inventory.ini 02-init-master.yml
 
 - name: Initialize Kubernetes control plane
-  hosts: k8s_masters
+  hosts: k8s_master
   become: yes
   gather_facts: yes
 
@@ -102,12 +102,12 @@
       when: not kube_admin_conf.stat.exists
 
     # ============== SETUP KUBECONFIG FOR ALL USERS ==============
-    - name: Create .kube directory for centos user
+    - name: Create .kube directory for ajasta user
       ansible.builtin.file:
-        path: /home/centos/.kube
+        path: /home/ajasta/.kube
         state: directory
-        owner: centos
-        group: centos
+        owner: ajasta
+        group: ajasta
         mode: '0755'
 
     - name: Create .kube directory for root user
@@ -118,20 +118,12 @@
         group: root
         mode: '0755'
 
-    - name: Create .kube directory for scoring user
-      ansible.builtin.file:
-        path: /home/scoring/.kube
-        state: directory
-        owner: scoring
-        group: scoring
-        mode: '0755'
-
-    - name: Copy admin.conf to centos user
+    - name: Copy admin.conf to ajasta user
       ansible.builtin.copy:
         src: /etc/kubernetes/admin.conf
-        dest: /home/centos/.kube/config
-        owner: centos
-        group: centos
+        dest: /home/ajasta/.kube/config
+        owner: ajasta
+        group: ajasta
         mode: '0600'
         remote_src: yes
 
@@ -144,30 +136,12 @@
         mode: '0600'
         remote_src: yes
 
-    - name: Copy admin.conf to scoring user
-      ansible.builtin.copy:
-        src: /etc/kubernetes/admin.conf
-        dest: /home/scoring/.kube/config
-        owner: scoring
-        group: scoring
         mode: '0600'
         remote_src: yes
 
     - name: Display kubeconfig setup complete
       ansible.builtin.debug:
-        msg: "Kubeconfig configured for centos, root, and scoring users"
-
-    # ============== VERIFY CLUSTER ==============
-    - name: Wait for API server to be ready
-      ansible.builtin.command:
-        cmd: kubectl get nodes
-      register: kubectl_get_nodes
-      until: kubectl_get_nodes.rc == 0
-      retries: 15
-      delay: 4
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
+        msg: "Kubeconfig configured for ajasta and root users"
 
     - name: Get cluster nodes
       ansible.builtin.command:
@@ -260,13 +234,7 @@
           - ""
           - "Kubeconfig:"
           - "  - /etc/kubernetes/admin.conf (root)"
-          - "  - /home/centos/.kube/config (centos user)"
-          - "  - /home/scoring/.kube/config (scoring user)"
-          - ""
-          - "Control-plane taint: REMOVED (workloads can run on master)"
-          - ""
-          - "Next: Install CNI (Cilium) - run 03-install-cilium.yml"
-          - "================================================================"
+          - "  - /home/centos/.kube/config (ajasta user)"
 
 - name: Overall summary
   hosts: localhost
@@ -280,7 +248,7 @@
           - "================================================================"
           - ""
           - "Next step: Install Cilium CNI"
-          - "  ansible-playbook -i inventory/k8s-exam.ini 03-install-cilium.yml"
+          - "  ansible-playbook -i inventory.ini 03-install-cilium.yml"
           - ""
           - "Verification commands:"
           - "  ssh centos@<master-ip> 'kubectl get nodes'"
