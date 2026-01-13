@@ -44,13 +44,13 @@ while [[ $# -gt 0 ]]; do
       echo "  -h, --help         Show this help message"
       echo ""
       echo "This script:"
-      echo "  1. Reads master IP from Terraform outputs OR inventory.ini"
+      echo "  1. Reads master IP from inventory.ini (preferred) OR Terraform outputs"
       echo "  2. Fetches admin kubeconfig from master node"
       echo "  3. Updates ~/.kube/config with new master IP"
       echo ""
       echo "Sources for master IP (in order of preference):"
-      echo "  - terraform/outputs.json (if available)"
-      echo "  - ansible-ci/inventory.ini (fallback)"
+      echo "  - ansible-ci/inventory.ini (primary)"
+      echo "  - terraform/outputs.json (fallback)"
       echo ""
       exit 0
       ;;
@@ -62,33 +62,33 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Step 1: Extract master IP from Terraform outputs or inventory.ini
+# Step 1: Extract master IP from inventory.ini or Terraform outputs
 MASTER_IP=""
 
-# Try Terraform outputs first
-if [ -f "$TERRAFORM_OUTPUTS" ]; then
-  echo "📖 Reading Terraform outputs..."
-  MASTER_IP=$(jq -r '.master_public_ip // .master_public_ip.value' "$TERRAFORM_OUTPUTS" 2>/dev/null || echo "")
+# Try inventory.ini first (primary method)
+if [ -f "$INVENTORY_FILE" ]; then
+  echo "📖 Reading from inventory.ini..."
+  MASTER_IP=$(grep -E "^master-node.*ansible_host=" "$INVENTORY_FILE" | sed -E 's/.*ansible_host=([0-9.]+).*/\1/' | head -1)
 
-  if [ -n "$MASTER_IP" ] && [ "$MASTER_IP" != "null" ]; then
-    echo "✅ Master IP from Terraform: $MASTER_IP"
+  if [ -n "$MASTER_IP" ]; then
+    echo "✅ Master IP from inventory: $MASTER_IP"
   fi
 fi
 
-# Fallback: Try reading from inventory.ini
+# Fallback: Try Terraform outputs if inventory didn't work
 if [ -z "$MASTER_IP" ] || [ "$MASTER_IP" = "null" ]; then
-  if [ -f "$INVENTORY_FILE" ]; then
-    echo "📖 Reading from inventory.ini (Terraform outputs not found)..."
-    MASTER_IP=$(grep -E "^master-node.*ansible_host=" "$INVENTORY_FILE" | sed -E 's/.*ansible_host=([0-9.]+).*/\1/' | head -1)
+  if [ -f "$TERRAFORM_OUTPUTS" ]; then
+    echo "📖 Reading from Terraform outputs (inventory method failed)..."
+    MASTER_IP=$(jq -r '.master_public_ip // .master_public_ip.value' "$TERRAFORM_OUTPUTS" 2>/dev/null || echo "")
 
-    if [ -n "$MASTER_IP" ]; then
-      echo "✅ Master IP from inventory: $MASTER_IP"
+    if [ -n "$MASTER_IP" ] && [ "$MASTER_IP" != "null" ]; then
+      echo "✅ Master IP from Terraform: $MASTER_IP"
     fi
   else
-    echo "❌ Neither Terraform outputs nor inventory.ini found"
+    echo "❌ Neither inventory.ini nor Terraform outputs found"
     echo "   Expected one of:"
-    echo "   - $TERRAFORM_OUTPUTS"
     echo "   - $INVENTORY_FILE"
+    echo "   - $TERRAFORM_OUTPUTS"
     exit 1
   fi
 fi
