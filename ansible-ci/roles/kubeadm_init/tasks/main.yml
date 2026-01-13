@@ -12,6 +12,14 @@
   ansible.builtin.set_fact:
     is_master_node: "{{ 'k8s_master' in group_names or inventory_hostname in groups.get('k8s_master', []) }}"
 
+- name: Debug - Show group_names
+  ansible.builtin.debug:
+    msg: "group_names={{ group_names }}, inventory_hostname={{ inventory_hostname }}, k8s_master in group_names={{ 'k8s_master' in group_names }}"
+
+- name: Debug - Show is_master_node value
+  ansible.builtin.debug:
+    msg: "is_master_node={{ is_master_node }}, type={{ is_master_node | type_debug }}"
+
 - name: Check if kubeadm admin.conf already exists
   ansible.builtin.stat:
     path: "{{ kubeconfig_path }}"
