@@ -1,0 +1,65 @@
+---
+# Disable firewalls and configure nodes
+# Usage:
+#   ansible-playbook -i inventory.ini 3-disable-firewall-install-consul.yml
+
+- name: Disable firewall on all cluster nodes
+  hosts: k8s_cluster
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Display target information
+      ansible.builtin.debug:
+        msg:
+          - "Target: {{ inventory_hostname }}"
+          - "IP: {{ ansible_default_ipv4.address }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    # ============== DISABLE FIREWALL ==============
+    - name: Check if firewalld is running
+      ansible.builtin.systemd:
+        name: firewalld
+      register: firewalld_status
+      failed_when: false
+
+    - name: Stop and disable firewalld
+      ansible.builtin.systemd:
+        name: firewalld
+        state: stopped
+        enabled: no
+      when: firewalld_status.status.Exists | default(false)
+
+    - name: Flush iptables rules (if using iptables)
+      ansible.builtin.command:
+        cmd: iptables -F
+      changed_when: false
+      failed_when: false
+
+    - name: Disable iptables service
+      ansible.builtin.systemd:
+        name: iptables
+        state: stopped
+        enabled: no
+      failed_when: false
+
+    - name: Disable ip6tables service
+      ansible.builtin.systemd:
+        name: ip6tables
+        state: stopped
+        enabled: no
+      failed_when: false
+
+    - name: Firewall disabled
+      ansible.builtin.debug:
+        msg: "Firewall has been stopped and disabled on {{ inventory_hostname }}"
+
+    # ============== INSTALL REQUIRED PACKAGES ==============
+    - name: Install required packages (wget, unzip)
+      ansible.builtin.dnf:
+        name:
+          - wget
+          - unzip
+        state: present
+        update_cache: yes
+

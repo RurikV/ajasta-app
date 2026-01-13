@@ -1,0 +1,380 @@
+---
+# Deploy ingress-nginx controller and create Ingress for echoserver
+# This playbook:
+# 1. Installs ingress-nginx controller (v1.13.2)
+# 2. Verifies the installation (pods, services)
+# 3. Creates an Ingress for echoserver
+# Usage:
+#   ansible-playbook -i inventory/k8s-exam.ini 13-deploy-ingress-nginx-controller.yml
+
+- name: Deploy ingress-nginx and create echoserver Ingress
+  hosts: k8s_masters
+  become: yes
+  gather_facts: yes
+
+  vars:
+    ingress_namespace: ingress-nginx
+    ingress_release: "v1.13.2"
+    ingress_manifest_url: "https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-{{ ingress_release }}/deploy/static/provider/baremetal/deploy.yaml"
+    echoserver_namespace: default
+    echoserver_ingress_host_prefix: "echoserver"
+
+  tasks:
+    - name: Display target information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYING INGRESS-NGINX CONTROLLER"
+          - "================================================================"
+          - "Target: {{ inventory_hostname }}"
+          - "Ingress Version: {{ ingress_release }}"
+          - "Namespace: {{ ingress_namespace }}"
+          - "================================================================"
+
+    # ============== GET NODE PUBLIC IP FOR INGRESS HOST ==============
+    - name: Get node's external IP address
+      ansible.builtin.shell:
+        cmd: |
+          # Try to get the external IP from the node
+          curl -s https://ifconfig.me 2>/dev/null || \
+          curl -s https://icanhazip.com 2>/dev/null || \
+          curl -s https://ipecho.net/plain 2>/dev/null || \
+          hostname -I | awk '{print $1}'
+      register: public_ip
+      changed_when: false
+      timeout: 30
+      failed_when: public_ip.stdout | length < 7
+
+    - name: Display detected public IP
+      ansible.builtin.debug:
+        msg: "Detected Public IP: {{ public_ip.stdout }}"
+
+    - name: Set ingress hostname fact
+      ansible.builtin.set_fact:
+        ingress_hostname: "{{ echoserver_ingress_host_prefix }}.{{ public_ip.stdout }}.nip.io"
+
+    - name: Display ingress hostname
+      ansible.builtin.debug:
+        msg: "Ingress Hostname: {{ ingress_hostname }}"
+
+    # ============== DOWNLOAD INGRESS-NGINX MANIFEST ==============
+    - name: Download ingress-nginx controller manifest
+      ansible.builtin.get_url:
+        url: "{{ ingress_manifest_url }}"
+        dest: /tmp/ingress-nginx-deploy.yaml
+        mode: '0644'
+        timeout: 60
+      register: download_manifest
+
+    - name: Display manifest download result
+      ansible.builtin.debug:
+        msg: "Ingress-nginx manifest downloaded to /tmp/ingress-nginx-deploy.yaml"
+
+    # ============== INSTALL INGRESS-NGINX CONTROLLER ==============
+    - name: Check if ingress-nginx namespace exists
+      ansible.builtin.command:
+        cmd: kubectl get namespace {{ ingress_namespace }}
+      register: ingress_namespace_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Apply ingress-nginx controller manifest
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/ingress-nginx-deploy.yaml
+      register: ingress_apply
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display ingress-nginx installation result
+      ansible.builtin.debug:
+        msg: "{{ ingress_apply.stdout_lines }}"
+
+    # ============== WAIT FOR INGRESS-NGINX PODS ==============
+    - name: Pause for ingress-nginx to initialize
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: Wait for ingress-nginx controller deployment to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=available deployment/ingress-nginx-controller -n {{ ingress_namespace }} --timeout=300s
+      register: ingress_ready
+      until: ingress_ready.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display ingress-nginx controller ready status
+      ansible.builtin.debug:
+        msg: "{{ ingress_ready.stdout | default('Ingress-nginx controller is ready', true) }}"
+
+    # ============== VERIFY INGRESS-NGINX INSTALLATION ==============
+    - name: Get all pods in ingress-nginx namespace
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ ingress_namespace }}
+      register: ingress_pods
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display ingress-nginx pods
+      ansible.builtin.debug:
+        msg: "{{ ingress_pods.stdout_lines }}"
+
+    - name: Verify ingress-nginx controller pod is running
+      ansible.builtin.shell:
+        cmd: kubectl get pods -n {{ ingress_namespace }} -l app.kubernetes.io/name=ingress-nginx --no-headers | grep Running
+      register: controller_pod_check
+      changed_when: false
+      failed_when: controller_pod_check.rc != 0
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display controller pod verification
+      ansible.builtin.debug:
+        msg: "{{ controller_pod_check.stdout_lines }}"
+
+    - name: Get all services in ingress-nginx namespace
+      ansible.builtin.command:
+        cmd: kubectl get service -n {{ ingress_namespace }}
+      register: ingress_services
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display ingress-nginx services
+      ansible.builtin.debug:
+        msg: "{{ ingress_services.stdout_lines }}"
+
+    - name: Get ingress-nginx controller NodePort
+      ansible.builtin.command:
+        cmd: kubectl get -n {{ ingress_namespace }} service/ingress-nginx-controller -o jsonpath='{.spec.ports[0].nodePort}'
+      register: node_port
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display NodePort
+      ansible.builtin.debug:
+        msg: "Ingress-nginx controller NodePort: {{ node_port.stdout }}"
+
+    - name: Set NodePort fact for later use
+      ansible.builtin.set_fact:
+        ingress_nodeport: "{{ node_port.stdout }}"
+
+    # ============== VERIFY ECHOSERVER EXISTS ==============
+    - name: Check if echoserver pod exists
+      ansible.builtin.command:
+        cmd: kubectl get pod echoserver
+      register: echoserver_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display echoserver status
+      ansible.builtin.debug:
+        msg: "{{ echoserver_check.stdout_lines | default(['Echoserver pod not found'], true) }}"
+
+    - name: Check if echoserver service exists
+      ansible.builtin.command:
+        cmd: kubectl get service echoserver
+      register: echoserver_svc_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display echoserver service status
+      ansible.builtin.debug:
+        msg: "{{ echoserver_svc_check.stdout_lines | default(['Echoserver service not found'], true) }}"
+
+    - name: Fail if echoserver is not deployed
+      ansible.builtin.fail:
+        msg: "Echoserver not found. Please run '06-deploy-test-app.yml' first to deploy echoserver."
+      when:
+        - echoserver_check.rc != 0 or echoserver_svc_check.rc != 0
+
+    # ============== CREATE INGRESS FOR ECHOSERVER ==============
+    - name: Create Ingress manifest for echoserver
+      ansible.builtin.copy:
+        dest: /tmp/echoserver-ingress.yaml
+        content: |
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: echoserver-ingress
+            labels:
+              name: echoserver-ingress
+          spec:
+            ingressClassName: "nginx"
+            rules:
+            - host: {{ ingress_hostname }}
+              http:
+                paths:
+                - pathType: Prefix
+                  path: "/"
+                  backend:
+                    service:
+                      name: echoserver
+                      port:
+                        number: 80
+        mode: '0644'
+
+    - name: Display Ingress manifest created
+      ansible.builtin.debug:
+        msg: "Echoserver Ingress manifest created at /tmp/echoserver-ingress.yaml"
+
+    # ============== FIX WEBHOOK VALIDATION ISSUE ==============
+    # The admission webhook may not be accessible in baremetal deployments
+    # We patch it to allow the Ingress creation to proceed
+    - name: Check if validating webhook exists
+      ansible.builtin.command:
+        cmd: kubectl get validatingwebhookconfiguration ingress-nginx-admission
+      register: webhook_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Patch validating webhook to ignore failures (baremetal fix)
+      ansible.builtin.command:
+        cmd: kubectl patch validatingwebhookconfiguration ingress-nginx-admission -p '{"webhooks":[{"name":"validate.nginx.ingress.kubernetes.io","failurePolicy":"Ignore"}]}'
+      register: webhook_patch
+      changed_when: webhook_check.rc == 0
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display webhook patch result
+      ansible.builtin.debug:
+        msg: "{{ webhook_patch.stdout_lines | default(['Webhook patched or not found'], true) }}"
+
+    - name: Apply echoserver Ingress manifest
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/echoserver-ingress.yaml
+      register: ingress_create
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Ingress creation result
+      ansible.builtin.debug:
+        msg: "{{ ingress_create.stdout_lines }}"
+
+    # ============== VERIFY INGRESS ==============
+    - name: Get Ingress details
+      ansible.builtin.command:
+        cmd: kubectl get ingress echoserver-ingress
+      register: ingress_details
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Ingress details
+      ansible.builtin.debug:
+        msg: "{{ ingress_details.stdout_lines }}"
+
+    - name: Describe Ingress for more details
+      ansible.builtin.command:
+        cmd: kubectl describe ingress echoserver-ingress
+      register: ingress_describe
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Ingress description
+      ansible.builtin.debug:
+        msg: "{{ ingress_describe.stdout_lines }}"
+
+    # ============== TEST INGRESS CONNECTIVITY ==============
+    - name: Pause for Ingress to be processed
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Test Ingress connectivity from within cluster
+      ansible.builtin.command:
+        cmd: kubectl run curl-test --image=registry.hpc.ut.ee/mirror/library/curlimages/curl:latest --rm -i --restart=Never -- curl -s http://{{ ingress_hostname }}:{{ ingress_nodeport }}
+      register: ingress_test
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Ingress connectivity test result
+      ansible.builtin.debug:
+        msg:
+          - "Ingress connectivity test:"
+          - "{{ ingress_test.stdout_lines | default(['Test completed']) }}"
+
+    # ============== SUMMARY ==============
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "INGRESS-NGINX DEPLOYED SUCCESSFULLY"
+          - "================================================================"
+          - ""
+          - "Ingress-Nginx Configuration:"
+          - "  - Version: {{ ingress_release }}"
+          - "  - Namespace: {{ ingress_namespace }}"
+          - "  - Controller NodePort: {{ ingress_nodeport }}"
+          - ""
+          - "Echoserver Ingress:"
+          - "  - Name: echoserver-ingress"
+          - "  - IngressClassName: nginx"
+          - "  - Host: {{ ingress_hostname }}"
+          - ""
+          - "Access echoserver via Ingress:"
+          - "  http://{{ ingress_hostname }}:{{ ingress_nodeport }}"
+          - ""
+          - "Verify Ingress:"
+          - "  kubectl get ingress -A"
+          - "  kubectl describe ingress echoserver-ingress"
+          - ""
+          - "Test from browser:"
+          - "  Open: http://{{ ingress_hostname }}:{{ ingress_nodeport }}"
+          - ""
+          - "Ingress Controller Details:"
+          - "  kubectl get pods -n {{ ingress_namespace }}"
+          - "  kubectl get svc -n {{ ingress_namespace }}"
+          - "  kubectl logs -n {{ ingress_namespace }} -l app.kubernetes.io/name=ingress-nginx"
+          - ""
+          - "Troubleshooting:"
+          - "  - Check NodePort: {{ ingress_nodeport }}"
+          - "  - Check firewall allows port {{ ingress_nodeport }}"
+          - "  - Verify DNS: nslookup {{ ingress_hostname }}"
+          - "  - Check controller logs for errors"
+          - ""
+          - "To uninstall:"
+          - "  kubectl delete ingress echoserver-ingress"
+          - "  kubectl delete -f /tmp/ingress-nginx-deploy.yaml"
+          - ""
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "INGRESS-NGINX READY"
+          - "================================================================"
+          - ""
+          - "The ingress-nginx controller has been deployed and configured."
+          - ""
+          - "What is Ingress?"
+          - "  - Ingress provides HTTP/S routing to services within cluster"
+          - "  - Acts as a reverse proxy and load balancer"
+          - "  - Allows host and path-based routing"
+          - ""
+          - "Next Steps:"
+          - "  1. Access echoserver: http://echoserver.<IP>.nip.io:<NODEPORT>"
+          - "  2. Create more Ingress resources for other services"
+          - "  3. Configure TLS/SSL for secure connections"
+          - ""
+          - "================================================================"

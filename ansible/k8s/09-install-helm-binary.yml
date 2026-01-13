@@ -1,0 +1,180 @@
+---
+# Install Helm package manager on Kubernetes nodes
+# Helm is required for deploying Kubernetes Dashboard and other Helm charts
+# Usage:
+#   ansible-playbook -i inventory/k8s-exam.ini 09-install-helm-binary.yml
+
+- name: Install Helm on all nodes
+  hosts: k8s_masters,k8s_workers
+  become: yes
+  gather_facts: yes
+
+  vars:
+    helm_version: "v3.17.2"  # Latest stable Helm 3.x version
+    helm_download_url: "https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz"
+
+  tasks:
+    - name: Display target information
+      ansible.builtin.debug:
+        msg:
+          - "Target: {{ inventory_hostname }}"
+          - "Installing Helm {{ helm_version }}"
+
+    # ============== CHECK IF HELM IS ALREADY INSTALLED ==============
+    - name: Check if Helm is already installed
+      ansible.builtin.command:
+        cmd: helm version
+      register: helm_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Display existing Helm version
+      ansible.builtin.debug:
+        msg: "Helm already installed: {{ helm_installed.stdout }}"
+      when: helm_installed.rc == 0
+
+    # ============== DOWNLOAD HELM ==============
+    - name: Download Helm binary
+      ansible.builtin.get_url:
+        url: "{{ helm_download_url }}"
+        dest: /tmp/helm-linux-amd64.tar.gz
+        mode: '0644'
+        timeout: 300
+      when: helm_installed.rc != 0
+
+    - name: Display Helm downloaded
+      ansible.builtin.debug:
+        msg: "Helm {{ helm_version }} downloaded to /tmp/helm-linux-amd64.tar.gz"
+      when: helm_installed.rc != 0
+
+    # ============== INSTALL HELM ==============
+    - name: Create temporary directory for Helm extraction
+      ansible.builtin.file:
+        path: /tmp/helm-extract
+        state: directory
+        mode: '0755'
+      when: helm_installed.rc != 0
+
+    - name: Extract Helm archive
+      ansible.builtin.unarchive:
+        src: /tmp/helm-linux-amd64.tar.gz
+        dest: /tmp/helm-extract
+        remote_src: yes
+        creates: /tmp/helm-extract/linux-amd64/helm
+      when: helm_installed.rc != 0
+
+    - name: Install Helm binary
+      ansible.builtin.copy:
+        src: /tmp/helm-extract/linux-amd64/helm
+        dest: /usr/local/bin/helm
+        mode: '0755'
+        remote_src: yes
+      when: helm_installed.rc != 0
+
+    - name: Create bash completion for Helm
+      ansible.builtin.command:
+        cmd: helm completion bash > /etc/bash_completion.d/helm
+      args:
+        creates: /etc/bash_completion.d/helm
+      when: helm_installed.rc != 0
+      failed_when: false
+
+    # ============== VERIFY HELM INSTALLATION ==============
+    - name: Verify Helm installation
+      ansible.builtin.command:
+        cmd: helm version
+      register: helm_verify
+      changed_when: false
+      environment:
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Display Helm version
+      ansible.builtin.debug:
+        msg: "{{ helm_verify.stdout_lines }}"
+
+    # ============== CLEANUP ==============
+    - name: Remove Helm installation files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/helm-linux-amd64.tar.gz
+        - /tmp/helm-extract
+      failed_when: false
+
+    # ============== CONFIGURE HELM FOR KUBERNETES ==============
+    - name: Add stable Helm repository (for testing)
+      ansible.builtin.command:
+        cmd: helm repo add stable https://charts.helm.sh/stable
+      register: helm_repo_stable
+      changed_when: "'has been added' in helm_repo_stable.stdout"
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Update Helm repositories
+      ansible.builtin.command:
+        cmd: helm repo update
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+      when: helm_installed.rc == 0 or helm_verify.rc == 0
+
+    - name: List Helm repositories
+      ansible.builtin.command:
+        cmd: helm repo list
+      register: helm_repos
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Display Helm repositories
+      ansible.builtin.debug:
+        msg: "{{ helm_repos.stdout_lines }}"
+      when: helm_installed.rc == 0 or helm_verify.rc == 0
+
+    # ============== SUMMARY ==============
+    - name: Display installation summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "HELM INSTALLED SUCCESSFULLY"
+          - "================================================================"
+          - "Host: {{ inventory_hostname }}"
+          - ""
+          - "Helm Version: {{ helm_version }}"
+          - "Binary Location: /usr/local/bin/helm"
+          - "Bash Completion: /etc/bash_completion.d/helm"
+          - ""
+          - "Helm is now ready to deploy charts!"
+          - ""
+          - "Usage:"
+          - "  helm repo add <name> <url>"
+          - "  helm search repo <keyword>"
+          - "  helm install <release> <chart>"
+          - "  helm list"
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "HELM PACKAGE MANAGER READY"
+          - "================================================================"
+          - ""
+          - "Helm has been installed on all Kubernetes nodes."
+          - ""
+          - "Next step: Deploy Kubernetes Dashboard"
+          - "  ansible-playbook -i inventory/k8s-exam.ini 10-deploy-kubernetes-dashboard.yml"
+          - ""
+          - "Or deploy any other Helm chart:"
+          - "  helm search repo <keyword>"
+          - "  helm install <release> <chart>"
+          - ""
+          - "================================================================"

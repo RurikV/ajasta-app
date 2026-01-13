@@ -1,0 +1,236 @@
+---
+# Install Cilium CNI on Kubernetes cluster
+# Usage:
+#   ansible-playbook -i inventory/k8s-exam.ini 03-install-cilium.yml
+
+- name: Install Cilium CNI
+  hosts: k8s_masters
+  become: yes
+  gather_facts: yes
+
+  vars:
+    cilium_version: "1.18.1"
+    cilium_cli_version: "v0.16.24"
+    cilium_cli_url: "https://github.com/cilium/cilium-cli/releases/download/{{ cilium_cli_version }}/cilium-linux-amd64.tar.gz"
+
+  tasks:
+    - name: Display target information
+      ansible.builtin.debug:
+        msg:
+          - "Target: {{ inventory_hostname }}"
+          - "Installing Cilium CNI v{{ cilium_version }}"
+
+    # ============== INSTALL CILIUM CLI ==============
+    - name: Get latest stable Cilium CLI version
+      ansible.builtin.uri:
+        url: https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt
+        return_content: yes
+      register: stable_version
+      when: false  # Using fixed version
+
+    - name: Download Cilium CLI
+      ansible.builtin.get_url:
+        url: "{{ cilium_cli_url }}"
+        dest: /tmp/cilium-linux-amd64.tar.gz
+        mode: '0644'
+        timeout: 300
+
+    - name: Extract Cilium CLI
+      ansible.builtin.unarchive:
+        src: /tmp/cilium-linux-amd64.tar.gz
+        dest: /usr/local/bin
+        remote_src: yes
+        creates: /usr/local/bin/cilium
+
+    - name: Verify Cilium CLI installation
+      ansible.builtin.command:
+        cmd: /usr/local/bin/cilium version
+      register: cilium_version_check
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      failed_when: false
+
+    - name: Display Cilium CLI version
+      ansible.builtin.debug:
+        msg: "{{ cilium_version_check.stdout }}"
+
+    # ============== INSTALL CILIUM ==============
+    - name: Check if Cilium is already installed
+      ansible.builtin.command:
+        cmd: kubectl get namespace cilium
+      register: cilium_namespace
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Install Cilium CNI
+      ansible.builtin.command:
+        cmd: >
+          /usr/local/bin/cilium install
+          --version {{ cilium_version }}
+          --set hubble.ui.enabled=true
+          --set hubble.relay.enabled=true
+          --set operator.replicas=1
+          --set hubble.relay.tls.server.enabled=false
+          --set hubble.tls.enabled=false
+          --set ipam.operator.clusterPoolIPv4PodCIDRList=10.217.0.0/16
+      register: cilium_install
+      when: "'cilium' not in cilium_namespace.stdout or cilium_namespace.rc != 0"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+      # This can take several minutes
+
+    - name: Display Cilium installation result
+      ansible.builtin.debug:
+        msg: "{{ cilium_install.stdout_lines | default(['Cilium already installed']) }}"
+      when: cilium_install is defined
+
+    # ============== WAIT FOR CILIUM PODS ==============
+    - name: Wait for Cilium pods to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod -l k8s-app=cilium -n kube-system --timeout=300s
+      register: cilium_pods_ready
+      until: cilium_pods_ready.rc == 0
+      retries: 10
+      delay: 10
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Wait for Cilium operator to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=cilium-operator -n kube-system --timeout=300s
+      register: cilium_operator_ready
+      until: cilium_operator_ready.rc == 0
+      retries: 10
+      delay: 10
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Wait for Hubble UI to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod -l k8s-app=hubble-ui -n kube-system --timeout=300s
+      register: hubble_ui_ready
+      until: hubble_ui_ready.rc == 0
+      retries: 10
+      delay: 10
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Wait for Hubble Relay to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod -l k8s-app=hubble-relay -n kube-system --timeout=300s
+      register: hubble_relay_ready
+      until: hubble_relay_ready.rc == 0
+      retries: 10
+      delay: 10
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Pause for Cilium to fully initialize
+      ansible.builtin.pause:
+        seconds: 30
+
+    # ============== VERIFY CILIUM STATUS ==============
+    - name: Check Cilium status
+      ansible.builtin.command:
+        cmd: /usr/local/bin/cilium status
+      register: cilium_status
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Display Cilium status
+      ansible.builtin.debug:
+        msg: "{{ cilium_status.stdout_lines }}"
+
+    # ============== GET PODS IN KUBE-SYSTEM ==============
+    - name: Get all pods in kube-system
+      ansible.builtin.command:
+        cmd: kubectl get pods -n kube-system
+      register: kube_system_pods
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display kube-system pods
+      ansible.builtin.debug:
+        msg: "{{ kube_system_pods.stdout_lines }}"
+
+    # ============== GET CLUSTER NODES ==============
+    - name: Get cluster nodes
+      ansible.builtin.command:
+        cmd: kubectl get nodes -o wide
+      register: cluster_nodes
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display cluster nodes
+      ansible.builtin.debug:
+        msg: "{{ cluster_nodes.stdout_lines }}"
+
+    # ============== CLEANUP ==============
+    - name: Remove temporary Cilium CLI archive
+      ansible.builtin.file:
+        path: /tmp/cilium-linux-amd64.tar.gz
+        state: absent
+      failed_when: false
+
+    # ============== SUMMARY ==============
+    - name: Display Cilium installation summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CILIUM CNI INSTALLED SUCCESSFULLY"
+          - "================================================================"
+          - "Host: {{ inventory_hostname }}"
+          - ""
+          - "Cilium Version: {{ cilium_version }}"
+          - "Cilium CLI: {{ cilium_cli_version }}"
+          - ""
+          - "Components Installed:"
+          - "  - Cilium (CNI plugin)"
+          - "  - Cilium Operator"
+          - "  - Hubble UI (network observability)"
+          - "  - Hubble Relay"
+          - ""
+          - "Configuration:"
+          - "  - Pod CIDR: 10.217.0.0/16"
+          - "  - Hubble UI: enabled"
+          - "  - Hubble Relay: enabled"
+          - "  - TLS: disabled (for lab environment)"
+          - ""
+          - "Next: Join worker nodes - run 04-join-workers.yml"
+          - "      Then run: 05-expose-hubble.yml for NodePort access"
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CILIUM CNI READY"
+          - "================================================================"
+          - ""
+          - "Next step: Join worker nodes"
+          - "  ansible-playbook -i inventory/k8s-exam.ini 04-join-workers.yml"
+          - ""
+          - "Then expose Hubble UI:"
+          - "  ansible-playbook -i inventory/k8s-exam.ini 05-expose-hubble.yml"
+          - ""
+          - "Verification commands:"
+          - "  ssh centos@<master-ip> 'kubectl get nodes'"
+          - "  ssh centos@<master-ip> 'cilium status'"
+          - "  ssh centos@<master-ip> 'kubectl get pods -n kube-system'"
+          - "================================================================"

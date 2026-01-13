@@ -1,0 +1,288 @@
+---
+# Initialize Kubernetes control plane on master node
+# Usage:
+#   ansible-playbook -i inventory/k8s-exam.ini 02-init-master.yml
+
+- name: Initialize Kubernetes control plane
+  hosts: k8s_masters
+  become: yes
+  gather_facts: yes
+
+  vars:
+    pod_subnet: "10.217.0.0/16"
+    service_subnet: "10.96.0.0/12"
+    dns_domain: "cluster.local"
+
+  tasks:
+    - name: Display target information
+      ansible.builtin.debug:
+        msg:
+          - "Target: {{ inventory_hostname }}"
+          - "Internal IP: {{ ansible_default_ipv4.address }}"
+          - "Initializing Kubernetes control plane"
+
+    - name: Get external IP for controlPlaneEndpoint
+      ansible.builtin.shell:
+        cmd: |
+          curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || \
+          hostname -I | awk '{print $1}'
+      register: external_ip
+      changed_when: false
+
+    - name: Set external IP fact
+      ansible.builtin.set_fact:
+        node_external_ip: "{{ external_ip.stdout | default(ansible_default_ipv4.address) }}"
+
+    - name: Display external IP
+      ansible.builtin.debug:
+        msg: "External IP for controlPlaneEndpoint: {{ node_external_ip }}"
+
+    # ============== CREATE KUBEADM CONFIG ==============
+    - name: Create kubeadm configuration directory
+      ansible.builtin.file:
+        path: /etc/kubernetes
+        state: directory
+        mode: '0755'
+
+    - name: Create kubeadm init configuration
+      ansible.builtin.copy:
+        dest: /etc/kubernetes/kubeadm-init.yaml
+        content: |
+          ---
+          apiVersion: kubeadm.k8s.io/v1beta3
+          kind: ClusterConfiguration
+          controlPlaneEndpoint: "{{ node_external_ip }}:6443"
+          networking:
+            dnsDomain: {{ dns_domain }}
+            podSubnet: "{{ pod_subnet }}"
+            serviceSubnet: "{{ service_subnet }}"
+          apiServer:
+            extraArgs:
+              advertise-address: "{{ node_external_ip }}"
+              authorization-mode: "Node,RBAC"
+          ---
+          apiVersion: kubeadm.k8s.io/v1beta3
+          kind: InitConfiguration
+          nodeRegistration:
+            name: "{{ inventory_hostname }}.cloud.ut.ee"
+            criSocket: "unix:///run/containerd/containerd.sock"
+          ---
+          kind: KubeletConfiguration
+          apiVersion: kubelet.config.k8s.io/v1beta1
+          cgroupDriver: "systemd"
+          shutdownGracePeriod: 5m0s
+          shutdownGracePeriodCriticalPods: 5m0s
+          ---
+
+    - name: Display kubeadm config created
+      ansible.builtin.debug:
+        msg: "Kubeadm config created at /etc/kubernetes/kubeadm-init.yaml"
+
+    # ============== CHECK IF CLUSTER ALREADY INITIALIZED ==============
+    - name: Check if cluster is already initialized
+      ansible.builtin.stat:
+        path: /etc/kubernetes/admin.conf
+      register: kube_admin_conf
+
+    - name: Display cluster initialization status
+      ansible.builtin.debug:
+        msg: "Cluster already initialized: {{ kube_admin_conf.stat.exists }}"
+
+    # ============== INITIALIZE CLUSTER ==============
+    - name: Initialize Kubernetes cluster
+      ansible.builtin.command:
+        cmd: kubeadm init --config=/etc/kubernetes/kubeadm-init.yaml --v=5
+      register: kubeadm_init
+      when: not kube_admin_conf.stat.exists
+      # This can take several minutes
+
+    - name: Display kubeadm init result
+      ansible.builtin.debug:
+        msg: "{{ kubeadm_init.stdout_lines | default(['Cluster already initialized']) }}"
+      when: not kube_admin_conf.stat.exists
+
+    # ============== SETUP KUBECONFIG FOR ALL USERS ==============
+    - name: Create .kube directory for centos user
+      ansible.builtin.file:
+        path: /home/centos/.kube
+        state: directory
+        owner: centos
+        group: centos
+        mode: '0755'
+
+    - name: Create .kube directory for root user
+      ansible.builtin.file:
+        path: /root/.kube
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Create .kube directory for scoring user
+      ansible.builtin.file:
+        path: /home/scoring/.kube
+        state: directory
+        owner: scoring
+        group: scoring
+        mode: '0755'
+
+    - name: Copy admin.conf to centos user
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/centos/.kube/config
+        owner: centos
+        group: centos
+        mode: '0600'
+        remote_src: yes
+
+    - name: Copy admin.conf to root user
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        owner: root
+        group: root
+        mode: '0600'
+        remote_src: yes
+
+    - name: Copy admin.conf to scoring user
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/scoring/.kube/config
+        owner: scoring
+        group: scoring
+        mode: '0600'
+        remote_src: yes
+
+    - name: Display kubeconfig setup complete
+      ansible.builtin.debug:
+        msg: "Kubeconfig configured for centos, root, and scoring users"
+
+    # ============== VERIFY CLUSTER ==============
+    - name: Wait for API server to be ready
+      ansible.builtin.command:
+        cmd: kubectl get nodes
+      register: kubectl_get_nodes
+      until: kubectl_get_nodes.rc == 0
+      retries: 15
+      delay: 4
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Get cluster nodes
+      ansible.builtin.command:
+        cmd: kubectl get nodes -o wide
+      register: cluster_nodes
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display cluster nodes
+      ansible.builtin.debug:
+        msg: "{{ cluster_nodes.stdout_lines }}"
+
+    # ============== REMOVE CONTROL-PLANE TAINT ==============
+    - name: Remove control-plane taint to allow workloads on master
+      ansible.builtin.command:
+        cmd: kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+      register: remove_taint
+      changed_when: false
+      failed_when: remove_taint.rc != 0
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display taint removal
+      ansible.builtin.debug:
+        msg: "{{ remove_taint.stdout | default('Taint removed or already removed') }}"
+
+    # ============== GENERATE JOIN COMMAND ==============
+    - name: Create kubeadm join token
+      ansible.builtin.command:
+        cmd: kubeadm token create --print-join-command
+      register: join_command
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Get CA certificate hash
+      ansible.builtin.shell:
+        cmd: |
+          openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | \
+          openssl rsa -pubin -outform der 2>/dev/null | \
+          openssl dgst -sha256 -hex | sed 's/^.* //'
+      register: ca_cert_hash
+      changed_when: false
+
+    - name: Save join command to file for reference
+      ansible.builtin.copy:
+        dest: /tmp/kubeadm-join-command.sh
+        content: |
+          #!/bin/bash
+          # Run this command on worker nodes to join the cluster
+          {{ join_command.stdout }}
+        mode: '0644'
+
+    - name: Display join command
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "KUBERNETES CLUSTER INITIALIZED SUCCESSFULLY"
+          - "================================================================"
+          - ""
+          - "Join command for worker nodes:"
+          - "{{ join_command.stdout }}"
+          - ""
+          - "CA certificate hash:"
+          - "sha256:{{ ca_cert_hash.stdout }}"
+          - ""
+          - "Or run: cat /tmp/kubeadm-join-command.sh"
+          - "================================================================"
+
+    # ============== SUMMARY ==============
+    - name: Display initialization summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "KUBERNETES CONTROL PLANE INITIALIZED"
+          - "================================================================"
+          - "Host: {{ inventory_hostname }}"
+          - "Internal IP: {{ ansible_default_ipv4.address }}"
+          - "External IP: {{ node_external_ip }}"
+          - ""
+          - "Cluster Configuration:"
+          - "  - Pod subnet: {{ pod_subnet }}"
+          - "  - Service subnet: {{ service_subnet }}"
+          - "  - DNS domain: {{ dns_domain }}"
+          - ""
+          - "API Server:"
+          - "  - Endpoint: {{ node_external_ip }}:6443"
+          - "  - Advertise address: {{ node_external_ip }}"
+          - ""
+          - "Kubeconfig:"
+          - "  - /etc/kubernetes/admin.conf (root)"
+          - "  - /home/centos/.kube/config (centos user)"
+          - "  - /home/scoring/.kube/config (scoring user)"
+          - ""
+          - "Control-plane taint: REMOVED (workloads can run on master)"
+          - ""
+          - "Next: Install CNI (Cilium) - run 03-install-cilium.yml"
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "KUBERNETES CONTROL PLANE READY"
+          - "================================================================"
+          - ""
+          - "Next step: Install Cilium CNI"
+          - "  ansible-playbook -i inventory/k8s-exam.ini 03-install-cilium.yml"
+          - ""
+          - "Verification commands:"
+          - "  ssh centos@<master-ip> 'kubectl get nodes'"
+          - "  ssh centos@<master-ip> 'kubectl get pods -n kube-system'"
+          - "================================================================"

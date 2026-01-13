@@ -1,0 +1,367 @@
+---
+# Deploy Kubernetes Dashboard via Helm
+# Kubernetes Dashboard is the official web UI for Kubernetes clusters
+# Repository: https://github.com/kubernetes/dashboard
+# Helm Chart: https://artifacthub.io/packages/helm/k8s-dashboard/kubernetes-dashboard
+# Usage:
+#   ansible-playbook -i inventory/k8s-exam.ini 10-deploy-kubernetes-dashboard.yml
+
+- name: Deploy Kubernetes Dashboard
+  hosts: k8s_masters
+  become: yes
+  gather_facts: yes
+
+  vars:
+    dashboard_namespace: kubernetes-dashboard
+    dashboard_release_name: kubernetes-dashboard
+    dashboard_repo_url: "https://kubernetes.github.io/dashboard/"
+    dashboard_chart: "kubernetes-dashboard/kubernetes-dashboard"
+    dashboard_version: "7.9.0"  # Latest stable version as of 2025
+    service_account: "dashboard-admin"
+    # Namespace for applications that dashboard will manage
+    app_namespace: "default"
+
+  tasks:
+    - name: Display target information
+      ansible.builtin.debug:
+        msg:
+          - "Target: {{ inventory_hostname }}"
+          - "Deploying Kubernetes Dashboard v{{ dashboard_version }}"
+          - "Namespace: {{ dashboard_namespace }}"
+
+    # ============== INSTALL HELM IF NOT PRESENT ==============
+    - name: Check if Helm is installed
+      ansible.builtin.command:
+        cmd: helm version
+      register: helm_version
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Display Helm version
+      ansible.builtin.debug:
+        msg: "Helm {{ helm_version.stdout | default('NOT INSTALLED') }}"
+      when: helm_version.rc is defined
+
+    - name: Fail if Helm is not installed
+      ansible.builtin.fail:
+        msg: "Helm is not installed. Please install Helm first."
+      when: helm_version.rc != 0 or helm_version.stdout == ""
+
+    # ============== ADD DASHBOARD HELM REPOSITORY ==============
+    - name: Add Kubernetes Dashboard Helm repository
+      ansible.builtin.command:
+        cmd: helm repo add kubernetes-dashboard {{ dashboard_repo_url }}
+      register: helm_repo_add
+      changed_when: "'has been added' in helm_repo_add.stdout or 'already exists' in helm_repo_add.stdout"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Update Helm repository
+      ansible.builtin.command:
+        cmd: helm repo update
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: List Helm repositories
+      ansible.builtin.command:
+        cmd: helm repo list
+      register: helm_repo_list
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Display Helm repositories
+      ansible.builtin.debug:
+        msg: "{{ helm_repo_list.stdout_lines }}"
+
+    # ============== CREATE CUSTOM VALUES FILE ==============
+    - name: Create minimal values file for Kubernetes Dashboard
+      ansible.builtin.copy:
+        dest: /tmp/kubernetes-dashboard-values.yaml
+        content: |
+          # Kubernetes Dashboard v7.x minimal custom values
+          # Most settings use defaults - we patch service for NodePort access later
+
+          # Enable metrics scraper
+          metricsScraper:
+            enabled: true
+
+          # Nginx controller is enabled by default in v7
+          nginx:
+            enabled: true
+
+        mode: '0644'
+
+    - name: Display values file created
+      ansible.builtin.debug:
+        msg: "Values file created at /tmp/kubernetes-dashboard-values.yaml"
+
+    # ============== INSTALL/UPGRADE DASHBOARD ==============
+    - name: Check if Dashboard release already exists
+      ansible.builtin.command:
+        cmd: helm list -n {{ dashboard_namespace }}
+      register: helm_list
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Install or Upgrade Kubernetes Dashboard
+      ansible.builtin.command:
+        cmd: >
+          helm upgrade --install {{ dashboard_release_name }} {{ dashboard_chart }}
+          --namespace {{ dashboard_namespace }}
+          --create-namespace
+          --version {{ dashboard_version }}
+          --values /tmp/kubernetes-dashboard-values.yaml
+          --wait
+          --timeout 5m
+      register: helm_install
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Display Helm install result
+      ansible.builtin.debug:
+        msg: "{{ helm_install.stdout_lines | default([]) }}"
+
+    # ============== WAIT FOR DASHBOARD PODS ==============
+    - name: Pause for Dashboard pods to initialize
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: Wait for all Dashboard pods to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance={{ dashboard_release_name }} -n {{ dashboard_namespace }} --timeout=300s
+      register: dashboard_ready
+      until: dashboard_ready.rc == 0
+      retries: 15
+      delay: 10
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      failed_when: false
+
+    # ============== CREATE ADMIN SERVICE ACCOUNT ==============
+    - name: Create admin ServiceAccount for Dashboard access
+      ansible.builtin.copy:
+        dest: /tmp/dashboard-admin-sa.yaml
+        content: |
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: {{ service_account }}
+            namespace: {{ dashboard_namespace }}
+        mode: '0644'
+
+    - name: Apply admin ServiceAccount
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/dashboard-admin-sa.yaml
+      register: sa_apply
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display ServiceAccount creation
+      ansible.builtin.debug:
+        msg: "{{ sa_apply.stdout }}"
+
+    # ============== EXPOSE DASHBOARD VIA PORT-FORWARD ==============
+    # Note: NodePort is often blocked by firewall. Port-forward is more reliable.
+    # The user will run port-forward locally to access the Dashboard.
+
+    # ============== CREATE CLUSTER ROLE BINDING ==============
+    - name: Create ClusterRoleBinding for admin access
+      ansible.builtin.copy:
+        dest: /tmp/dashboard-admin-crb.yaml
+        content: |
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: {{ service_account }}
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: cluster-admin
+          subjects:
+          - kind: ServiceAccount
+            name: {{ service_account }}
+            namespace: {{ dashboard_namespace }}
+        mode: '0644'
+
+    - name: Apply ClusterRoleBinding
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/dashboard-admin-crb.yaml
+      register: crb_apply
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display ClusterRoleBinding creation
+      ansible.builtin.debug:
+        msg: "{{ crb_apply.stdout }}"
+
+    # ============== GET SERVICE TOKEN ==============
+    - name: Create a secret for the ServiceAccount (if needed)
+      ansible.builtin.command:
+        cmd: kubectl create token {{ service_account }} -n {{ dashboard_namespace }} --duration=87600h
+      register: dashboard_token
+      changed_when: true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Dashboard login token
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "KUBERNETES DASHBOARD LOGIN TOKEN"
+          - "================================================================"
+          - "{{ dashboard_token.stdout }}"
+          - "================================================================"
+          - "IMPORTANT: Save this token to login to the Dashboard!"
+          - "================================================================"
+
+    - name: Save token to file for reference
+      ansible.builtin.copy:
+        dest: /tmp/kubernetes-dashboard-token.txt
+        content: |
+          Kubernetes Dashboard Login Token
+          ==================================
+          Service Account: {{ service_account }}
+          Namespace: {{ dashboard_namespace }}
+          Token: {{ dashboard_token.stdout }}
+
+          To create a new token in the future:
+          kubectl create token {{ service_account }} -n {{ dashboard_namespace }}
+        mode: '0644'
+
+    # ============== GET DASHBOARD SERVICE INFO ==============
+    - name: Get Dashboard Service information
+      ansible.builtin.command:
+        cmd: kubectl get svc -n {{ dashboard_namespace }}
+      register: dashboard_svc
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Dashboard Service
+      ansible.builtin.debug:
+        msg: "{{ dashboard_svc.stdout_lines }}"
+
+    # ============== GET PODS STATUS ==============
+    - name: Get all pods in Dashboard namespace
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ dashboard_namespace }} -o wide
+      register: dashboard_pods
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Dashboard pods
+      ansible.builtin.debug:
+        msg: "{{ dashboard_pods.stdout_lines }}"
+
+    # ============== SUMMARY ==============
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "KUBERNETES DASHBOARD DEPLOYED SUCCESSFULLY"
+          - "================================================================"
+          - ""
+          - "Dashboard Information:"
+          - "  - Version: {{ dashboard_version }}"
+          - "  - Namespace: {{ dashboard_namespace }}"
+          - "  - Service Account: {{ service_account }}"
+          - ""
+          - "Access the Dashboard (via port-forward):"
+          - "  Step 1: Run this command in your terminal:"
+          - "    kubectl port-forward -n {{ dashboard_namespace }} svc/{{ dashboard_release_name }}-kong-proxy 8443:443"
+          - "  Step 2: Open browser to:"
+          - "    https://localhost:8443"
+          - "  Step 3: Accept the security certificate warning"
+          - "  Step 4: Login with Token (use the token displayed above)"
+          - ""
+          - "Alternative: Use nginx-controller service"
+          - "  kubectl port-forward -n {{ dashboard_namespace }} svc/{{ dashboard_release_name }}-nginx-controller 8443:443"
+          - ""
+          - "To get a new login token:"
+          - "  kubectl create token {{ service_account }} -n {{ dashboard_namespace }}"
+          - ""
+          - "To view all resources:"
+          - "  kubectl get all -n {{ dashboard_namespace }}"
+          - ""
+          - "To uninstall:"
+          - "  helm uninstall {{ dashboard_release_name }} -n {{ dashboard_namespace }}"
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: yes
+  tasks:
+    - name: Get dashboard token from master
+      ansible.builtin.set_fact:
+        dashboard_token: "{{ hostvars[groups['k8s_masters'][0]]['dashboard_token']['stdout'] }}"
+      when: groups['k8s_masters'] | length > 0
+
+    - name: Create local token file
+      ansible.builtin.copy:
+        dest: /tmp/kubernetes-dashboard-token.txt
+        content: |
+          Kubernetes Dashboard Login Token
+          ==================================
+          Token: {{ dashboard_token }}
+
+          Access Instructions:
+          1. Run: kubectl port-forward -n kubernetes-dashboard svc/kubernetes-dashboard-kong-proxy 8443:443
+          2. Open: https://localhost:8443
+          3. Login with this token
+
+          To create a new token:
+          kubectl create token dashboard-admin -n kubernetes-dashboard
+        mode: '0600'
+
+    - name: Display completion message with token
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "KUBERNETES DASHBOARD READY"
+          - "================================================================"
+          - ""
+          - "The Kubernetes Dashboard has been deployed successfully!"
+          - ""
+          - "================================================================"
+          - "ACCESS DASHBOARD AT https://localhost:8443"
+          - "================================================================"
+          - ""
+          - "Step 1: Run this command in your terminal:"
+          - "  kubectl port-forward -n kubernetes-dashboard svc/kubernetes-dashboard-kong-proxy 8443:443"
+          - ""
+          - "Step 2: Open your browser to:"
+          - "  https://localhost:8443"
+          - ""
+          - "Step 3: Accept the security warning (proceed to unsafe)"
+          - ""
+          - "Step 4: Copy and paste this token to login:"
+          - ""
+          - "{{ dashboard_token }}"
+          - ""
+          - "================================================================"
+          - "Token also saved to: /tmp/kubernetes-dashboard-token.txt"
+          - "================================================================"
+          - ""
+          - "What is Kubernetes Dashboard?"
+          - "  - Official web-based UI for Kubernetes cluster management"
+          - "  - Deploy and manage containerized applications"
+          - "  - View cluster resources and logs"
+          - "  - Debug containerized applications"
+          - ""
+          - "To get a new token in the future:"
+          - "  kubectl create token dashboard-admin -n kubernetes-dashboard"
+          - ""
+          - "================================================================"

@@ -1,0 +1,238 @@
+---
+# Prepare nodes for Kubernetes installation
+# Configure containerd, system settings, and install Kubernetes packages
+# Usage:
+#   ansible-playbook -i inventory/k8s-exam.ini 01-prepare-nodes.yml
+
+- name: Prepare all nodes for Kubernetes
+  hosts: k8s_cluster
+  become: yes
+  gather_facts: yes
+
+  vars:
+    kubernetes_version: "1.33.5"
+    pause_image_version: "3.10"
+    timezone: "UTC"
+
+  tasks:
+    - name: Display target information
+      ansible.builtin.debug:
+        msg:
+          - "Target: {{ inventory_hostname }}"
+          - "IP: {{ ansible_default_ipv4.address }}"
+          - "Preparing node for Kubernetes {{ kubernetes_version }}"
+
+    # ============== SET TIMEZONE ==============
+    - name: Set timezone to UTC
+      ansible.builtin.command:
+        cmd: timedatectl set-timezone {{ timezone }}
+      changed_when: false
+
+    - name: Display timezone set
+      ansible.builtin.debug:
+        msg: "Timezone set to {{ timezone }}"
+
+    # ============== DISABLE SELINUX ==============
+    - name: Set SELinux to permissive mode
+      ansible.builtin.command:
+        cmd: setenforce 0
+      changed_when: false
+      failed_when: false
+
+    - name: Configure SELinux to be permissive in config
+      ansible.builtin.lineinfile:
+        path: /etc/selinux/config
+        regexp: '^SELINUX='
+        line: 'SELINUX=permissive'
+
+    - name: Verify SELinux status
+      ansible.builtin.command:
+        cmd: getenforce
+      register: selinux_status
+      changed_when: false
+
+    - name: Display SELinux status
+      ansible.builtin.debug:
+        msg: "SELinux status: {{ selinux_status.stdout }}"
+
+    # ============== CONFIGURE SYSCTL ==============
+    - name: Enable IPv4 forwarding
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-kubernetes.conf
+        content: |
+          net.ipv4.ip_forward = 1
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+        mode: '0644'
+
+    - name: Apply sysctl settings
+      ansible.builtin.command:
+        cmd: sysctl --system
+      changed_when: false
+
+    - name: Display sysctl configured
+      ansible.builtin.debug:
+        msg: "IPv4 forwarding enabled and made persistent"
+
+    # ============== SETUP KUBERNETES REPOSITORY ==============
+    - name: Remove old Kubernetes repository file
+      ansible.builtin.file:
+        path: /etc/yum.repos.d/kubernetes.repo
+        state: absent
+
+    - name: Create Kubernetes repository
+      ansible.builtin.copy:
+        dest: /etc/yum.repos.d/kubernetes.repo
+        content: |
+          [kubernetes]
+          name=Kubernetes
+          baseurl=https://pkgs.k8s.io/core:/stable:/v1.33/rpm/
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://pkgs.k8s.io/core:/stable:/v1.33/rpm/repodata/repomd.xml.key
+          exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
+
+    - name: Make cache for dnf
+      ansible.builtin.command:
+        cmd: dnf makecache
+      changed_when: false
+
+    # ============== INSTALL REQUIRED PACKAGES ==============
+    - name: Install required packages
+      ansible.builtin.dnf:
+        name:
+          - socat
+          - conntrack
+          - ipset
+        state: present
+
+    # ============== CONFIGURE CONTAINERD ==============
+    - name: Generate containerd default configuration
+      ansible.builtin.shell:
+        cmd: containerd config default > /etc/containerd/config.toml
+      args:
+        creates: /etc/containerd/config.toml
+
+    - name: Enable CRI plugin in containerd (remove from disabled_plugins)
+      ansible.builtin.lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '^disabled_plugins\s*='
+        line: 'disabled_plugins = []'
+        state: present
+
+    - name: Configure SystemdCgroup in containerd
+      ansible.builtin.lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '^\s*SystemdCgroup\s*='
+        insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\.containerd\.runtimes\.runc\.options\]'
+        line: '            SystemdCgroup = true'
+        state: present
+
+    - name: Update pause image version in containerd
+      ansible.builtin.lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '^\s*sandbox_image\s*='
+        insertafter: '\[plugins\."io\.containerd\.grpc\.v1\.cri"\]'
+        line: '    sandbox_image = "registry.k8s.io/pause:{{ pause_image_version }}"'
+
+    - name: Restart containerd service
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted
+        daemon_reload: yes
+
+    - name: Wait for containerd to be ready
+      ansible.builtin.pause:
+        seconds: 3
+
+    - name: Display containerd configured
+      ansible.builtin.debug:
+        msg: "Containerd configured with SystemdCgroup and pause:{{ pause_image_version }}"
+
+    # ============== INSTALL KUBERNETES PACKAGES ==============
+    - name: Install Kubernetes packages
+      ansible.builtin.dnf:
+        name:
+          - kubelet-{{ kubernetes_version }}-150500.1.1.x86_64
+          - kubeadm-{{ kubernetes_version }}-150500.1.1.x86_64
+          - kubectl-{{ kubernetes_version }}-150500.1.1.x86_64
+        state: present
+        disable_excludes: kubernetes
+        update_cache: yes
+
+    - name: Enable and start kubelet service
+      ansible.builtin.systemd:
+        name: kubelet
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Display kubelet status (crashloop is expected before init)
+      ansible.builtin.command:
+        cmd: systemctl status kubelet --no-pager
+      register: kubelet_status
+      changed_when: false
+      failed_when: false
+
+    - name: Verify kubeadm version
+      ansible.builtin.command:
+        cmd: kubeadm version -o short
+      register: kubeadm_version
+      changed_when: false
+
+    - name: Verify kubectl version
+      ansible.builtin.command:
+        cmd: kubectl version --client -o yaml
+      register: kubectl_version
+      changed_when: false
+
+    # ============== SUMMARY ==============
+    - name: Display preparation summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "NODE PREPARATION COMPLETE"
+          - "================================================================"
+          - "Host: {{ inventory_hostname }}"
+          - "IP: {{ ansible_default_ipv4.address }}"
+          - ""
+          - "Configured:"
+          - "  - Timezone: {{ timezone }}"
+          - "  - SELinux: Permissive ({{ selinux_status.stdout }})"
+          - "  - IPv4 forwarding: Enabled"
+          - "  - Containerd: SystemdCgroup enabled, pause:{{ pause_image_version }}"
+          - "  - Kubernetes: {{ kubernetes_version }}"
+          - "    Kubeadm: {{ kubeadm_version.stdout }}"
+          - "    Kubectl: {{ kubectl_version.stdout | regex_search('gitVersion: v[0-9\\.]+') | first }}"
+          - "  - Kubelet: Started (crashloop expected before cluster init)"
+          - ""
+          - "Required ports to open in ETAIS:"
+          - "  - 4240/tcp  (Cilium)"
+          - "  - 6443/tcp  (Kubernetes API)"
+          - "  - 8472/udp  (Cilium)"
+          - "  - 10250/tcp (Kubelet)"
+          - "  - 30000-32767/tcp (NodePort services)"
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ALL NODES PREPARED FOR KUBERNETES"
+          - "================================================================"
+          - ""
+          - "Next steps:"
+          - "  1. Open required ports in ETAIS security groups"
+          - "  2. Run: 02-init-master.yml - Initialize Kubernetes cluster"
+          - "  3. Run: 03-install-cilium.yml - Install CNI"
+          - "  4. Run: 04-join-workers.yml - Join worker nodes"
+          - ""
+          - "Verification commands:"
+          - "  ansible -i inventory/k8s-exam.ini k8s_cluster -m shell -a 'kubeadm version'"
+          - "  ansible -i inventory/k8s-exam.ini k8s_cluster -m shell -a 'kubectl version --client'"
+          - "  ansible -i inventory/k8s-exam.ini k8s_cluster -m shell -a 'systemctl status kubelet'"
+          - "================================================================"

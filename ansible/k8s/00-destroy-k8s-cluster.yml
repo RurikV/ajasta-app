@@ -1,0 +1,362 @@
+---
+# Complete Kubernetes Cluster Destruction Playbook
+# This playbook completely removes Kubernetes from all nodes
+# WARNING: This will delete all pods, data, and configurations
+# Usage:
+#   ansible-playbook -i inventory.ini 00-destroy-k8s-cluster.yml
+
+- name: Complete Kubernetes Cluster Destruction
+  hosts: local
+  connection: local
+  gather_facts: false
+
+  pre_tasks:
+    - name: Display destruction warning
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "⚠️  DANGER: COMPLETE K8S DESTRUCTION"
+          - "=========================================="
+          - ""
+          - "This playbook will:"
+          - "  1. Drain and delete all worker nodes"
+          - "  2. Reset master node (kubeadm reset)"
+          - "  3. Uninstall CNI plugins"
+          - "  4. Remove Kubernetes packages"
+          - "  5. Clean up all configs and certificates"
+          - "  6. Clean up containerd images"
+          - "  7. Remove Kubernetes user and groups"
+          - ""
+          - "⚠️  ALL DATA WILL BE LOST!"
+          - ""
+          - "Press Ctrl+C to cancel..."
+          - ""
+
+    - name: Pause for confirmation (15 seconds)
+      ansible.builtin.pause:
+        seconds: 15
+
+- name: Drain and remove worker nodes from cluster
+  hosts: k8s_master
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Get all worker nodes
+      ansible.builtin.shell:
+        cmd: kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: worker_nodes
+      changed_when: false
+      failed_when: false
+
+    - name: Display worker nodes to be removed
+      ansible.builtin.debug:
+        msg: "Worker nodes: {{ worker_nodes.stdout_lines }}"
+
+    - name: Drain each worker node
+      ansible.builtin.shell:
+        cmd: "kubectl drain {{ item }} --ignore-daemonsets --delete-emptydir-data --force --grace-period=0"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      loop: "{{ worker_nodes.stdout.split(' ') }}"
+      when:
+        - worker_nodes.stdout != ""
+        - "'worker' in item"
+      failed_when: false
+      register: drain_result
+
+    - name: Delete worker nodes from cluster
+      ansible.builtin.shell:
+        cmd: "kubectl delete node {{ item }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      loop: "{{ worker_nodes.stdout.split(' ') }}"
+      when:
+        - worker_nodes.stdout != ""
+        - "'worker' in item"
+      failed_when: false
+      register: delete_result
+
+    - name: Display drain/delete results
+      ansible.builtin.debug:
+        msg: "✅ Workers drained and deleted from cluster"
+
+- name: Remove CNI plugins from all nodes
+  hosts: k8s_cluster
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Remove Flannel CNI if present
+      ansible.builtin.shell:
+        cmd: |
+          if kubectl get namespace kube-flannel &>/dev/null; then
+            kubectl delete namespace kube-flannel
+            echo "Flannel namespace deleted"
+          else
+            echo "Flannel not found"
+          fi
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      delegate_to: "{{ groups['k8s_master'][0] }}"
+      run_once: true
+      failed_when: false
+      when: "'k8s_master' in group_names"
+
+    - name: Remove CNI configurations
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/cni/net.d
+        - /opt/cni/bin
+      failed_when: false
+
+    - name: Display CNI removal status
+      ansible.builtin.debug:
+        msg: "✅ CNI plugins removed from {{ inventory_hostname }}"
+
+- name: Reset Kubernetes on all nodes
+  hosts: k8s_cluster
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Run kubeadm reset
+      ansible.builtin.shell:
+        cmd: |
+          kubeadm reset --force \
+            --cri-socket=/run/containerd/containerd.sock \
+            --ignore-preflight-errors=FileAvailable--etc-kubernetes-manifests-kube-apiserver.yaml,FileAvailable--etc-kubernetes-manifests-kube-controller-manager.yaml,FileAvailable--etc-kubernetes-manifests-kube-scheduler.yaml,FileAvailable--etc-kubernetes-manifests-etcd.yaml,Port-10250,DirAvailable--var-lib-etcd
+      register: kubeadm_reset
+      failed_when: false
+
+    - name: Display kubeadm reset result
+      ansible.builtin.debug:
+        msg: "✅ Kubeadm reset completed on {{ inventory_hostname }}"
+
+    - name: Stop and disable kubelet service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - kubelet
+        - containerd
+      failed_when: false
+
+    - name: Kill any remaining kubelet/containerd processes
+      ansible.builtin.shell:
+        cmd: |
+          pkill -9 kubelet || true
+          pkill -9 containerd || true
+          pkill -9 ctr || true
+          pkill -9 crictl || true
+      failed_when: false
+
+    - name: Remove Kubernetes directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes
+        - /var/lib/kubelet
+        - /var/lib/dockershim
+        - /var/lib/etcd
+        - /var/lib/cni
+        - /var/run/kubernetes
+        - /etc/cni
+        - /opt/cni
+        - /root/.kube
+
+    - name: Remove CNI network configurations
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/cni/net.d
+        - /opt/cni/bin
+
+    - name: Clean up iptables rules
+      ansible.builtin.shell:
+        cmd: |
+          iptables -F
+          iptables -t nat -F
+          iptables -t mangle -F
+          iptables -X
+          iptables -t nat -X
+          iptables -t mangle -X
+          iptables -P FORWARD ACCEPT
+          iptables -P INPUT ACCEPT
+          iptables -P OUTPUT ACCEPT
+          modprobe -r ip_tables || true
+      failed_when: false
+
+    - name: Remove ipvs modules
+      ansible.builtin.shell:
+        cmd: |
+          modprobe -r ip_vs || true
+          modprobe -r ip_vs_rr || true
+          modprobe -r ip_vs_wrr || true
+          modprobe -r ip_vs_sh || true
+      failed_when: false
+
+    - name: Display cleanup status
+      ansible.builtin.debug:
+        msg: "✅ Kubernetes removed from {{ inventory_hostname }}"
+
+- name: Uninstall Kubernetes packages and dependencies
+  hosts: k8s_cluster
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Remove Kubernetes packages
+      ansible.builtin.package:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+          - kubernetes-cni
+        state: absent
+      failed_when: false
+
+    - name: Remove containerd packages
+      ansible.builtin.package:
+        name:
+          - containerd
+          - containerd.io
+        state: absent
+      failed_when: false
+
+    - name: Autoremove unused packages
+      ansible.builtin.shell:
+        cmd: |
+          if command -v dnf >/dev/null 2>&1; then
+            dnf autoremove -y
+          elif command -v yum >/dev/null 2>&1; then
+            yum autoremove -y
+          elif command -v apt-get >/dev/null 2>&1; then
+            apt-get autoremove -y
+          fi
+      failed_when: false
+
+    - name: Display package removal status
+      ansible.builtin.debug:
+        msg: "✅ Packages removed from {{ inventory_hostname }}"
+
+- name: Clean up containerd images and data
+  hosts: k8s_cluster
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Remove containerd data directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/containerd
+        - /run/containerd
+        /etc/containerd
+
+    - name: Remove all container images
+      ansible.builtin.shell:
+        cmd: |
+          if command -v ctr >/dev/null 2>&1; then
+            ctr images ls -q | xargs -r ctr images rm
+          fi
+      failed_when: false
+
+    - name: Display image cleanup status
+      ansible.builtin.debug:
+        msg: "✅ Containerd images removed from {{ inventory_hostname }}"
+
+- name: Clean up Kubernetes user and SSH keys
+  hosts: k8s_cluster
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Remove Kubernetes user if exists
+      ansible.builtin.user:
+        name: kubernetes
+        state: absent
+        remove: yes
+      failed_when: false
+
+    - name: Clean up remaining Kubernetes files
+      ansible.builtin.shell:
+        cmd: |
+          find / -name "*kubelet*" -type f 2>/dev/null | xargs -r rm -f || true
+          find / -name "*kubernetes*" -type f 2>/dev/null | grep -E "(kubelet|etcd)" | xargs -r rm -f || true
+      failed_when: false
+
+    - name: Remove Kubernetes-specific sysctl configurations
+      ansible.builtin.file:
+        path: /etc/sysctl.d/k8s.conf
+        state: absent
+      failed_when: false
+
+    - name: Reload sysctl
+      ansible.builtin.shell:
+        cmd: sysctl --system
+      failed_when: false
+
+    - name: Display final cleanup status
+      ansible.builtin.debug:
+        msg: "✅ Final cleanup completed on {{ inventory_hostname }}"
+
+- name: Remove Helm installations (optional)
+  hosts: k8s_cluster
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Remove Helm binary
+      ansible.builtin.file:
+        path: /usr/local/bin/helm
+        state: absent
+      failed_when: false
+
+    - name: Display Helm removal status
+      ansible.builtin.debug:
+        msg: "✅ Helm removed from {{ inventory_hostname }}"
+
+- name: Display destruction summary
+  hosts: local
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Final summary
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "================================================"
+          - "✅ K8S CLUSTER COMPLETELY DESTROYED!"
+          - "================================================"
+          - ""
+          - "All nodes have been reset to pre-installation state:"
+          - "  - Kubernetes packages removed"
+          - "  - Containerd and images removed"
+          - "  - Configurations and certificates deleted"
+          - "  - CNI plugins removed"
+          - "  - System cleaned up"
+          - ""
+          - "Nodes affected:"
+          - "  - {{ groups['k8s_master'] | default([]) }}"
+          - "  - {{ groups['k8s_workers'] | default([]) }}"
+          - ""
+          - "To reinstall Kubernetes:"
+          - "  1. Run: ansible-playbook -i inventory.ini 01-prepare-nodes.yml"
+          - "  2. Run: ansible-playbook -i inventory.ini 02-init-master.yml"
+          - "  3. Run: ansible-playbook -i inventory.ini 04-join-workers.yml"
+          - "  4. Run: ansible-playbook -i inventory.ini 03-install-cilium.yml"
+          - ""
+          - "Or use the master playbook:"
+          - "  ansible-playbook -i inventory.ini k8s-install-all.yml"
+          - "================================================"
+          - ""

@@ -1,0 +1,343 @@
+---
+# CloudNativePG Operator and PostgreSQL Cluster Deployment
+# This playbook:
+# 1. Downloads and deploys CloudNativePG operator
+# 2. Creates a PostgreSQL cluster with 2 instances
+# 3. Configures resources and persistent storage
+# Usage:
+#   ansible-playbook -i inventory/k8s-exam.ini 19-deploy-cloudnativepg.yml
+
+- name: Deploy CloudNativePG and PostgreSQL Cluster
+  hosts: k8s_masters
+  become: yes
+  gather_facts: yes
+
+  vars:
+    cnpg_namespace: "cnpg-system"
+    pg_namespace: "lab10"
+    pg_cluster_name: "cluster-postgresql"
+    pg_instances: 2
+    pg_image: "ghcr.io/cloudnative-pg/postgresql:15.4"
+    storage_class: "longhorn"
+    storage_size: "2Gi"
+
+  tasks:
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYING CLOUDNATIVEPG OPERATOR AND POSTGRESQL CLUSTER"
+          - "================================================================"
+          - ""
+          - "CloudNativePG Operator:"
+          - "  - Namespace: {{ cnpg_namespace }}"
+          - "  - Version: 1.19.1"
+          - ""
+          - "PostgreSQL Cluster:"
+          - "  - Name: {{ pg_cluster_name }}"
+          - "  - Namespace: {{ pg_namespace }}"
+          - "  - Instances: {{ pg_instances }}"
+          - "  - Image: {{ pg_image }}"
+          - "  - Storage: {{ storage_class }} / {{ storage_size }}"
+          - "  - CPU: 200m / 500m"
+          - "  - Memory: 250Mi / 512Mi"
+          - "================================================================"
+
+    # ==============================================================
+    # PART 1: CREATE NAMESPACES
+    # ==============================================================
+
+    - name: Create cnpg-system namespace
+      ansible.builtin.shell:
+        cmd: kubectl create namespace {{ cnpg_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Create lab10 namespace
+      ansible.builtin.shell:
+        cmd: kubectl create namespace {{ pg_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    # ==============================================================
+    # PART 2: DEPLOY CLOUDNATIVEPG OPERATOR
+    # ==============================================================
+
+    - name: Download CloudNativePG operator manifest
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.19/releases/cnpg-1.19.1.yaml
+        dest: /tmp/cnpg-1.19.1.yaml
+        mode: '0644'
+      register: cnpg_download
+
+    - name: Display CloudNativePG download
+      ansible.builtin.debug:
+        msg: "CloudNativePG manifest downloaded to /tmp/cnpg-1.19.1.yaml"
+
+    - name: Apply CloudNativePG operator manifest
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/cnpg-1.19.1.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cnpg_apply
+
+    - name: Display CloudNativePG operator deployment
+      ansible.builtin.debug:
+        msg: "{{ cnpg_apply.stdout_lines }}"
+
+    - name: Pause for operator to initialize
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: Wait for CloudNativePG controller to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=available deployment -n {{ cnpg_namespace }} cnpg-controller-manager --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cnpg_wait
+      until: cnpg_wait.rc == 0
+      retries: 30
+      delay: 5
+
+    - name: Get CloudNativePG controller status
+      ansible.builtin.command:
+        cmd: kubectl get deployment -n {{ cnpg_namespace }} cnpg-controller-manager
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cnpg_status
+      changed_when: false
+
+    - name: Display CloudNativePG controller status
+      ansible.builtin.debug:
+        msg: "{{ cnpg_status.stdout_lines }}"
+
+    # ==============================================================
+    # PART 3: CREATE POSTGRESQL CLUSTER
+    # ==============================================================
+
+    - name: Create PostgreSQL Cluster manifest
+      ansible.builtin.copy:
+        dest: /tmp/postgresql-cluster.yaml
+        content: |
+          apiVersion: postgresql.cnpg.io/v1
+          kind: Cluster
+          metadata:
+            name: {{ pg_cluster_name }}
+            namespace: {{ pg_namespace }}
+          spec:
+            instances: {{ pg_instances }}
+            primaryUpdateStrategy: unsupervised
+            imageName: {{ pg_image }}
+
+            # Resource management
+            resources:
+              requests:
+                cpu: 200m
+                memory: 250Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+
+            # Storage configuration
+            storage:
+              size: {{ storage_size }}
+              storageClass: {{ storage_class }}
+
+            # PostgreSQL configuration
+            postgresql:
+              parameters:
+                max_connections: "100"
+                shared_buffers: "128MB"
+                effective_cache_size: "4000MB"
+                maintenance_work_mem: "64MB"
+                checkpoint_completion_target: "0.9"
+                wal_buffers: "16MB"
+                default_statistics_target: "100"
+                random_page_cost: "1.1"
+                effective_io_concurrency: "200"
+                work_mem: "1310kB"
+                min_wal_size: "1GB"
+                max_wal_size: "4GB"
+        mode: '0644'
+
+    - name: Display PostgreSQL cluster manifest created
+      ansible.builtin.debug:
+        msg: "PostgreSQL cluster manifest created at /tmp/postgresql-cluster.yaml"
+
+    - name: Apply PostgreSQL cluster manifest
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/postgresql-cluster.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_apply
+
+    - name: Display PostgreSQL cluster deployment
+      ansible.builtin.debug:
+        msg: "{{ pg_apply.stdout_lines }}"
+
+    - name: Pause for PostgreSQL cluster to initialize
+      ansible.builtin.pause:
+        seconds: 30
+
+    # ==============================================================
+    # PART 4: VERIFICATION
+    # ==============================================================
+
+    - name: Wait for PostgreSQL pods to be ready
+      ansible.builtin.shell:
+        cmd: kubectl wait --for=condition=ready pod -l cnpg.io/podRole=instance -n {{ pg_namespace }} --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_wait
+      until: pg_wait.rc == 0
+      retries: 60
+      delay: 5
+
+    - name: Get PostgreSQL cluster status
+      ansible.builtin.command:
+        cmd: kubectl get cluster -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_cluster_status
+      changed_when: false
+
+    - name: Display PostgreSQL cluster status
+      ansible.builtin.debug:
+        msg: "{{ pg_cluster_status.stdout_lines }}"
+
+    - name: Get PostgreSQL pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ pg_namespace }} -l cnpg.io/podRole=instance
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_pods
+      changed_when: false
+
+    - name: Display PostgreSQL pods
+      ansible.builtin.debug:
+        msg: "{{ pg_pods.stdout_lines }}"
+
+    - name: Describe PostgreSQL pod for resources
+      ansible.builtin.shell:
+        cmd: kubectl describe pod -n {{ pg_namespace }} {{ pg_cluster_name }}-1 | head -50
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_pod_describe
+      changed_when: false
+
+    - name: Display pod resource details
+      ansible.builtin.debug:
+        msg: "{{ pg_pod_describe.stdout_lines }}"
+
+    - name: Get PVCs
+      ansible.builtin.command:
+        cmd: kubectl get pvc -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_pvc
+      changed_when: false
+
+    - name: Display PVCs
+      ansible.builtin.debug:
+        msg: "{{ pg_pvc.stdout_lines }}"
+
+    - name: Get PVs
+      ansible.builtin.shell:
+        cmd: kubectl get pv | grep {{ pg_namespace }} || true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_pv
+      changed_when: false
+
+    - name: Display PVs
+      ansible.builtin.debug:
+        msg: "{{ pg_pv.stdout_lines }}"
+
+    - name: Get secrets
+      ansible.builtin.shell:
+        cmd: kubectl get secrets -n {{ pg_namespace }} | grep {{ pg_cluster_name }} || true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_secrets
+      changed_when: false
+
+    - name: Display PostgreSQL secrets
+      ansible.builtin.debug:
+        msg: "{{ pg_secrets.stdout_lines }}"
+
+    - name: Describe cluster-postgresql-app secret
+      ansible.builtin.command:
+        cmd: kubectl describe secret {{ pg_cluster_name }}-app -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_secret_describe
+      changed_when: false
+
+    - name: Display app secret details
+      ansible.builtin.debug:
+        msg: "{{ pg_secret_describe.stdout_lines }}"
+
+    # ==============================================================
+    # PART 5: SUMMARY
+    # ==============================================================
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CLOUDNATIVEPG AND POSTGRESQL CLUSTER DEPLOYED"
+          - "================================================================"
+          - ""
+          - "CloudNativePG Operator:"
+          - "  - Namespace: {{ cnpg_namespace }}"
+          - "  - Controller: cnpg-controller-manager"
+          - ""
+          - "PostgreSQL Cluster:"
+          - "  - Name: {{ pg_cluster_name }}"
+          - "  - Namespace: {{ pg_namespace }}"
+          - "  - Instances: {{ pg_instances }} (1 primary, 1 replica)"
+          - "  - Image: {{ pg_image }}"
+          - ""
+          - "Resources:"
+          - "  - CPU: 200m request / 500m limit"
+          - "  - Memory: 250Mi request / 512Mi limit"
+          - ""
+          - "Storage:"
+          - "  - StorageClass: {{ storage_class }}"
+          - "  - Size: {{ storage_size }}"
+          - "  - AccessMode: ReadWriteOnce"
+          - ""
+          - "Connection Details:"
+          - "  - Primary: {{ pg_cluster_name }}-rw.{{ pg_namespace }}.svc"
+          - "  - Port: 5432"
+          - "  - User: app (from {{ pg_cluster_name }}-app secret)"
+          - "  - Database: {{ pg_cluster_name }}"
+          - ""
+          - "Useful Commands:"
+          - "  kubectl get cluster -n {{ pg_namespace }}"
+          - "  kubectl get pods -n {{ pg_namespace }}"
+          - "  kubectl get pvc -n {{ pg_namespace }}"
+          - "  kubectl get secrets -n {{ pg_namespace }}"
+          - "  kubectl exec -it -n {{ pg_namespace }} {{ pg_cluster_name }}-1 -- psql"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYMENT COMPLETE"
+          - "================================================================"
+          - ""
+          - "CloudNativePG operator and PostgreSQL cluster deployed."
+          - ""
+          - "Next Steps:"
+          - "  1. Update application server to use the new PostgreSQL cluster"
+          - "  2. Test database connectivity"
+          - "  3. Verify failover works correctly"
+          - ""
+          - "================================================================"

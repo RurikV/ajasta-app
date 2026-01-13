@@ -1,0 +1,209 @@
+---
+# Deploy NGINX via Helm from stable repository to test namespace
+# This deploys the nginx-ingress chart from the stable Helm repository
+# Usage:
+#   ansible-playbook -i inventory/k8s-exam.ini 17-deploy-nginx-chart.yml
+
+- name: Deploy NGINX Helm Chart from Stable Repository
+  hosts: k8s_masters
+  become: yes
+  gather_facts: yes
+
+  vars:
+    test_namespace: "test"
+    nginx_release: "nginx"
+    nginx_chart: "stable/nginx-ingress"
+    nginx_repo_url: "https://charts.helm.sh/stable"
+
+  tasks:
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYING NGINX HELM CHART FROM STABLE REPOSITORY"
+          - "================================================================"
+          - "Namespace: {{ test_namespace }}"
+          - "Release: {{ nginx_release }}"
+          - "Chart: {{ nginx_chart }}"
+          - "Repository: {{ nginx_repo_url }}"
+          - "================================================================"
+
+    # ============== VERIFY HELM IS INSTALLED ==============
+    - name: Verify Helm is installed
+      ansible.builtin.command:
+        cmd: helm version
+      register: helm_version
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Display Helm version
+      ansible.builtin.debug:
+        msg: "{{ helm_version.stdout }}"
+
+    # ============== ADD/UPDATE STABLE REPOSITORY ==============
+    - name: Add stable Helm repository
+      ansible.builtin.command:
+        cmd: helm repo add stable {{ nginx_repo_url }}
+      register: helm_repo_add
+      changed_when: "'has been added' in helm_repo_add.stdout or 'already exists' in helm_repo_add.stdout"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Update Helm repositories
+      ansible.builtin.command:
+        cmd: helm repo update
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    # ============== CREATE TEST NAMESPACE ==============
+    - name: Create test namespace
+      ansible.builtin.shell:
+        cmd: kubectl create namespace {{ test_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+      register: create_namespace
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display namespace creation
+      ansible.builtin.debug:
+        msg: "{{ create_namespace.stdout }}"
+
+    # ============== DEPLOY NGINX VIA HELM ==============
+    - name: Check if nginx release already exists
+      ansible.builtin.command:
+        cmd: helm list -n {{ test_namespace }} -f {{ nginx_release }}
+      register: nginx_release_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Delete existing nginx release if present
+      ansible.builtin.command:
+        cmd: helm uninstall {{ nginx_release }} -n {{ test_namespace }}
+      register: helm_uninstall
+      failed_when: false
+      changed_when: helm_uninstall.rc == 0
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Pause for cleanup
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Deploy nginx via Helm from stable repository
+      ansible.builtin.command:
+        cmd: helm install {{ nginx_release }} {{ nginx_chart }} -n {{ test_namespace }} --set controller.kind=Deployment
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+      register: helm_install
+
+    - name: Display Helm installation result
+      ansible.builtin.debug:
+        msg: "{{ helm_install.stdout_lines }}"
+
+    # ============== VERIFY DEPLOYMENT ==============
+    - name: Pause for nginx deployment to be ready
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: Get nginx Helm release status
+      ansible.builtin.command:
+        cmd: helm status {{ nginx_release }} -n {{ test_namespace }}
+      register: helm_status
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Display Helm release status
+      ansible.builtin.debug:
+        msg: "{{ helm_status.stdout_lines }}"
+
+    - name: List Helm releases in test namespace
+      ansible.builtin.command:
+        cmd: helm list -n {{ test_namespace }}
+      register: helm_list
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
+
+    - name: Display Helm releases
+      ansible.builtin.debug:
+        msg: "{{ helm_list.stdout_lines }}"
+
+    - name: Get nginx pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ test_namespace }}
+      register: nginx_pods
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display nginx pods
+      ansible.builtin.debug:
+        msg: "{{ nginx_pods.stdout_lines }}"
+
+    - name: Get nginx services
+      ansible.builtin.command:
+        cmd: kubectl get svc -n {{ test_namespace }}
+      register: nginx_svc
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display nginx services
+      ansible.builtin.debug:
+        msg: "{{ nginx_svc.stdout_lines }}"
+
+    # ============== SUMMARY ==============
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "NGINX HELM CHART DEPLOYMENT COMPLETE"
+          - "================================================================"
+          - ""
+          - "Helm Release: {{ nginx_release }}"
+          - "Namespace: {{ test_namespace }}"
+          - "Chart: {{ nginx_chart }} (from stable repository)"
+          - ""
+          - "Resources Deployed:"
+          - "  - nginx-ingress-controller Deployment"
+          - "  - nginx-ingress-default-backend Deployment"
+          - "  - Services for controller and backend"
+          - ""
+          - "Useful Commands:"
+          - "  helm status {{ nginx_release }} -n {{ test_namespace }}"
+          - "  helm list -n {{ test_namespace }}"
+          - "  kubectl get all -n {{ test_namespace }}"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "NGINX HELM CHART DEPLOYED FROM STABLE REPOSITORY"
+          - "================================================================"
+          - ""
+          - "NGINX has been deployed via Helm from the stable repository."
+          - ""
+          - "This demonstrates:"
+          - "  - Helm chart installation from stable repository"
+          - "  - Using Helm repositories (stable)"
+          - "  - Helm release management"
+          - "  - Namespace-specific deployments"
+          - ""
+          - "================================================================"

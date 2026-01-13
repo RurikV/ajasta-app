@@ -1,0 +1,332 @@
+---
+# Deploy test applications to Kubernetes cluster
+# Usage:
+#   ansible-playbook -i inventory/k8s-exam.ini 06-deploy-test-app.yml
+
+- name: Deploy test applications
+  hosts: k8s_masters
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Display target information
+      ansible.builtin.debug:
+        msg:
+          - "Target: {{ inventory_hostname }}"
+          - "Deploying test applications to verify cluster functionality"
+
+    # ============== CREATE MANIFEST FILE ==============
+    - name: Create echoserver manifest
+      ansible.builtin.copy:
+        dest: /tmp/echoserver.yaml
+        content: |
+          ---
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: echoserver
+            labels:
+              app: echoserver
+          spec:
+            containers:
+              - name: echoserver
+                image: registry.hpc.ut.ee/mirror/ealen/echo-server:latest
+                ports:
+                  - containerPort: 80
+                env:
+                  - name: PORT
+                    value: "80"
+            restartPolicy: Always
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: echoserver
+          spec:
+            ports:
+              - port: 80
+                targetPort: 80
+                protocol: TCP
+            type: ClusterIP
+            selector:
+              app: echoserver
+          ---
+
+    - name: Display manifest created
+      ansible.builtin.debug:
+        msg: "Echoserver manifest created at /tmp/echoserver.yaml"
+
+    # ============== DEPLOY APPLICATION ==============
+    - name: Apply echoserver manifest
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/echoserver.yaml
+      register: apply_echoserver
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display deployment result
+      ansible.builtin.debug:
+        msg: "{{ apply_echoserver.stdout }}"
+
+    # ============== WAIT FOR POD TO BE READY ==============
+    - name: Wait for echoserver pod to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod/echoserver --timeout=120s
+      register: pod_ready
+      until: pod_ready.rc == 0
+      retries: 12
+      delay: 5
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display pod ready
+      ansible.builtin.debug:
+        msg: "Echoserver pod is ready!"
+
+    # ============== GET POD INFORMATION ==============
+    - name: Get echoserver pod details
+      ansible.builtin.command:
+        cmd: kubectl get pod echoserver -o wide
+      register: echoserver_pod
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display pod details
+      ansible.builtin.debug:
+        msg: "{{ echoserver_pod.stdout_lines }}"
+
+    - name: Get echoserver pod IP
+      ansible.builtin.command:
+        cmd: kubectl get pod echoserver -o jsonpath='{.status.podIP}'
+      register: pod_ip
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display pod IP
+      ansible.builtin.debug:
+        msg: "Echoserver pod IP: {{ pod_ip.stdout }}"
+
+    # ============== GET SERVICE INFORMATION ==============
+    - name: Get echoserver service details
+      ansible.builtin.command:
+        cmd: kubectl get service echoserver
+      register: echoserver_service
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display service details
+      ansible.builtin.debug:
+        msg: "{{ echoserver_service.stdout_lines }}"
+
+    - name: Get echoserver service cluster IP
+      ansible.builtin.command:
+        cmd: kubectl get service echoserver -o jsonpath='{.spec.clusterIP}'
+      register: service_ip
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display service IP
+      ansible.builtin.debug:
+        msg: "Echoserver service ClusterIP: {{ service_ip.stdout }}"
+
+    # ============== TEST POD CONNECTIVITY ==============
+    - name: Test connectivity to pod IP
+      ansible.builtin.uri:
+        url: "http://{{ pod_ip.stdout }}"
+        return_content: yes
+        timeout: 10
+      register: pod_test
+      until: pod_test.status == 200
+      retries: 6
+      delay: 2
+
+    - name: Display pod connectivity test result
+      ansible.builtin.debug:
+        msg:
+          - "Pod IP {{ pod_ip.stdout }}: HTTP {{ pod_test.status }}"
+          - "Response preview: {{ pod_test.content | default('N/A') }}"
+
+    # ============== TEST SERVICE CONNECTIVITY ==============
+    - name: Test connectivity to service ClusterIP
+      ansible.builtin.uri:
+        url: "http://{{ service_ip.stdout }}"
+        return_content: yes
+        timeout: 10
+      register: service_test
+      until: service_test.status == 200
+      retries: 6
+      delay: 2
+
+    - name: Display service connectivity test result
+      ansible.builtin.debug:
+        msg:
+          - "Service ClusterIP {{ service_ip.stdout }}: HTTP {{ service_test.status }}"
+          - "Response preview: {{ service_test.content | default('N/A') }}"
+
+    # ============== DEPLOY NGINX FOR ADDITIONAL TESTING ==============
+    - name: Create nginx deployment manifest
+      ansible.builtin.copy:
+        dest: /tmp/nginx-test.yaml
+        content: |
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: nginx-test
+            labels:
+              app: nginx-test
+          spec:
+            replicas: 2
+            selector:
+              matchLabels:
+                app: nginx-test
+            template:
+              metadata:
+                labels:
+                  app: nginx-test
+              spec:
+                containers:
+                  - name: nginx
+                    image: registry.hpc.ut.ee/mirror/library/nginx:alpine
+                    ports:
+                      - containerPort: 80
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: nginx-test
+          spec:
+            ports:
+              - port: 80
+                targetPort: 80
+                protocol: TCP
+            type: ClusterIP
+            selector:
+              app: nginx-test
+          ---
+
+    - name: Apply nginx test manifest
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/nginx-test.yaml
+      register: apply_nginx
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display nginx deployment result
+      ansible.builtin.debug:
+        msg: "{{ apply_nginx.stdout }}"
+
+    - name: Wait for nginx pods to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod -l app=nginx-test --timeout=120s
+      register: nginx_ready
+      until: nginx_ready.rc == 0
+      retries: 12
+      delay: 5
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Get all pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -o wide
+      register: all_pods
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display all pods
+      ansible.builtin.debug:
+        msg: "{{ all_pods.stdout_lines }}"
+
+    - name: Get all services
+      ansible.builtin.command:
+        cmd: kubectl get services
+      register: all_services
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display all services
+      ansible.builtin.debug:
+        msg: "{{ all_services.stdout_lines }}"
+
+    # ============== TEST DNS RESOLUTION ==============
+    - name: Create DNS test pod
+      ansible.builtin.command:
+        cmd: >
+          kubectl run dns-test --image=registry.hpc.ut.ee/mirror/library/busybox:1.36
+          --rm -it --restart=Never -- nslookup echoserver
+      register: dns_test
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display DNS test result
+      ansible.builtin.debug:
+        msg: "{{ dns_test.stdout_lines | default(['DNS test completed']) }}"
+
+    # ============== SUMMARY ==============
+    - name: Display test application summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "TEST APPLICATIONS DEPLOYED SUCCESSFULLY"
+          - "================================================================"
+          - ""
+          - "Deployed Applications:"
+          - "  - Echoserver (Pod + Service)"
+          - "    Pod IP: {{ pod_ip.stdout }}"
+          - "    Service ClusterIP: {{ service_ip.stdout }}"
+          - "  - Nginx (Deployment with 2 replicas + Service)"
+          - ""
+          - "Connectivity Tests:"
+          - "  - Pod IP: HTTP {{ pod_test.status }}"
+          - "  - Service ClusterIP: HTTP {{ service_test.status }}"
+          - ""
+          - "Test Commands:"
+          - "  kubectl get pods -o wide"
+          - "  kubectl get services"
+          - "  kubectl describe pod echoserver"
+          - "  curl http://{{ service_ip.stdout }}"
+          - ""
+          - "Delete test apps:"
+          - "  kubectl delete -f /tmp/echoserver.yaml"
+          - "  kubectl delete -f /tmp/nginx-test.yaml"
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "KUBERNETES CLUSTER FULLY OPERATIONAL"
+          - "================================================================"
+          - ""
+          - "Your cluster is ready!"
+          - ""
+          - "Setup complete:"
+          - "  1. Nodes prepared with containerd"
+          - "  2. Kubernetes 1.33.5 installed"
+          - "  3. Control plane initialized"
+          - "  4. Cilium CNI deployed with Hubble UI"
+          - "  5. Worker node joined"
+          - "  6. Test applications deployed"
+          - ""
+          - "Access Hubble UI:"
+          - "  http://<node-ip>:31000"
+          - ""
+          - "Verify cluster:"
+          - "  kubectl get nodes"
+          - "  kubectl get pods --all-namespaces"
+          - "  kubectl get services"
+          - "================================================================"

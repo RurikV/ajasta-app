@@ -1,0 +1,228 @@
+---
+# Join worker nodes to the Kubernetes cluster
+# Usage:
+#   ansible-playbook -i inventory/k8s-exam.ini 04-join-workers.yml
+
+- name: Get cluster join information and set as host variables
+  hosts: k8s_masters
+  become: yes
+  gather_facts: yes
+  tasks:
+    - name: Get external IP of master
+      ansible.builtin.shell:
+        cmd: |
+          curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || \
+          hostname -I | awk '{print $1}'
+      register: master_external_ip
+      changed_when: false
+
+    - name: Create kubeadm join token
+      ansible.builtin.command:
+        cmd: kubeadm token create
+      register: join_token
+      changed_when: true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Get CA certificate hash
+      ansible.builtin.shell:
+        cmd: |
+          openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | \
+          openssl rsa -pubin -outform der 2>/dev/null | \
+          openssl dgst -sha256 -hex | sed 's/^.* //'
+      register: ca_cert_hash
+      changed_when: false
+
+    - name: Display join information
+      ansible.builtin.debug:
+        msg:
+          - "Master IP: {{ master_external_ip.stdout }}"
+          - "Join Token: {{ join_token.stdout }}"
+          - "CA Hash: sha256:{{ ca_cert_hash.stdout }}"
+
+    - name: Set join information for all hosts
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: k8s_cluster
+        master_join_ip: "{{ master_external_ip.stdout }}"
+        worker_join_token: "{{ join_token.stdout }}"
+        worker_ca_hash: "sha256:{{ ca_cert_hash.stdout }}"
+      loop: "{{ groups['k8s_workers'] }}"
+
+- name: Join worker nodes to cluster
+  hosts: k8s_workers
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Display target information
+      ansible.builtin.debug:
+        msg:
+          - "Target: {{ inventory_hostname }}"
+          - "Joining worker node to Kubernetes cluster"
+          - "Master IP: {{ master_join_ip }}"
+          - "Join Token: {{ worker_join_token }}"
+          - "CA Hash: {{ worker_ca_hash }}"
+
+    - name: Check if node is already joined
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf
+
+    - name: Node already joined status
+      ansible.builtin.debug:
+        msg: "Node already part of cluster: {{ kubelet_conf.stat.exists }}"
+
+    # ============== CREATE JOIN CONFIGURATION ==============
+    - name: Create kubeadm join configuration
+      ansible.builtin.copy:
+        dest: /tmp/kubeadm-join.yaml
+        content: |
+          ---
+          apiVersion: kubeadm.k8s.io/v1beta3
+          kind: JoinConfiguration
+          discovery:
+            bootstrapToken:
+              apiServerEndpoint: {{ master_join_ip }}:6443
+              token: {{ worker_join_token }}
+              caCertHashes:
+              - {{ worker_ca_hash }}
+          nodeRegistration:
+            name: {{ inventory_hostname }}.cloud.ut.ee
+            criSocket: unix:///run/containerd/containerd.sock
+          ---
+          kind: KubeletConfiguration
+          apiVersion: kubelet.config.k8s.io/v1beta1
+          cgroupDriver: systemd
+          shutdownGracePeriod: 5m0s
+          shutdownGracePeriodCriticalPods: 5m0s
+          ---
+        mode: '0644'
+      when: not kubelet_conf.stat.exists
+
+    - name: Display join config created
+      ansible.builtin.debug:
+        msg: "Join configuration created at /tmp/kubeadm-join.yaml"
+      when: not kubelet_conf.stat.exists
+
+    # ============== JOIN CLUSTER ==============
+    - name: Reset existing kubeadm state if needed
+      ansible.builtin.command:
+        cmd: kubeadm reset --force
+      register: kubeadm_reset
+      when: kubelet_conf.stat.exists
+      failed_when: false
+
+    - name: Reset kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+      when: kubelet_conf.stat.exists
+
+    - name: Wait for kubelet restart
+      ansible.builtin.pause:
+        seconds: 5
+      when: kubelet_conf.stat.exists
+
+    - name: Join worker node to cluster
+      ansible.builtin.command:
+        cmd: kubeadm join --config=/tmp/kubeadm-join.yaml --v=5
+      register: kubeadm_join
+      when: not kubelet_conf.stat.exists or kubeadm_reset is defined
+      # This can take a few minutes
+
+    - name: Display join result
+      ansible.builtin.debug:
+        msg: "{{ kubeadm_join.stdout_lines | default(['Node already joined']) }}"
+      when: kubeadm_join is defined
+
+    # ============== SUMMARY ==============
+    - name: Display join summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "WORKER NODE JOINED TO CLUSTER"
+          - "================================================================"
+          - "Host: {{ inventory_hostname }}"
+          - "Join Status: {{ 'SUCCESS' if (kubeadm_join is defined and kubeadm_join.rc == 0) else 'ALREADY_JOINED' }}"
+          - ""
+          - "Master: {{ master_join_ip }}:6443"
+          - "================================================================"
+
+- name: Verify cluster nodes
+  hosts: k8s_masters
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Wait for worker nodes to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready node --all --timeout=600s
+      register: nodes_ready
+      until: nodes_ready.rc == 0
+      retries: 30
+      delay: 10
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Get cluster nodes
+      ansible.builtin.command:
+        cmd: kubectl get nodes -o wide
+      register: cluster_nodes
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display cluster nodes
+      ansible.builtin.debug:
+        msg: "{{ cluster_nodes.stdout_lines }}"
+
+    - name: Get all pods
+      ansible.builtin.command:
+        cmd: kubectl get pods --all-namespaces -o wide
+      register: all_pods
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display all pods
+      ansible.builtin.debug:
+        msg: "{{ all_pods.stdout_lines }}"
+
+    - name: Display overall summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "KUBERNETES CLUSTER READY"
+          - "================================================================"
+          - ""
+          - "All nodes joined and ready!"
+          - ""
+          - "Next steps:"
+          - "  1. Run: 05-expose-hubble.yml - Expose Hubble UI via NodePort"
+          - "  2. Run: 06-deploy-test-app.yml - Deploy test applications"
+          - ""
+          - "Verification:"
+          - "  kubectl get nodes"
+          - "  kubectl get pods --all-namespaces"
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "WORKER NODES JOINED SUCCESSFULLY"
+          - "================================================================"
+          - ""
+          - "Your Kubernetes cluster is now ready with:"
+          - "  - 1 Control plane node (can run workloads)"
+          - "  - 1 Worker node"
+          - "  - Cilium CNI with Hubble observability"
+          - ""
+          - "Next: Expose Hubble UI and deploy test applications"
+          - "================================================================"

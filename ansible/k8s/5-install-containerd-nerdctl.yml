@@ -1,0 +1,368 @@
+---
+# Install containerd, nerdctl, CNI plugins, and related tools
+# Usage:
+#   ansible-playbook -i inventory/k8s-exam.ini 5-install-containerd-nerdctl.yml
+
+- name: Install containerd, nerdctl, CNI plugins and build tools
+  hosts: k8s_cluster
+  become: yes
+  gather_facts: yes
+
+  vars:
+    containerd_version: "latest"
+    nerdctl_version: "v2.2.1"
+    nerdctl_url: "https://github.com/containerd/nerdctl/releases/download/{{ nerdctl_version }}/nerdctl-2.2.1-linux-amd64.tar.gz"
+    cni_plugins_version: "v1.9.0"
+    cni_plugins_url: "https://github.com/containernetworking/plugins/releases/download/{{ cni_plugins_version }}/cni-plugins-linux-amd64-{{ cni_plugins_version }}.tgz"
+    cni_bin_dir: "/opt/cni/bin"
+
+  tasks:
+    - name: Display target information
+      ansible.builtin.debug:
+        msg:
+          - "Target: {{ inventory_hostname }}"
+          - "IP: {{ ansible_default_ipv4.address }}"
+          - "Installing containerd, nerdctl, CNI plugins and build tools"
+
+    # ============== INSTALL YUM UTILS ==============
+    - name: Install yum-utils
+      ansible.builtin.dnf:
+        name: yum-utils
+        state: present
+
+    - name: Display repository setup
+      ansible.builtin.debug:
+        msg: "Setting up Docker CE repository"
+
+    # ============== SETUP DOCKER REPOSITORY ==============
+    - name: Add Docker CE repository
+      ansible.builtin.yum_repository:
+        name: docker-ce
+        description: Docker CE Repository
+        baseurl: https://download.docker.com/linux/centos/9/$basearch/stable
+        enabled: yes
+        gpgcheck: yes
+        gpgkey: https://download.docker.com/linux/centos/gpg
+
+    - name: Display Docker repository added
+      ansible.builtin.debug:
+        msg: "Docker CE repository added"
+
+    # ============== INSTALL CONTAINERD ==============
+    - name: Install containerd.io
+      ansible.builtin.dnf:
+        name: containerd.io
+        state: present
+        update_cache: yes
+
+    - name: Create containerd config directory
+      ansible.builtin.file:
+        path: /etc/containerd
+        state: directory
+        mode: '0755'
+
+    - name: Generate default containerd configuration
+      ansible.builtin.shell:
+        cmd: containerd config default > /etc/containerd/config.toml
+      args:
+        creates: /etc/containerd/config.toml
+
+    - name: Configure containerd to use SystemdCgroup
+      ansible.builtin.lineinfile:
+        path: /etc/containerd/config.toml
+        regexp: '^\s*SystemdCgroup\s*='
+        insertafter: '^\[plugins\."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options\]\s*$'
+        line: '            SystemdCgroup = true'
+      when: false  # Will be configured manually if needed
+
+    - name: Start and enable containerd service
+      ansible.builtin.systemd:
+        name: containerd
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Wait for containerd to be ready
+      ansible.builtin.pause:
+        seconds: 3
+
+    - name: Check containerd service status
+      ansible.builtin.systemd:
+        name: containerd
+      register: containerd_status
+
+    - name: Display containerd status
+      ansible.builtin.debug:
+        msg:
+          - "Containerd service: {{ containerd_status.status.ActiveState }}"
+          - "Containerd is running: {{ containerd_status.status.ActiveState == 'active' }}"
+
+    - name: Verify containerd version
+      ansible.builtin.command:
+        cmd: containerd --version
+      register: containerd_version_check
+      changed_when: false
+
+    - name: Display containerd version
+      ansible.builtin.debug:
+        msg: "{{ containerd_version_check.stdout }}"
+
+    # ============== INSTALL NERDCTL ==============
+    - name: Download nerdctl
+      ansible.builtin.get_url:
+        url: "{{ nerdctl_url }}"
+        dest: /tmp/nerdctl.tar.gz
+        mode: '0644'
+        timeout: 300
+
+    - name: Extract nerdctl to /usr/sbin
+      ansible.builtin.unarchive:
+        src: /tmp/nerdctl.tar.gz
+        dest: /usr/sbin
+        remote_src: yes
+
+    - name: Verify nerdctl installation
+      ansible.builtin.command:
+        cmd: nerdctl version
+      register: nerdctl_version_check
+      changed_when: false
+
+    - name: Display nerdctl version
+      ansible.builtin.debug:
+        msg: "{{ nerdctl_version_check.stdout }}"
+
+    # ============== INSTALL IPTABLES ==============
+    - name: Install iptables and ebtables
+      ansible.builtin.dnf:
+        name:
+          - iptables
+          - ebtables
+          - iproute-tc
+        state: present
+      failed_when: false
+
+    - name: Display iptables installed
+      ansible.builtin.debug:
+        msg: "iptables installed for CNI networking"
+
+    # ============== INSTALL CNI PLUGINS ==============
+    - name: Download CNI plugins
+      ansible.builtin.get_url:
+        url: "{{ cni_plugins_url }}"
+        dest: /tmp/cni-plugins.tgz
+        mode: '0644'
+        timeout: 300
+
+    - name: Create CNI bin directory
+      ansible.builtin.file:
+        path: "{{ cni_bin_dir }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Extract CNI plugins
+      ansible.builtin.unarchive:
+        src: /tmp/cni-plugins.tgz
+        dest: "{{ cni_bin_dir }}"
+        remote_src: yes
+
+    - name: List CNI plugins
+      ansible.builtin.command:
+        cmd: ls -1 {{ cni_bin_dir }}
+      register: cni_plugins_list
+      changed_when: false
+
+    - name: Display CNI plugins count
+      ansible.builtin.debug:
+        msg: "CNI plugins installed: {{ cni_plugins_list.stdout_lines | length }} plugins in {{ cni_bin_dir }}"
+
+    # ============== INSTALL UTILITY TOOLS ==============
+    - name: Install jq
+      ansible.builtin.dnf:
+        name: jq
+        state: present
+
+    - name: Install buildah
+      ansible.builtin.dnf:
+        name: buildah
+        state: present
+
+    - name: Install additional useful tools
+      ansible.builtin.dnf:
+        name:
+          - podman
+          - skopeo
+        state: present
+
+    - name: Display tools installed
+      ansible.builtin.debug:
+        msg:
+          - "jq installed for JSON parsing"
+          - "buildah installed for building container images"
+          - "podman installed for container management"
+          - "skopeo installed for image operations"
+
+    # ============== VALIDATE CONTAINERD ==============
+    - name: Pull test image using containerd (ctr)
+      ansible.builtin.command:
+        cmd: ctr images pull registry.hpc.ut.ee/mirror/library/redis:alpine
+      register: ctr_pull
+      changed_when: false
+
+    - name: Display ctr pull result
+      ansible.builtin.debug:
+        msg: "{{ ctr_pull.stderr | default('Redis image pulled successfully') }}"
+
+    - name: Create test container with ctr
+      ansible.builtin.command:
+        cmd: ctr run -d --name redis-test registry.hpc.ut.ee/mirror/library/redis:alpine redis
+      register: ctr_run
+      changed_when: ctr_run.rc == 0
+      failed_when: false
+
+    - name: List containers
+      ansible.builtin.command:
+        cmd: ctr containers list
+      register: ctr_list
+      changed_when: false
+
+    - name: Display ctr containers
+      ansible.builtin.debug:
+        msg: "{{ ctr_list.stdout_lines }}"
+
+    - name: Stop and remove test container
+      ansible.builtin.shell:
+        cmd: |
+          ctr task kill redis-test || true
+          sleep 1
+          ctr container delete redis-test || true
+      failed_when: false
+
+    # ============== VALIDATE NERDCTL ==============
+    - name: Pull test image using nerdctl
+      ansible.builtin.command:
+        cmd: nerdctl pull registry.hpc.ut.ee/mirror/library/nginx:alpine
+      register: nerdctl_pull
+      changed_when: false
+
+    - name: Display nerdctl pull result
+      ansible.builtin.debug:
+        msg: "{{ nerdctl_pull.stderr | default('NGINX image pulled successfully') }}"
+
+    - name: Run whoami container for testing
+      ansible.builtin.command:
+        cmd: nerdctl run -d --name whoami-test -p 8001:80 registry.hpc.ut.ee/mirror/containous/whoami
+      register: nerdctl_run
+      changed_when: nerdctl_run.rc == 0
+      failed_when: false
+
+    - name: Wait for container to start
+      ansible.builtin.pause:
+        seconds: 3
+
+    - name: List nerdctl containers
+      ansible.builtin.command:
+        cmd: nerdctl ps
+      register: nerdctl_ps
+      changed_when: false
+
+    - name: Display nerdctl containers
+      ansible.builtin.debug:
+        msg: "{{ nerdctl_ps.stdout_lines }}"
+
+    - name: Get container IP using nerdctl inspect and jq
+      ansible.builtin.shell:
+        cmd: nerdctl inspect whoami-test | jq -r '.[0]."NetworkSettings"."Networks" | to_entries[0].value.IPAddress'
+      register: container_ip
+      changed_when: false
+      failed_when: false
+
+    - name: Display container IP
+      ansible.builtin.debug:
+        msg: "Container IP: {{ container_ip.stdout | default('N/A') }}"
+
+    - name: Test container connectivity
+      ansible.builtin.uri:
+        url: "http://localhost:8001"
+        return_content: yes
+      register: whoami_response
+      failed_when: false
+      timeout: 10
+
+    - name: Display container response
+      ansible.builtin.debug:
+        msg: "{{ whoami_response.content | default('Container not accessible') }}"
+
+    - name: Stop and remove test container
+      ansible.builtin.shell:
+        cmd: |
+          nerdctl stop whoami-test || true
+          nerdctl rm whoami-test || true
+      failed_when: false
+
+    # ============== CLEANUP ==============
+    - name: Remove temporary files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/nerdctl.tar.gz
+        - /tmp/cni-plugins.tgz
+      failed_when: false
+
+    # ============== SUMMARY ==============
+    - name: Display installation summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CONTAINERD, NERDCTL, CNI PLUGINS INSTALLATION COMPLETE"
+          - "================================================================"
+          - "Host: {{ inventory_hostname }}"
+          - "IP: {{ ansible_default_ipv4.address }}"
+          - ""
+          - "Installed Components:"
+          - "  - containerd.io (CRI runtime)"
+          - "  - nerdctl {{ nerdctl_version }} (Docker-compatible CLI)"
+          - "  - CNI plugins {{ cni_plugins_version }} (networking)"
+          - "  - iptables (firewall rules for CNI)"
+          - "  - jq (JSON parsing utility)"
+          - "  - buildah (image building)"
+          - "  - podman (container management)"
+          - "  - skopeo (image operations)"
+          - ""
+          - "Binary Locations:"
+          - "  - containerd: /usr/bin/containerd"
+          - "  - ctr:       /usr/bin/ctr"
+          - "  - nerdctl:   /usr/sbin/nerdctl"
+          - "  - CNI:       {{ cni_bin_dir }}/"
+          - ""
+          - "Service Status:"
+          - "  - containerd: {{ containerd_status.status.ActiveState }}"
+          - "  - enabled:   yes"
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CONTAINER RUNTIME INSTALLATION COMPLETE"
+          - "================================================================"
+          - ""
+          - "All nodes have containerd, nerdctl, and CNI plugins installed."
+          - ""
+          - "Next steps:"
+          - "  1. Install Kubernetes (kubeadm, kubelet, kubectl)"
+          - "  2. Initialize the cluster with kubeadm init"
+          - "  3. Install CNI plugin (Cilium)"
+          - "  4. Join worker nodes"
+          - ""
+          - "Verification commands:"
+          - "  ansible -i inventory/k8s-exam.ini k8s_cluster -m shell -a 'containerd --version'"
+          - "  ansible -i inventory/k8s-exam.ini k8s_cluster -m shell -a 'nerdctl version'"
+          - "  ansible -i inventory/k8s-exam.ini k8s_cluster -m shell -a 'ctr version'"
+          - "================================================================"

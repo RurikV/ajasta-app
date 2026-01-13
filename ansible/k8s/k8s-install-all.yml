@@ -1,0 +1,119 @@
+---
+# Master Kubernetes Cluster Installation Playbook
+# This playbook installs a complete Kubernetes cluster with all components
+# Usage:
+#   ansible-playbook -i inventory.ini k8s-install-all.yml
+#
+# This playbook runs all installation steps in sequence:
+#   1. Prepares all nodes
+#   2. Installs containerd
+#   3. Initializes master
+#   4. Joins workers
+#   5. Installs CNI (Cilium)
+#   6. Installs additional tools (Helm, Dashboard, etc.)
+
+- name: Display installation plan
+  hosts: local
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Display installation information
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Kubernetes Cluster Installation"
+          - "=========================================="
+          - ""
+          - "This playbook will:"
+          - "  1. Prepare all nodes (firewall, sysctl, modules)"
+          - "  2. Install containerd on all nodes"
+          - "  3. Initialize Kubernetes control plane"
+          - "  4. Join worker nodes to the cluster"
+          - "  5. Install Cilium CNI"
+          - "  6. Install Helm"
+          - ""
+          - "Target nodes:"
+          - "  Master: {{ groups['k8s_master'] | default([]) }}"
+          - "  Workers: {{ groups['k8s_workers'] | default([]) }}"
+          - ""
+          - "Press Ctrl+C to cancel or continue..."
+          - ""
+
+    - name: Pause for confirmation (10 seconds)
+      ansible.builtin.pause:
+        seconds: 10
+
+- name: Import prepare nodes playbook
+  import_playbook: 01-prepare-nodes.yml
+
+- name: Import install containerd playbook
+  import_playbook: 5-install-containerd-nerdctl.yml
+
+- name: Import initialize master playbook
+  import_playbook: 02-init-master.yml
+
+- name: Import join workers playbook
+  import_playbook: 04-join-workers.yml
+
+- name: Import install Cilium CNI playbook
+  import_playbook: 03-install-cilium.yml
+
+- name: Import install Helm playbook
+  import_playbook: 09-install-helm-binary.yml
+
+- name: Display installation summary
+  hosts: k8s_master
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Wait for cluster to stabilize
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: Get cluster nodes
+      ansible.builtin.shell:
+        cmd: kubectl get nodes
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cluster_nodes
+      changed_when: false
+
+    - name: Get cluster pods
+      ansible.builtin.shell:
+        cmd: kubectl get pods -A
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cluster_pods
+      changed_when: false
+
+    - name: Display installation summary
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "================================================"
+          - "✅ Kubernetes Cluster Installation Complete!"
+          - "================================================"
+          - ""
+          - "Cluster nodes:"
+          - "{{ cluster_nodes.stdout_lines }}"
+          - ""
+          - "Cluster pods:"
+          - "{{ cluster_pods.stdout_lines }}"
+          - ""
+          - "To access the cluster:"
+          - "  1. SSH to master: ssh ajasta@{{ groups['k8s_master'][0] }}"
+          - "  2. Use kubectl: kubectl get nodes"
+          - "  3. Update local kubeconfig: ./scripts/update-kubeconfig.sh"
+          - ""
+          - "Optional next steps:"
+          - "  - Deploy Kubernetes Dashboard: ansible-playbook -i inventory.ini 10-deploy-kubernetes-dashboard.yml"
+          - "  - Deploy Ingress Controller: ansible-playbook -i inventory.ini 13-deploy-ingress-nginx-controller.yml"
+          - "  - Deploy Longhorn Storage: ansible-playbook -i inventory.ini 14-deploy-longhorn-storage.yml"
+          - "  - Deploy test application: ansible-playbook -i inventory.ini 06-deploy-test-app.yml"
+          - ""
+          - "To destroy the cluster:"
+          - "  ansible-playbook -i inventory.ini 00-destroy-k8s-cluster.yml"
+          - "================================================"
+          - ""

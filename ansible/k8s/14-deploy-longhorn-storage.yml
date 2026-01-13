@@ -1,0 +1,830 @@
+---
+# Deploy Persistent Storage: Local Storage, Longhorn, and Migrate MinIO
+# This playbook:
+# 1. Creates local-storage StorageClass
+# 2. Creates local PV/PVC for MinIO
+# 3. Installs Longhorn storage system
+# 4. Creates test Longhorn workload
+# 5. Migrates MinIO to use Longhorn volumes
+# Usage:
+#   ansible-playbook -i inventory/k8s-exam.ini 14-deploy-longhorn-storage.yml
+
+- name: Deploy Persistent Storage Infrastructure
+  hosts: k8s_masters
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # Local Storage
+    local_storage_class_name: local-storage
+    local_storage_path: /mnt/data
+    minio_local_pv_name: minio-pv-0
+    minio_local_pvc_name: minio-pvc-0
+    minio_namespace: production
+    minio_pv_size: 1Gi
+
+    # Longhorn
+    longhorn_namespace: longhorn-system
+    longhorn_version: v1.10.0
+    longhorn_release_url: "https://github.com/longhorn/cli/releases/download/{{ longhorn_version }}/longhornctl-linux-amd64"
+    longhorn_manifest_url: "https://raw.githubusercontent.com/longhorn/longhorn/{{ longhorn_version }}/deploy/longhorn.yaml"
+    longhorn_replicas: "2"
+
+    # Test namespace for Longhorn
+    test_namespace: storage
+
+  tasks:
+    - name: Display target information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYING PERSISTENT STORAGE INFRASTRUCTURE"
+          - "================================================================"
+          - "Target: {{ inventory_hostname }}"
+          - ""
+          - "Tasks:"
+          - "  1. Create local-storage StorageClass"
+          - "  2. Create local PV/PVC for MinIO"
+          - "  3. Prepare nodes for Longhorn"
+          - "  4. Install Longhorn"
+          - "  5. Create Longhorn test workload"
+          - "  6. Migrate MinIO to Longhorn"
+          - "================================================================"
+
+    # ==============================================================
+    # PART 1: LOCAL STORAGE CLASS
+    # ==============================================================
+
+    - name: Display local storage setup message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 1: LOCAL STORAGE CLASS"
+          - "================================================================"
+
+    - name: Create local-storage StorageClass manifest
+      ansible.builtin.copy:
+        dest: /tmp/storageclass-local.yaml
+        content: |
+          kind: StorageClass
+          apiVersion: storage.k8s.io/v1
+          metadata:
+            name: {{ local_storage_class_name }}
+          provisioner: kubernetes.io/no-provisioner
+          reclaimPolicy: Retain
+          volumeBindingMode: WaitForFirstConsumer
+        mode: '0644'
+
+    - name: Apply local-storage StorageClass
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/storageclass-local.yaml
+      register: sc_apply
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display StorageClass creation result
+      ansible.builtin.debug:
+        msg: "{{ sc_apply.stdout_lines }}"
+
+    - name: Get all StorageClasses
+      ansible.builtin.command:
+        cmd: kubectl get storageclass
+      register: sc_list
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display StorageClasses
+      ansible.builtin.debug:
+        msg: "{{ sc_list.stdout_lines }}"
+
+    # ==============================================================
+    # PART 2: CREATE LOCAL PV/PVC FOR MINIO
+    # ==============================================================
+
+    - name: Display local PV/PVC setup message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 2: LOCAL PV/PVC FOR MINIO"
+          - "================================================================"
+
+    - name: Get node hostname for PV nodeAffinity
+      ansible.builtin.command:
+        cmd: hostname
+      register: node_hostname
+      changed_when: false
+      delegate_to: "{{ inventory_hostname }}"
+
+    - name: Display node hostname
+      ansible.builtin.debug:
+        msg: "Node hostname: {{ node_hostname.stdout }}"
+
+    # Create storage directories on all nodes
+    - name: Create /mnt/data directory on all nodes
+      ansible.builtin.file:
+        path: "{{ local_storage_path }}"
+        state: directory
+        mode: '0755'
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['k8s_nodes'] }}"
+
+    - name: Create MinIO PV directory on master node
+      ansible.builtin.file:
+        path: "{{ local_storage_path }}/{{ minio_local_pv_name }}"
+        state: directory
+        mode: '0777'
+      delegate_to: "{{ inventory_hostname }}"
+
+    - name: Create MinIO local PersistentVolume manifest
+      ansible.builtin.copy:
+        dest: /tmp/pv-minio-local.yaml
+        content: |
+          apiVersion: v1
+          kind: PersistentVolume
+          metadata:
+            name: {{ minio_local_pv_name }}
+            labels:
+              app: minio
+              ver: minio-pv-v1-0
+          spec:
+            capacity:
+              storage: {{ minio_pv_size }}
+            volumeMode: Filesystem
+            accessModes:
+            - ReadWriteOnce
+            persistentVolumeReclaimPolicy: Retain
+            storageClassName: {{ local_storage_class_name }}
+            local:
+              path: {{ local_storage_path }}/{{ minio_local_pv_name }}
+            nodeAffinity:
+              required:
+                nodeSelectorTerms:
+                - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                    - {{ node_hostname.stdout }}
+        mode: '0644'
+
+    - name: Apply MinIO local PV
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/pv-minio-local.yaml
+      register: minio_pv_apply
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display MinIO PV creation result
+      ansible.builtin.debug:
+        msg: "{{ minio_pv_apply.stdout_lines }}"
+
+    - name: Create MinIO local PersistentVolumeClaim manifest
+      ansible.builtin.copy:
+        dest: /tmp/pvc-minio-local.yaml
+        content: |
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: {{ minio_local_pvc_name }}
+            namespace: {{ minio_namespace }}
+          spec:
+            storageClassName: {{ local_storage_class_name }}
+            selector:
+              matchLabels:
+                app: minio
+                ver: minio-pv-v1-0
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: {{ minio_pv_size }}
+        mode: '0644'
+
+    - name: Apply MinIO local PVC
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/pvc-minio-local.yaml
+      register: minio_pvc_apply
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display MinIO PVC creation result
+      ansible.builtin.debug:
+        msg: "{{ minio_pvc_apply.stdout_lines }}"
+
+    - name: Get all PersistentVolumes
+      ansible.builtin.command:
+        cmd: kubectl get pv
+      register: pv_list
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display PersistentVolumes
+      ansible.builtin.debug:
+        msg: "{{ pv_list.stdout_lines }}"
+
+    - name: Get MinIO PVCs
+      ansible.builtin.command:
+        cmd: kubectl get pvc -n {{ minio_namespace }}
+      register: pvc_list
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display MinIO PVCs
+      ansible.builtin.debug:
+        msg: "{{ pvc_list.stdout_lines }}"
+
+    # ==============================================================
+    # PART 3: PREPARE NODES FOR LONGHORN
+    # ==============================================================
+
+    - name: Display Longhorn preparation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 3: PREPARING NODES FOR LONGHORN"
+          - "================================================================"
+
+    - name: Create longhorn-system namespace
+      ansible.builtin.command:
+        cmd: kubectl create namespace {{ longhorn_namespace }}
+      register: longhorn_ns
+      changed_when: longhorn_ns.rc == 0 or "already exists" in longhorn_ns.stderr
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display namespace creation
+      ansible.builtin.debug:
+        msg: "{{ longhorn_ns.stdout | default(longhorn_ns.stderr, true) }}"
+
+    - name: Download longhornctl to temp location
+      ansible.builtin.get_url:
+        url: "{{ longhorn_release_url }}"
+        dest: /tmp/longhornctl
+        mode: '0755'
+        timeout: 120
+      register: longhornctl_download
+
+    - name: Verify longhornctl was downloaded
+      ansible.builtin.stat:
+        path: /tmp/longhornctl
+      register: longhornctl_stat
+
+    - name: Fail if longhornctl was not downloaded
+      ansible.builtin.fail:
+        msg: "longhornctl was not downloaded successfully"
+      when: not longhornctl_stat.stat.exists
+
+    - name: Move longhornctl to /usr/local/bin
+      ansible.builtin.command:
+        cmd: mv /tmp/longhornctl /usr/local/bin/longhornctl
+      args:
+        creates: /usr/local/bin/longhornctl
+
+    - name: Ensure longhornctl is executable
+      ansible.builtin.file:
+        path: /usr/local/bin/longhornctl
+        mode: '0755'
+
+    - name: Verify longhornctl is accessible
+      ansible.builtin.command:
+        cmd: /usr/local/bin/longhornctl version
+      register: longhornctl_version
+      changed_when: false
+
+    - name: Display longhornctl version
+      ansible.builtin.debug:
+        msg: "longhornctl version: {{ longhornctl_version.stdout | default('Unknown', true) }}"
+
+    - name: Run longhornctl preflight installation
+      ansible.builtin.command:
+        cmd: /usr/local/bin/longhornctl install preflight
+      register: longhorn_preflight
+      timeout: 600
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display preflight installation
+      ansible.builtin.debug:
+        msg: "{{ longhorn_preflight.stdout_lines }}"
+
+    - name: Pause for preflight to complete
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: Run longhornctl preflight check
+      ansible.builtin.command:
+        cmd: /usr/local/bin/longhornctl check preflight
+      register: longhorn_check
+      timeout: 300
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display preflight check
+      ansible.builtin.debug:
+        msg: "{{ longhorn_check.stdout_lines }}"
+
+    # ==============================================================
+    # PART 4: INSTALL LONGHORN
+    # ==============================================================
+
+    - name: Display Longhorn installation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 4: INSTALLING LONGHORN"
+          - "================================================================"
+
+    - name: Download Longhorn manifest
+      ansible.builtin.get_url:
+        url: "{{ longhorn_manifest_url }}"
+        dest: /tmp/longhorn.yaml
+        mode: '0644'
+        timeout: 120
+      register: longhorn_manifest
+
+    - name: Modify Longhorn manifest to set replicas to 2
+      ansible.builtin.replace:
+        path: /tmp/longhorn.yaml
+        regexp: 'numberOfReplicas: "3"'
+        replace: 'numberOfReplicas: "{{ longhorn_replicas }}"'
+
+    - name: Apply Longhorn manifest
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/longhorn.yaml
+      register: longhorn_install
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Longhorn installation result
+      ansible.builtin.debug:
+        msg: "{{ longhorn_install.stdout_lines }}"
+
+    - name: Pause for Longhorn to initialize
+      ansible.builtin.pause:
+        seconds: 60
+
+    - name: Wait for Longhorn pods to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=longhorn -n {{ longhorn_namespace }} --timeout=600s
+      register: longhorn_ready
+      until: longhorn_ready.rc == 0
+      retries: 60
+      delay: 5
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      failed_when: false
+
+    - name: Display Longhorn ready status
+      ansible.builtin.debug:
+        msg: "{{ longhorn_ready.stdout | default('Longhorn pods are ready', true) }}"
+
+    - name: Get Longhorn pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ longhorn_namespace }}
+      register: longhorn_pods
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Longhorn pods
+      ansible.builtin.debug:
+        msg: "{{ longhorn_pods.stdout_lines }}"
+
+    - name: Get StorageClasses with default
+      ansible.builtin.command:
+        cmd: kubectl get storageclass
+      register: sc_final
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display final StorageClasses
+      ansible.builtin.debug:
+        msg: "{{ sc_final.stdout_lines }}"
+
+    # ==============================================================
+    # PART 5: CREATE LONGHORN TEST WORKLOAD
+    # ==============================================================
+
+    - name: Display Longhorn test workload message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 5: LONGHORN TEST WORKLOAD"
+          - "================================================================"
+
+    - name: Create storage namespace
+      ansible.builtin.command:
+        cmd: kubectl create namespace {{ test_namespace }}
+      register: storage_ns
+      changed_when: storage_ns.rc == 0 or "already exists" in storage_ns.stderr
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Create Longhorn test PVC and Pod manifest
+      ansible.builtin.copy:
+        dest: /tmp/longhorn-test.yaml
+        content: |
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: longhorn-pvc
+            namespace: {{ test_namespace }}
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            storageClassName: longhorn
+            resources:
+              requests:
+                storage: 1Gi
+          ---
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: writer-pod
+            namespace: {{ test_namespace }}
+          spec:
+            containers:
+            - name: busybox
+              image: registry.hpc.ut.ee/mirror/library/busybox:1.36
+              command: ["/bin/sh", "-c", "echo 'Hello, Persistent Storage!' >> /data/hello.txt; sleep 3600"]
+              volumeMounts:
+              - name: longhorn-volume
+                mountPath: /data
+            volumes:
+            - name: longhorn-volume
+              persistentVolumeClaim:
+                claimName: longhorn-pvc
+        mode: '0644'
+
+    - name: Apply Longhorn test manifest
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/longhorn-test.yaml
+      register: longhorn_test_apply
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Longhorn test result
+      ansible.builtin.debug:
+        msg: "{{ longhorn_test_apply.stdout_lines }}"
+
+    - name: Wait for writer-pod to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod/writer-pod -n {{ test_namespace }} --timeout=120s
+      register: writer_ready
+      until: writer_ready.rc == 0
+      retries: 12
+      delay: 5
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      failed_when: false
+
+    - name: Display writer-pod ready
+      ansible.builtin.debug:
+        msg: "{{ writer_ready.stdout | default('writer-pod is ready', true) }}"
+
+    - name: Get Longhorn PVC
+      ansible.builtin.command:
+        cmd: kubectl get pvc -n {{ test_namespace }}
+      register: longhorn_pvc
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Longhorn PVC
+      ansible.builtin.debug:
+        msg: "{{ longhorn_pvc.stdout_lines }}"
+
+    - name: Get Longhorn PV
+      ansible.builtin.shell:
+        cmd: kubectl get pv | grep longhorn || true
+      register: longhorn_pv
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Longhorn PV
+      ansible.builtin.debug:
+        msg: "{{ longhorn_pv.stdout_lines }}"
+
+    - name: Get test pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ test_namespace }}
+      register: test_pods
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display test pods
+      ansible.builtin.debug:
+        msg: "{{ test_pods.stdout_lines }}"
+
+    # ==============================================================
+    # PART 6: MIGRATE MINIO TO LONGHORN
+    # ==============================================================
+
+    - name: Display MinIO migration message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 6: MIGRATING MINIO TO LONGHORN"
+          - "================================================================"
+          - ""
+          - "IMPORTANT NOTE: Local PV cannot be used with StatefulSets!"
+          - "StatefulSets require volumeClaimTemplates, not spec.volumes"
+          - "Local PV/PVC was created for demonstration but remains Available"
+          - "Migrating MinIO directly to Longhorn (distributed storage)"
+          - "================================================================"
+
+    - name: Get current MinIO StatefulSet
+      ansible.builtin.command:
+        cmd: kubectl get statefulset minio -n {{ minio_namespace }}
+      register: minio_current
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display current MinIO StatefulSet
+      ansible.builtin.debug:
+        msg: "{{ minio_current.stdout_lines | default(['MinIO StatefulSet not found'], true) }}"
+
+    - name: Delete existing MinIO StatefulSet completely
+      ansible.builtin.command:
+        cmd: kubectl delete statefulset minio -n {{ minio_namespace }} --cascade=orphan
+      register: minio_delete
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display MinIO deletion
+      ansible.builtin.debug:
+        msg: "{{ minio_delete.stdout | default('MinIO StatefulSet deleted', true) }}"
+
+    - name: Wait for StatefulSet to be fully deleted
+      ansible.builtin.shell:
+        cmd: |
+          kubectl get statefulset minio -n {{ minio_namespace }} 2>/dev/null
+          if [ $? -eq 0 ]; then
+            echo "still_exists"
+          else
+            echo "deleted"
+          fi
+      register: statefulset_check
+      changed_when: false
+      until: statefulset_check.stdout == "deleted"
+      retries: 30
+      delay: 2
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display StatefulSet fully deleted
+      ansible.builtin.debug:
+        msg: "StatefulSet fully deleted"
+
+    - name: Delete MinIO pod if it exists
+      ansible.builtin.shell:
+        cmd: |
+          kubectl get pod minio-0 -n {{ minio_namespace }} 2>/dev/null && \
+          kubectl delete pod minio-0 -n {{ minio_namespace }} || \
+          echo "pod_already_gone"
+      register: pod_delete
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display pod deletion
+      ansible.builtin.debug:
+        msg: "{{ pod_delete.stdout | default('Pod deleted or not found', true) }}"
+
+    - name: Wait for MinIO pod to be fully deleted
+      ansible.builtin.shell:
+        cmd: |
+          kubectl get pod minio-0 -n {{ minio_namespace }} 2>/dev/null
+          if [ $? -eq 0 ]; then
+            echo "still_exists"
+          else
+            echo "deleted"
+          fi
+      register: pod_check
+      changed_when: false
+      until: pod_check.stdout == "deleted"
+      retries: 30
+      delay: 2
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display pod fully deleted
+      ansible.builtin.debug:
+        msg: "Pod fully deleted"
+
+    - name: Pause to ensure cleanup is complete
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Create MinIO StatefulSet with Longhorn volumeClaimTemplate
+      ansible.builtin.copy:
+        dest: /tmp/statefulset-minio-longhorn.yaml
+        content: |
+          apiVersion: apps/v1
+          kind: StatefulSet
+          metadata:
+            name: minio
+            namespace: {{ minio_namespace }}
+            labels:
+              app: minio
+          spec:
+            selector:
+              matchLabels:
+                app: minio
+            serviceName: minio
+            replicas: 1
+            template:
+              metadata:
+                labels:
+                  app: minio
+              spec:
+                containers:
+                - name: minio
+                  image: registry.hpc.ut.ee/mirror/minio/minio:RELEASE.2024-09-13T20-26-02Z
+                  args:
+                  - server
+                  - /storage
+                  - --console-address
+                  - ":9001"
+                  env:
+                  - name: MINIO_ROOT_USER
+                    valueFrom:
+                      secretKeyRef:
+                        name: minio-secret
+                        key: MINIO_ROOT_USER
+                  - name: MINIO_ROOT_PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: minio-secret
+                        key: MINIO_ROOT_PASSWORD
+                  - name: MINIO_BROWSER
+                    value: "on"
+                  ports:
+                  - name: api
+                    containerPort: 9000
+                    protocol: TCP
+                  - name: console
+                    containerPort: 9001
+                    protocol: TCP
+                  volumeMounts:
+                  - name: minio-data
+                    mountPath: "/storage"
+            volumeClaimTemplates:
+            - metadata:
+                name: minio-data
+              spec:
+                accessModes: [ "ReadWriteOnce" ]
+                storageClassName: longhorn
+                resources:
+                  requests:
+                    storage: 1Gi
+        mode: '0644'
+
+    - name: Create MinIO StatefulSet with Longhorn (using create to avoid merge issues)
+      ansible.builtin.command:
+        cmd: kubectl create -f /tmp/statefulset-minio-longhorn.yaml
+      register: minio_longhorn_apply
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display MinIO Longhorn migration result
+      ansible.builtin.debug:
+        msg: "{{ minio_longhorn_apply.stdout_lines }}"
+
+    - name: Pause for MinIO to initialize with Longhorn
+      ansible.builtin.pause:
+        seconds: 20
+
+    - name: Wait for MinIO StatefulSet to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod -l app=minio -n {{ minio_namespace }} --timeout=300s
+      register: minio_ready
+      until: minio_ready.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      failed_when: false
+
+    - name: Display MinIO ready status
+      ansible.builtin.debug:
+        msg: "{{ minio_ready.stdout | default('MinIO is ready', true) }}"
+
+    - name: Get MinIO pods after migration
+      ansible.builtin.command:
+        cmd: kubectl get pods -l app=minio -n {{ minio_namespace }}
+      register: minio_pods_final
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display MinIO pods
+      ansible.builtin.debug:
+        msg: "{{ minio_pods_final.stdout_lines }}"
+
+    - name: Get MinIO PVCs after migration
+      ansible.builtin.command:
+        cmd: kubectl get pvc -n {{ minio_namespace }}
+      register: minio_pvc_final
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display MinIO PVCs
+      ansible.builtin.debug:
+        msg: "{{ minio_pvc_final.stdout_lines }}"
+
+    # ==============================================================
+    # SUMMARY
+    # ==============================================================
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PERSISTENT STORAGE INFRASTRUCTURE DEPLOYED"
+          - "================================================================"
+          - ""
+          - "Storage Classes:"
+          - "  - local-storage: Manual PV provisioning"
+          - "  - longhorn: Dynamic distributed storage ({{ longhorn_replicas }} replicas)"
+          - ""
+          - "Local PV/PVC (MinIO original):"
+          - "  - PV: {{ minio_local_pv_name }}"
+          - "  - PVC: {{ minio_local_pvc_name }}"
+          - "  - Path: {{ local_storage_path }}/{{ minio_local_pv_name }}"
+          - ""
+          - "Longhorn Installation:"
+          - "  - Namespace: {{ longhorn_namespace }}"
+          - "  - Version: {{ longhorn_version }}"
+          - "  - UI Port Forward: kubectl -n {{ longhorn_namespace }} port-forward svc/longhorn-frontend 5080:80"
+          - "  - UI URL: http://localhost:5080"
+          - ""
+          - "Test Workload:"
+          - "  - Namespace: {{ test_namespace }}"
+          - "  - PVC: longhorn-pvc"
+          - "  - Pod: writer-pod"
+          - ""
+          - "MinIO Migration:"
+          - "  - Migrated from local PV to Longhorn"
+          - "  - VolumeClaimTemplate: minio-data (Longhorn, 1Gi)"
+          - "  - Data persists across pod restarts"
+          - ""
+          - "Useful Commands:"
+          - "  kubectl get storageclass"
+          - "  kubectl get pv,pvc -A"
+          - "  kubectl get pods -n {{ longhorn_namespace }}"
+          - "  kubectl get pods -n {{ minio_namespace }}"
+          - "  ls /mnt/data/minio-pv-0"
+          - ""
+          - "Longhorn UI Access (from local machine with kubeconfig):"
+          - "  kubectl --namespace {{ longhorn_namespace }} port-forward --address 127.0.0.1 service/longhorn-frontend 5080:80"
+          - "  Open: http://localhost:5080"
+          - ""
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PERSISTENT STORAGE READY"
+          - "================================================================"
+          - ""
+          - "Storage infrastructure has been deployed and configured."
+          - ""
+          - "What was deployed:"
+          - "  1. Local Storage Class (for manual PV provisioning)"
+          - "  2. Local PV/PVC for MinIO (original setup)"
+          - "  3. Longhorn distributed storage system"
+          - "  4. Longhorn test workload (writer-pod)"
+          - "  5. MinIO migrated to Longhorn volumes"
+          - ""
+          - "Storage Comparison:"
+          - "  Local Storage: Fast, node-specific, manual provisioning"
+          - "  Longhorn: Distributed, replicated, dynamic provisioning"
+          - ""
+          - "Access Longhorn UI from your local machine:"
+          - "  1. Copy /etc/kubernetes/admin.conf from VM to your machine"
+          - "  2. Set KUBECONFIG environment variable"
+          - "  3. Run: kubectl --namespace longhorn-system port-forward --address 127.0.0.1 service/longhorn-frontend 5080:80"
+          - "  4. Open: http://localhost:5080"
+          - ""
+          - "================================================================"
