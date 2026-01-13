@@ -230,7 +230,53 @@
           - "  ansible-playbook -i inventory.ini 05-expose-hubble.yml"
           - ""
           - "Verification commands:"
-          - "  ssh centos@<master-ip> 'kubectl get nodes'"
-          - "  ssh centos@<master-ip> 'cilium status'"
-          - "  ssh centos@<master-ip> 'kubectl get pods -n kube-system'"
+          - "  ssh ajasta@<master-ip> 'kubectl get nodes'"
+          - "  ssh ajasta@<master-ip> 'cilium status'"
+          - "  ssh ajasta@<master-ip> 'kubectl get pods -n kube-system'"
+          - "================================================================"
+
+- name: Wait for nodes to become Ready after CNI installation
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Wait for all nodes to become Ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready node --all --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: nodes_ready
+      changed_when: false
+
+    - name: Verify all nodes are Ready
+      ansible.builtin.command:
+        cmd: kubectl get nodes
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: nodes_status
+      changed_when: false
+
+    - name: Display node status
+      ansible.builtin.debug:
+        msg: "{{ nodes_status.stdout_lines }}"
+
+    - name: Display cluster ready summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "✅ CLUSTER READY - ALL NODES OPERATIONAL"
+          - "================================================================"
+          - ""
+          - "Kubernetes cluster with Cilium CNI is ready!"
+          - "All nodes are in Ready state and can run workloads."
+          - ""
+          - "Next steps:"
+          - "  1. Deploy applications: ansible-playbook -i inventory.ini 06-deploy-test-app.yml"
+          - "  2. Deploy Dashboard: ansible-playbook -i inventory.ini 10-deploy-kubernetes-dashboard.yml"
+          - "  3. Deploy Ingress: ansible-playbook -i inventory.ini 13-deploy-ingress-nginx-controller.yml"
+          - ""
+          - "Access Hubble UI:"
+          - "  kubectl port-forward -n kube-system svc/hubble-ui 12000:80"
+          - "  Open: http://localhost:12000"
           - "================================================================"

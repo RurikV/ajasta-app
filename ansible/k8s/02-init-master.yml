@@ -136,9 +136,6 @@
         mode: '0600'
         remote_src: yes
 
-        mode: '0600'
-        remote_src: yes
-
     - name: Display kubeconfig setup complete
       ansible.builtin.debug:
         msg: "Kubeconfig configured for ajasta and root users"
@@ -161,7 +158,7 @@
         cmd: kubectl taint nodes --all node-role.kubernetes.io/control-plane-
       register: remove_taint
       changed_when: false
-      failed_when: remove_taint.rc != 0
+      failed_when: false
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
 

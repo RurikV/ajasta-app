@@ -155,16 +155,16 @@
   gather_facts: yes
 
   tasks:
-    - name: Wait for worker nodes to be ready
-      ansible.builtin.command:
-        cmd: kubectl wait --for=condition=ready node --all --timeout=600s
-      register: nodes_ready
-      until: nodes_ready.rc == 0
-      retries: 30
-      delay: 10
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
+    - name: Display worker node join completion
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "WORKER NODES JOINED TO CLUSTER"
+          - "================================================================"
+          - ""
+          - "Nodes will become Ready after CNI plugin installation"
+          - "Run: 03-install-cilium.yml to install the network plugin"
+          - "================================================================"
 
     - name: Get cluster nodes
       ansible.builtin.command:

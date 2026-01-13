@@ -260,7 +260,8 @@
       loop:
         - /var/lib/containerd
         - /run/containerd
-        /etc/containerd
+        - /etc/containerd
+      failed_when: false  # /run/containerd may be busy, that's OK
 
     - name: Remove all container images
       ansible.builtin.shell:
