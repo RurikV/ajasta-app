@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-ANSIBLE_CI_DIR="${PROJECT_ROOT}/ansible-ci"
+ANSIBLE_CI_DIR="${PROJECT_ROOT}/ansible/k8s"
 INVENTORY_FILE="${ANSIBLE_CI_DIR}/inventory.ini"
 
 # Colors
@@ -87,19 +87,27 @@ get_vm_ips() {
 
     log_success "Found ${VM_COUNT} VM(s)"
 
+    # Debug: Show all VM names found
+    log_info "VM names found:"
+    echo "${VM_LIST}" | jq -r '.[].name' | while read -r name; do
+        echo "  - ${name}"
+    done
+
     # Extract master IP (use public IP from one-to-one NAT)
-    MASTER_IP=$(echo "${VM_LIST}" | jq -r '.[] | select(.name == "k8s-master") | .network_interfaces[0].primary_v4_address.one_to_one_nat.address // .network_interfaces[0].primary_v4_address.address // .network_interfaces[0].primary_address_v4.address' || echo "")
+    # Try both naming conventions: master-node and k8s-master
+    MASTER_IP=$(echo "${VM_LIST}" | jq -r '.[] | select(.name == "master-node" or .name == "k8s-master") | .network_interfaces[0].primary_v4_address.one_to_one_nat.address // .network_interfaces[0].primary_v4_address.address // .network_interfaces[0].primary_address_v4.address' || echo "")
 
     if [[ -z "${MASTER_IP}" ]] || [[ "${MASTER_IP}" == "null" ]]; then
-        log_error "Could not find k8s-master VM public IP"
+        log_error "Could not find master-node or k8s-master VM public IP"
         exit 1
     fi
 
     log_success "Master IP: ${MASTER_IP}"
 
     # Extract worker IPs (use public IP from one-to-one NAT)
+    # Try both naming conventions: worker-node-* and k8s-worker-*
     WORKER_LIST=()
-    WORKER_IPS=$(echo "${VM_LIST}" | jq -r '.[] | select(.name | startswith("k8s-worker")) | .network_interfaces[0].primary_v4_address.one_to_one_nat.address // .network_interfaces[0].primary_v4_address.address // .network_interfaces[0].primary_address_v4.address' || echo "")
+    WORKER_IPS=$(echo "${VM_LIST}" | jq -r '.[] | select(.name | startswith("worker-node") or startswith("k8s-worker")) | .network_interfaces[0].primary_v4_address.one_to_one_nat.address // .network_interfaces[0].primary_v4_address.address // .network_interfaces[0].primary_address_v4.address' || echo "")
 
     for WORKER_IP in ${WORKER_IPS}; do
         if [[ -n "${WORKER_IP}" ]] && [[ "${WORKER_IP}" != "null" ]]; then
@@ -218,13 +226,17 @@ test_connectivity() {
     SUCCESS_COUNT=0
     FAILED_COUNT=0
 
+    # Increase timeout to 60 seconds for slower connections or when testing multiple nodes
+    ANSIBLE_TIMEOUT=60
+
     # Test master
     echo -n "  Testing master-node (${MASTER_IP})... "
-    if timeout 10 ansible master-node -i "${INVENTORY_FILE}" -m ping &> /dev/null; then
+    if timeout ${ANSIBLE_TIMEOUT} ansible master-node -i "${INVENTORY_FILE}" -m ansible.builtin.command -a "echo test" 2>&1 | grep -q "test"; then
         echo -e "${GREEN}✓ REACHABLE${NC}"
         SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
     else
         echo -e "${RED}✗ UNREACHABLE${NC}"
+        log_info "    Try: ssh -i ${SSH_KEY} ${SSH_USER}@${MASTER_IP}"
         FAILED_COUNT=$((FAILED_COUNT + 1))
     fi
 
@@ -232,11 +244,12 @@ test_connectivity() {
     for i in $(seq 0 $((${#WORKER_LIST[@]} - 1))); do
         WORKER_IP="${WORKER_LIST[$i]}"
         echo -n "  Testing worker-node-${i} (${WORKER_IP})... "
-        if timeout 10 ansible "worker-node-${i}" -i "${INVENTORY_FILE}" -m ping &> /dev/null; then
+        if timeout ${ANSIBLE_TIMEOUT} ansible "worker-node-${i}" -i "${INVENTORY_FILE}" -m ansible.builtin.command -a "echo test" 2>&1 | grep -q "test"; then
             echo -e "${GREEN}✓ REACHABLE${NC}"
             SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
         else
             echo -e "${RED}✗ UNREACHABLE${NC}"
+            log_info "    Try: ssh -i ${SSH_KEY} ${SSH_USER}@${WORKER_IP}"
             FAILED_COUNT=$((FAILED_COUNT + 1))
         fi
     done
@@ -246,6 +259,17 @@ test_connectivity() {
     echo "  ✓ Reachable: ${SUCCESS_COUNT}"
     if [[ ${FAILED_COUNT} -gt 0 ]]; then
         echo "  ✗ Unreachable: ${FAILED_COUNT}"
+        echo ""
+        log_info "Troubleshooting tips:"
+        echo "  1. Verify VMs are running: yc compute instance list"
+        echo "  2. Check security groups allow SSH (port 22)"
+        echo "  3. Verify SSH key permissions: chmod 600 ${SSH_KEY}"
+        echo "  4. Test SSH manually:"
+        if [[ -n "${SSH_KEY}" ]]; then
+            echo "     ssh -i ${SSH_KEY} -v ${SSH_USER}@${MASTER_IP}"
+        else
+            echo "     ssh -v ${SSH_USER}@${MASTER_IP}"
+        fi
     else
         log_success "All nodes reachable!"
     fi

@@ -104,9 +104,13 @@
           kind: KubeletConfiguration
           apiVersion: kubelet.config.k8s.io/v1beta1
           cgroupDriver: systemd
-          readOnlyPort: 10250
           shutdownGracePeriod: 5m0s
           shutdownGracePeriodCriticalPods: 5m0s
+          authentication:
+            anonymous:
+              enabled: false
+          authorization:
+            mode: Webhook
           ---
         mode: '0644'
       when: not (kubelet_conf.stat.exists | default(false) | bool) and not (already_joined | default(false) | bool)
