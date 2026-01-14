@@ -306,8 +306,8 @@
   tasks:
     - name: Get dashboard token from master
       ansible.builtin.set_fact:
-        dashboard_token: "{{ hostvars[groups['k8s_masters'][0]]['dashboard_token']['stdout'] }}"
-      when: groups['k8s_masters'] | length > 0
+        dashboard_token: "{{ hostvars[groups['k8s_master'][0]]['dashboard_token']['stdout'] }}"
+      when: groups['k8s_master'] | length > 0
 
     - name: Create local token file
       ansible.builtin.copy:
