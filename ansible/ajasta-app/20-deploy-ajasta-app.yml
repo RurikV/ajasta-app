@@ -1,0 +1,58 @@
+---
+# Deploy Complete Ajasta Application Stack
+# NOTE: This playbook is a reference document. Use deploy-ajasta.sh instead.
+#
+# This playbook shows the deployment order and structure for the Ajasta application.
+# To deploy, use the deployment script which orchestrates all playbooks:
+#
+#   ./deploy-ajasta.sh
+#
+# Or deploy components individually:
+#   ansible-playbook -i ../k8s/inventory.ini 21-deploy-postgres-cluster.yml
+#   ansible-playbook -i ../k8s/inventory.ini 22-deploy-backend.yml
+#   ansible-playbook -i ../k8s/inventory.ini 23-deploy-frontend.yml
+#   ansible-playbook -i ../k8s/inventory.ini 24-deploy-ingress.yml
+#   ansible-playbook -i ../k8s/inventory.ini 25-verify-deployment.yml
+
+- name: Ajasta Application Deployment Reference
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "AJASTA APPLICATION DEPLOYMENT"
+          - "================================================================"
+          - ""
+          - "This playbook is a reference document showing the deployment structure."
+          - ""
+          - "DEPLOYMENT OPTIONS:"
+          - ""
+          - "Option 1: Deploy everything (Recommended)"
+          - "  ./deploy-ajasta.sh"
+          - ""
+          - "Option 2: Deploy components individually"
+          - "  1. ansible-playbook -i ../k8s/inventory.ini 21-deploy-postgres-cluster.yml"
+          - "  2. ansible-playbook -i ../k8s/inventory.ini 22-deploy-backend.yml"
+          - "  3. ansible-playbook -i ../k8s/inventory.ini 23-deploy-frontend.yml"
+          - "  4. ansible-playbook -i ../k8s/inventory.ini 24-deploy-ingress.yml"
+          - "  5. ansible-playbook -i ../k8s/inventory.ini 25-verify-deployment.yml"
+          - ""
+          - "DEPLOYMENT SCRIPT OPTIONS:"
+          - "  --skip-postgres     Skip PostgreSQL cluster deployment"
+          - "  --skip-backend      Skip backend deployment"
+          - "  --skip-frontend     Skip frontend deployment"
+          - "  --skip-ingress      Skip ingress configuration"
+          - "  --verify-only       Only run verification"
+          - "  -h, --help          Show help message"
+          - ""
+          - "EXAMPLES:"
+          - "  ./deploy-ajasta.sh                    # Deploy everything"
+          - "  ./deploy-ajasta.sh --verify-only      # Verify deployment only"
+          - "  ./deploy-ajasta.sh --skip-postgres    # Deploy without PostgreSQL"
+          - ""
+          - "For detailed documentation, see README.md"
+          - "For step-by-step deployment guide, see DEPLOYMENT_CHECKLIST.md"
+          - ""
+          - "================================================================"

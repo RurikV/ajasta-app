@@ -1,0 +1,429 @@
+---
+# Verify Ajasta Application Deployment
+# This playbook verifies that all components of the Ajasta application are running correctly
+# Usage:
+#   ansible-playbook -i ../k8s/inventory.ini 25-verify-deployment.yml
+
+- name: Verify Ajasta Application Deployment
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    pg_namespace: postgresql-cluster
+    pg_cluster_name: cluster-postgresql
+    ajasta_namespace: ajasta
+    ingress_host: ajasta.local
+
+  tasks:
+    - name: Display verification information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "VERIFYING AJASTA APPLICATION DEPLOYMENT"
+          - "================================================================"
+          - ""
+          - "This playbook will verify:"
+          - "  1. PostgreSQL cluster health"
+          - "  2. Backend API deployment"
+          - "  3. Frontend deployment"
+          - "  4. Service connectivity"
+          - "  5. Ingress configuration"
+          - ""
+          - "================================================================"
+
+    # ==============================================================
+    # PART 1: VERIFY POSTGRESQL CLUSTER
+    # ==============================================================
+
+    - name: Display PostgreSQL verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 1: VERIFYING POSTGRESQL CLUSTER"
+          - "================================================================"
+
+    - name: Get PostgreSQL cluster status
+      ansible.builtin.command:
+        cmd: kubectl get cluster -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_cluster
+      changed_when: false
+
+    - name: Display PostgreSQL cluster status
+      ansible.builtin.debug:
+        msg: "{{ pg_cluster.stdout_lines }}"
+
+    - name: Get PostgreSQL pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ pg_namespace }} -l cnpg.io/podRole=instance
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_pods
+      changed_when: false
+
+    - name: Display PostgreSQL pods
+      ansible.builtin.debug:
+        msg: "{{ pg_pods.stdout_lines }}"
+
+    - name: Check PostgreSQL pods are ready
+      ansible.builtin.shell:
+        cmd: kubectl get pods -n {{ pg_namespace }} -l cnpg.io/podRole=instance -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' | grep -q "True True" || echo "not_ready"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_ready
+      changed_when: false
+      failed_when: false
+
+    - name: Set PostgreSQL ready fact
+      ansible.builtin.set_fact:
+        postgresql_ready: "{{ pg_ready.stdout != 'not_ready' }}"
+
+    - name: Display PostgreSQL readiness
+      ansible.builtin.debug:
+        msg: "PostgreSQL Cluster: {{ '✓ READY' if postgresql_ready else '✗ NOT READY' }}"
+
+    - name: Get PostgreSQL services
+      ansible.builtin.command:
+        cmd: kubectl get svc -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_services
+      changed_when: false
+
+    - name: Display PostgreSQL services
+      ansible.builtin.debug:
+        msg: "{{ pg_services.stdout_lines }}"
+
+    # ==============================================================
+    # PART 2: VERIFY BACKEND API
+    # ==============================================================
+
+    - name: Display backend verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 2: VERIFYING BACKEND API"
+          - "================================================================"
+
+    - name: Get backend deployment
+      ansible.builtin.command:
+        cmd: kubectl get deployment -n {{ ajasta_namespace }} ajasta-backend
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: backend_deployment
+      changed_when: false
+
+    - name: Display backend deployment
+      ansible.builtin.debug:
+        msg: "{{ backend_deployment.stdout_lines }}"
+
+    - name: Get backend pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ ajasta_namespace }} -l component=backend
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: backend_pods
+      changed_when: false
+
+    - name: Display backend pods
+      ansible.builtin.debug:
+        msg: "{{ backend_pods.stdout_lines }}"
+
+    - name: Check backend pods are ready
+      ansible.builtin.shell:
+        cmd: kubectl get pods -n {{ ajasta_namespace }} -l component=backend -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' | grep -q "True" || echo "not_ready"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: backend_ready
+      changed_when: false
+      failed_when: false
+
+    - name: Set backend ready fact
+      ansible.builtin.set_fact:
+        backend_ready: "{{ backend_ready.stdout != 'not_ready' }}"
+
+    - name: Display backend readiness
+      ansible.builtin.debug:
+        msg: "Backend API: {{ '✓ READY' if backend_ready else '✗ NOT READY' }}"
+
+    - name: Get backend service
+      ansible.builtin.command:
+        cmd: kubectl get svc -n {{ ajasta_namespace }} ajasta-backend
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: backend_service
+      changed_when: false
+
+    - name: Display backend service
+      ansible.builtin.debug:
+        msg: "{{ backend_service.stdout_lines }}"
+
+    - name: Get backend logs (last 30 lines)
+      ansible.builtin.command:
+        cmd: kubectl logs -n {{ ajasta_namespace }} -l component=backend --tail=30
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: backend_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Display backend logs
+      ansible.builtin.debug:
+        msg: "{{ backend_logs.stdout_lines }}"
+
+    # ==============================================================
+    # PART 3: VERIFY FRONTEND
+    # ==============================================================
+
+    - name: Display frontend verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 3: VERIFYING FRONTEND"
+          - "================================================================"
+
+    - name: Get frontend deployment
+      ansible.builtin.command:
+        cmd: kubectl get deployment -n {{ ajasta_namespace }} ajasta-frontend
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: frontend_deployment
+      changed_when: false
+
+    - name: Display frontend deployment
+      ansible.builtin.debug:
+        msg: "{{ frontend_deployment.stdout_lines }}"
+
+    - name: Get frontend pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ ajasta_namespace }} -l component=frontend
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: frontend_pods
+      changed_when: false
+
+    - name: Display frontend pods
+      ansible.builtin.debug:
+        msg: "{{ frontend_pods.stdout_lines }}"
+
+    - name: Check frontend pods are ready
+      ansible.builtin.shell:
+        cmd: kubectl get pods -n {{ ajasta_namespace }} -l component=frontend -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' | grep -q "True" || echo "not_ready"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: frontend_ready
+      changed_when: false
+      failed_when: false
+
+    - name: Set frontend ready fact
+      ansible.builtin.set_fact:
+        frontend_ready: "{{ frontend_ready.stdout != 'not_ready' }}"
+
+    - name: Display frontend readiness
+      ansible.builtin.debug:
+        msg: "Frontend: {{ '✓ READY' if frontend_ready else '✗ NOT READY' }}"
+
+    - name: Get frontend service
+      ansible.builtin.command:
+        cmd: kubectl get svc -n {{ ajasta_namespace }} ajasta-frontend
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: frontend_service
+      changed_when: false
+
+    - name: Display frontend service
+      ansible.builtin.debug:
+        msg: "{{ frontend_service.stdout_lines }}"
+
+    # ==============================================================
+    # PART 4: VERIFY CONNECTIVITY
+    # ==============================================================
+
+    - name: Display connectivity verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 4: VERIFYING SERVICE CONNECTIVITY"
+          - "================================================================"
+
+    - name: Test backend to PostgreSQL connectivity
+      ansible.builtin.shell:
+        cmd: |
+          POD=$(kubectl get pod -n {{ ajasta_namespace }} -l component=backend -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n {{ ajasta_namespace }} ${POD} -- sh -c "nc -zv {{ pg_cluster_name }}-rw.{{ pg_namespace }}.svc 5432 -w 5" 2>&1 | grep -q "succeeded" && echo "connected" || echo "failed"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: backend_pg_connectivity
+      changed_when: false
+      failed_when: false
+
+    - name: Display backend to PostgreSQL connectivity
+      ansible.builtin.debug:
+        msg: "Backend → PostgreSQL: {{ '✓ CONNECTED' if backend_pg_connectivity.stdout == 'connected' else '✗ FAILED' }}"
+
+    - name: Test frontend health endpoint
+      ansible.builtin.shell:
+        cmd: |
+          POD=$(kubectl get pod -n {{ ajasta_namespace }} -l component=frontend -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n {{ ajasta_namespace }} ${POD} -- curl -s http://localhost/health || echo "failed"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: frontend_health
+      changed_when: false
+      failed_when: false
+
+    - name: Display frontend health
+      ansible.builtin.debug:
+        msg: "Frontend Health: {{ '✓ HEALTHY' if frontend_health.stdout == 'healthy' else '✗ UNHEALTHY' }}"
+
+    # ==============================================================
+    # PART 5: VERIFY INGRESS
+    # ==============================================================
+
+    - name: Display ingress verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 5: VERIFYING INGRESS CONFIGURATION"
+          - "================================================================"
+
+    - name: Get ingress resources
+      ansible.builtin.command:
+        cmd: kubectl get ingress -n {{ ajasta_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_resources
+      changed_when: false
+
+    - name: Display ingress resources
+      ansible.builtin.debug:
+        msg: "{{ ingress_resources.stdout_lines }}"
+
+    - name: Get ingress details
+      ansible.builtin.command:
+        cmd: kubectl describe ingress -n {{ ajasta_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_details
+      changed_when: false
+
+    - name: Display ingress details
+      ansible.builtin.debug:
+        msg: "{{ ingress_details.stdout_lines }}"
+
+    - name: Get ingress controller address
+      ansible.builtin.shell:
+        cmd: kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo "no_ip"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_address
+      changed_when: false
+
+    - name: Display ingress controller address
+      ansible.builtin.debug:
+        msg: "Ingress Controller Address: {{ ingress_address.stdout if ingress_address.stdout != 'no_ip' else 'Not assigned' }}"
+
+    # ==============================================================
+    # PART 6: VERIFY RESOURCES
+    # ==============================================================
+
+    - name: Display resource verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 6: VERIFYING RESOURCE USAGE"
+          - "================================================================"
+
+    - name: Get all pods resource usage
+      ansible.builtin.command:
+        cmd: kubectl top pods -n {{ ajasta_namespace }} || kubectl get pods -n {{ ajasta_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pod_resources
+      changed_when: false
+      failed_when: false
+
+    - name: Display pod resource usage
+      ansible.builtin.debug:
+        msg: "{{ pod_resources.stdout_lines }}"
+
+    - name: Get PVCs
+      ansible.builtin.command:
+        cmd: kubectl get pvc -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pvc_list
+      changed_when: false
+
+    - name: Display PVCs
+      ansible.builtin.debug:
+        msg: "{{ pvc_list.stdout_lines }}"
+
+    # ==============================================================
+    # PART 7: OVERALL STATUS
+    # ==============================================================
+
+    - name: Display overall status
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "OVERALL DEPLOYMENT STATUS"
+          - "================================================================"
+          - ""
+          - "PostgreSQL Cluster: {{ '✓ READY' if postgresql_ready else '✗ NOT READY' }}"
+          - "Backend API: {{ '✓ READY' if backend_ready else '✗ NOT READY' }}"
+          - "Frontend: {{ '✓ READY' if frontend_ready else '✗ NOT READY' }}"
+          - ""
+          - "Overall Status: {{ '✓ ALL SYSTEMS OPERATIONAL' if postgresql_ready and backend_ready and frontend_ready else '✗ SOME COMPONENTS NOT READY' }}"
+          - ""
+          - "================================================================"
+
+    - name: Display useful commands
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "USEFUL COMMANDS"
+          - "================================================================"
+          - ""
+          - "View logs:"
+          - "  kubectl logs -n {{ ajasta_namespace }} -l component=backend -f"
+          - "  kubectl logs -n {{ ajasta_namespace }} -l component=frontend -f"
+          - ""
+          - "Access services locally:"
+          - "  kubectl port-forward -n {{ ajasta_namespace }} svc/ajasta-backend 8090:8090"
+          - "  kubectl port-forward -n {{ ajasta_namespace }} svc/ajasta-frontend 3000:80"
+          - ""
+          - "Database access:"
+          - "  kubectl exec -it -n {{ pg_namespace }} {{ pg_cluster_name }}-1 -- psql -U app -d {{ pg_cluster_name }}"
+          - ""
+          - "Resource monitoring:"
+          - "  kubectl top pods -n {{ ajasta_namespace }}"
+          - "  kubectl top nodes"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "VERIFICATION COMPLETE"
+          - "================================================================"
+          - ""
+          - "Your Ajasta application deployment has been verified!"
+          - ""
+          - "Next Steps:"
+          - "  1. If all components are ready, test the application"
+          - "  2. Configure /etc/hosts for ingress access"
+          - "  3. Open http://{{ ingress_host }} in your browser"
+          - ""
+          - "For issues, check the logs:"
+          - "  kubectl logs -n {{ ajasta_namespace }} -l component=backend --tail=50"
+          - "  kubectl logs -n {{ ajasta_namespace }} -l component=frontend --tail=50"
+          - ""
+          - "================================================================"

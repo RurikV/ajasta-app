@@ -1,0 +1,386 @@
+---
+# Deploy Ingress for Ajasta Application
+# This playbook configures NGINX Ingress for the Ajasta application
+# Usage:
+#   ansible-playbook -i ../k8s/inventory.ini 24-deploy-ingress.yml
+
+- name: Deploy Ajasta Ingress Configuration
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # Namespace
+    namespace: ajasta
+
+    # Ingress configuration
+    ingress_enabled: true
+    ingress_class: nginx
+    ingress_name: ajasta-ingress
+
+    # Host configuration
+    ingress_host: ajasta.local
+    tls_enabled: false
+
+    # Service configuration
+    backend_service: ajasta-backend
+    backend_port: 8090
+    frontend_service: ajasta-frontend
+    frontend_port: 80
+
+    # Ingress annotations
+    ingress_annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "false"
+      nginx.ingress.kubernetes.io/rewrite-target: /
+      nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "75"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+
+  tasks:
+    - name: Display ingress deployment information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CONFIGURING AJASTA INGRESS"
+          - "================================================================"
+          - ""
+          - "Ingress Configuration:"
+          - "  - Name: {{ ingress_name }}"
+          - "  - Class: {{ ingress_class }}"
+          - "  - Namespace: {{ namespace }}"
+          - ""
+          - "Routing:"
+          - "  - Host: {{ ingress_host }}"
+          - "  - Frontend: / ({{ frontend_service }}:{{ frontend_port }})"
+          - "  - Backend API: /api ({{ backend_service }}:{{ backend_port }})"
+          - ""
+          - "TLS:"
+          - "  - Enabled: {{ tls_enabled }}"
+          - ""
+          - "================================================================"
+
+    # ==============================================================
+    # PART 1: CHECK INGRESS CONTROLLER
+    # ==============================================================
+
+    - name: Display ingress controller check message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 1: CHECKING INGRESS CONTROLLER"
+          - "================================================================"
+
+    - name: Check if NGINX Ingress Controller is installed
+      ansible.builtin.command:
+        cmd: kubectl get namespace ingress-nginx
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set ingress controller fact
+      ansible.builtin.set_fact:
+        ingress_controller_installed: "{{ ingress_check.rc == 0 }}"
+
+    - name: Display ingress controller status
+      ansible.builtin.debug:
+        msg: "Ingress controller {{ 'installed' if ingress_controller_installed else 'NOT installed' }}"
+
+    - name: Fail if ingress controller is not installed
+      ansible.builtin.fail:
+        msg: "NGINX Ingress Controller is not installed. Please run '13-deploy-ingress-nginx-controller.yml' first."
+      when: not ingress_controller_installed
+
+    - name: Get ingress controller service
+      ansible.builtin.command:
+        cmd: kubectl get svc -n ingress-nginx ingress-nginx-controller
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_controller
+      changed_when: false
+
+    - name: Display ingress controller service
+      ansible.builtin.debug:
+        msg: "{{ ingress_controller.stdout_lines }}"
+
+    # ==============================================================
+    # PART 2: CREATE INGRESS RESOURCE
+    # ==============================================================
+
+    - name: Display ingress creation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 2: CREATING INGRESS RESOURCE"
+          - "================================================================"
+
+    - name: Create Ajasta ingress resource
+      ansible.builtin.copy:
+        dest: /tmp/ajasta-ingress.yaml
+        content: |
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: {{ ingress_name }}
+            namespace: {{ namespace }}
+            labels:
+              app: ajasta
+            annotations:
+          {% for key, value in ingress_annotations.items() %}
+              {{ key }}: "{{ value }}"
+          {% endfor %}
+          spec:
+            ingressClassName: {{ ingress_class }}
+            rules:
+            - host: {{ ingress_host }}
+              http:
+                paths:
+                # Frontend - catch-all for React app
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: {{ frontend_service }}
+                      port:
+                        number: {{ frontend_port }}
+
+                # Backend API
+                - path: /api
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: {{ backend_service }}
+                      port:
+                        number: {{ backend_port }}
+          {% if tls_enabled %}
+            tls:
+            - hosts:
+              - {{ ingress_host }}
+              secretName: ajasta-tls
+          {% endif %}
+        mode: '0644'
+
+    - name: Display ingress manifest created
+      ansible.builtin.debug:
+        msg: "Ingress manifest created at /tmp/ajasta-ingress.yaml"
+
+    - name: Apply ingress resource
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/ajasta-ingress.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_apply
+
+    - name: Display ingress application
+      ansible.builtin.debug:
+        msg: "{{ ingress_apply.stdout_lines }}"
+
+    # ==============================================================
+    # PART 3: VERIFY INGRESS
+    # ==============================================================
+
+    - name: Display verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 3: VERIFYING INGRESS CONFIGURATION"
+          - "================================================================"
+
+    - name: Pause for ingress to initialize
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Get ingress resources
+      ansible.builtin.command:
+        cmd: kubectl get ingress -n {{ namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_resources
+      changed_when: false
+
+    - name: Display ingress resources
+      ansible.builtin.debug:
+        msg: "{{ ingress_resources.stdout_lines }}"
+
+    - name: Get detailed ingress information
+      ansible.builtin.command:
+        cmd: kubectl describe ingress {{ ingress_name }} -n {{ namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_details
+      changed_when: false
+
+    - name: Display ingress details
+      ansible.builtin.debug:
+        msg: "{{ ingress_details.stdout_lines }}"
+
+    - name: Get ingress controller external IP
+      ansible.builtin.shell:
+        cmd: kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo "No external IP assigned"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_ip
+      changed_when: false
+
+    - name: Get ingress controller external hostname (if any)
+      ansible.builtin.shell:
+        cmd: kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || echo ""
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_hostname
+      changed_when: false
+
+    - name: Set external address fact
+      ansible.builtin.set_fact:
+        external_address: "{{ ingress_ip.stdout if ingress_ip.stdout != 'No external IP assigned' else ingress_hostname.stdout }}"
+
+    - name: Display external access information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "EXTERNAL ACCESS CONFIGURATION"
+          - "================================================================"
+          - ""
+          - "Ingress Controller Address:"
+          - "  {{ external_address if external_address else 'Not assigned yet (check LoadBalancer status)' }}"
+          - ""
+          - "Configure your local /etc/hosts file:"
+          - "  {{ external_address }} {{ ingress_host }}"
+          - ""
+          - "Or configure DNS:"
+          - "  {{ ingress_host }}  A  {{ external_address }}"
+          - ""
+          - "Then access the application at:"
+          - "  - Frontend: http://{{ ingress_host }}/"
+          - "  - Backend API: http://{{ ingress_host }}/api"
+          - ""
+          - "================================================================"
+
+    # ==============================================================
+    # PART 4: CREATE INGRESS TEST PLAYBOOK
+    # ==============================================================
+
+    - name: Create local test playbook
+      ansible.builtin.copy:
+        dest: /tmp/ingress-test.sh
+        content: |
+          #!/bin/bash
+          # Test Ajasta Ingress Configuration
+          # This script tests the ingress routes
+
+          set -e
+
+          HOST="{{ ingress_host }}"
+          GREEN='\033[0;32m'
+          RED='\033[0;31m'
+          NC='\033[0m' # No Color
+
+          echo "================================================================"
+          echo "TESTING AJASTA INGRESS"
+          echo "================================================================"
+          echo ""
+
+          # Test 1: Frontend
+          echo -n "Testing Frontend route (/) ... "
+          if curl -s -o /dev/null -w "%{http_code}" http://${HOST}/ | grep -q "200"; then
+              echo -e "${GREEN}PASS${NC}"
+          else
+              echo -e "${RED}FAIL${NC}"
+          fi
+
+          # Test 2: Backend API Health
+          echo -n "Testing Backend API route (/api) ... "
+          if curl -s -o /dev/null -w "%{http_code}" http://${HOST}/api | grep -q "200\|404\|401"; then
+              echo -e "${GREEN}PASS${NC}"
+          else
+              echo -e "${RED}FAIL${NC}"
+          fi
+
+          echo ""
+          echo "================================================================"
+          echo "INGRESS TEST COMPLETE"
+          echo "================================================================"
+        mode: '0755'
+
+    - name: Display test script information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "INGRESS TEST SCRIPT CREATED"
+          - "================================================================"
+          - ""
+          - "Test script created at: /tmp/ingress-test.sh"
+          - ""
+          - "To test ingress from your local machine:"
+          - "  1. Update /etc/hosts: {{ external_address }} {{ ingress_host }}"
+          - "  2. Run: bash /tmp/ingress-test.sh"
+          - ""
+          - "Or manually test:"
+          - "  curl http://{{ ingress_host }}/"
+          - "  curl http://{{ ingress_host }}/api"
+          - ""
+          - "================================================================"
+
+    # ==============================================================
+    # PART 5: SUMMARY
+    # ==============================================================
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "INGRESS CONFIGURATION COMPLETE"
+          - "================================================================"
+          - ""
+          - "Configuration:"
+          - "  - Ingress Name: {{ ingress_name }}"
+          - "  - Ingress Class: {{ ingress_class }}"
+          - "  - Namespace: {{ namespace }}"
+          - ""
+          - "Routes:"
+          - "  - Host: {{ ingress_host }}"
+          - "  - Frontend: / → {{ frontend_service }}:{{ frontend_port }}"
+          - "  - Backend: /api → {{ backend_service }}:{{ backend_port }}"
+          - ""
+          - "Ingress Controller:"
+          - "  - Namespace: ingress-nginx"
+          - "  - Service: ingress-nginx-controller"
+          - "  - External Address: {{ external_address if external_address else 'Pending' }}"
+          - ""
+          - "Useful Commands:"
+          - "  kubectl get ingress -n {{ namespace }}"
+          - "  kubectl describe ingress {{ ingress_name }} -n {{ namespace }}"
+          - "  kubectl get svc -n ingress-nginx"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "INGRESS CONFIGURATION COMPLETE"
+          - "================================================================"
+          - ""
+          - "Your Ajasta application is now accessible via Ingress!"
+          - ""
+          - "To access the application:"
+          - "  1. Get the Ingress controller external IP or NodePort"
+          - "  2. Add ajasta.local to your /etc/hosts file"
+          - "  3. Open http://ajasta.local in your browser"
+          - ""
+          - "Get Ingress IP/Port:"
+          - "  kubectl get svc -n ingress-nginx ingress-nginx-controller"
+          - ""
+          - "Example /etc/hosts entry:"
+          - "  <EXTERNAL_IP> ajasta.local"
+          - ""
+          - "Or use NodePort:"
+          - "  http://<NODE_IP>:32402"
+          - ""
+          - "================================================================"

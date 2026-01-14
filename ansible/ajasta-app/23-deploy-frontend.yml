@@ -1,0 +1,488 @@
+---
+# Deploy Ajasta Frontend
+# This playbook deploys the React frontend (Nginx) for Ajasta application
+# Usage:
+#   ansible-playbook -i ../k8s/inventory.ini 23-deploy-frontend.yml
+
+- name: Deploy Ajasta Frontend
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # Namespace
+    namespace: ajasta
+
+    # Frontend configuration
+    frontend_enabled: true
+    frontend_image: vladimirryrik/ajasta-frontend
+    frontend_tag: alpine
+    frontend_replicas: 1
+    frontend_port: 80
+
+    # Backend configuration (for API proxy)
+    backend_service: ajasta-backend
+    backend_port: 8090
+
+    # Resource configuration
+    cpu_request: 100m
+    cpu_limit: 200m
+    memory_request: 64Mi
+    memory_limit: 128Mi
+
+  tasks:
+    - name: Display frontend deployment information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYING AJASTA FRONTEND"
+          - "================================================================"
+          - ""
+          - "Frontend Configuration:"
+          - "  - Image: {{ frontend_image }}:{{ frontend_tag }}"
+          - "  - Replicas: {{ frontend_replicas }}"
+          - "  - Port: {{ frontend_port }}"
+          - "  - Namespace: {{ namespace }}"
+          - ""
+          - "API Configuration:"
+          - "  - Backend Service: {{ backend_service }}"
+          - "  - Backend Port: {{ backend_port }}"
+          - ""
+          - "Resources:"
+          - "  - CPU: {{ cpu_request }} / {{ cpu_limit }}"
+          - "  - Memory: {{ memory_request }} / {{ memory_limit }}"
+          - ""
+          - "================================================================"
+
+    # ==============================================================
+    # PART 1: CREATE NAMESPACE
+    # ==============================================================
+
+    - name: Display namespace creation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 1: CREATING NAMESPACE"
+          - "================================================================"
+
+    - name: Create ajasta namespace
+      ansible.builtin.shell:
+        cmd: kubectl create namespace {{ namespace }} --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: namespace_create
+
+    - name: Display namespace creation result
+      ansible.builtin.debug:
+        msg: "{{ namespace_create.stdout_lines }}"
+
+    # ==============================================================
+    # PART 2: CREATE CONFIGMAP (nginx config)
+    # ==============================================================
+
+    - name: Display configmap creation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 2: CREATING NGINX CONFIGMAP"
+          - "================================================================"
+
+    - name: Create nginx configmap
+      ansible.builtin.copy:
+        dest: /tmp/frontend-configmap.yaml
+        content: |
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: frontend-config
+            namespace: {{ namespace }}
+            labels:
+              app: ajasta
+              component: frontend
+          data:
+            nginx.conf: |
+              user nginx;
+              worker_processes auto;
+              error_log /var/log/nginx/error.log warn;
+              pid /var/run/nginx.pid;
+
+              events {
+                  worker_connections 1024;
+              }
+
+              http {
+                  include /etc/nginx/mime.types;
+                  default_type application/octet-stream;
+
+                  log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                                  '$status $body_bytes_sent "$http_referer" '
+                                  '"$http_user_agent" "$http_x_forwarded_for"';
+
+                  access_log /var/log/nginx/access.log main;
+
+                  sendfile on;
+                  tcp_nopush on;
+                  tcp_nodelay on;
+                  keepalive_timeout 65;
+                  types_hash_max_size 2048;
+                  client_max_body_size 20M;
+
+                  # Gzip compression
+                  gzip on;
+                  gzip_vary on;
+                  gzip_proxied any;
+                  gzip_comp_level 6;
+                  gzip_types text/plain text/css text/xml text/javascript
+                             application/json application/javascript application/xml+rss
+                             application/rss+xml font/truetype font/opentype
+                             application/vnd.ms-fontobject image/svg+xml;
+
+                  # Upstream backend API
+                  upstream backend {
+                      server {{ backend_service }}.{{ namespace }}.svc:{{ backend_port }};
+                  }
+
+                  server {
+                      listen {{ frontend_port }};
+                      server_name _;
+
+                      root /usr/share/nginx/html;
+                      index index.html index.htm;
+
+                      # Frontend static files
+                      location / {
+                          try_files $uri $uri/ /index.html;
+                          add_header Cache-Control "public, max-age=3600";
+                      }
+
+                      # API proxy to backend
+                      location /api/ {
+                          proxy_pass http://backend;
+                          proxy_http_version 1.1;
+                          proxy_set_header Upgrade $http_upgrade;
+                          proxy_set_header Connection 'upgrade';
+                          proxy_set_header Host $host;
+                          proxy_set_header X-Real-IP $remote_addr;
+                          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                          proxy_set_header X-Forwarded-Proto $scheme;
+                          proxy_cache_bypass $http_upgrade;
+                          proxy_read_timeout 300s;
+                          proxy_connect_timeout 75s;
+
+                          # Disable buffering for large uploads
+                          proxy_buffering off;
+                      }
+
+                      # Health check endpoint
+                      location /health {
+                          access_log off;
+                          return 200 "healthy\n";
+                          add_header Content-Type text/plain;
+                      }
+
+                      # Error pages
+                      error_page 500 502 503 504 /50x.html;
+                      location = /50x.html {
+                          root /usr/share/nginx/html;
+                      }
+                  }
+              }
+        mode: '0644'
+
+    - name: Apply nginx configmap
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/frontend-configmap.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: configmap_apply
+
+    - name: Display configmap creation
+      ansible.builtin.debug:
+        msg: "{{ configmap_apply.stdout_lines }}"
+
+    # ==============================================================
+    # PART 3: CREATE DEPLOYMENT
+    # ==============================================================
+
+    - name: Display deployment creation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 3: CREATING FRONTEND DEPLOYMENT"
+          - "================================================================"
+
+    - name: Create frontend deployment
+      ansible.builtin.copy:
+        dest: /tmp/frontend-deployment.yaml
+        content: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: ajasta-frontend
+            namespace: {{ namespace }}
+            labels:
+              app: ajasta
+              component: frontend
+          spec:
+            replicas: {{ frontend_replicas }}
+            selector:
+              matchLabels:
+                app: ajasta
+                component: frontend
+            template:
+              metadata:
+                labels:
+                  app: ajasta
+                  component: frontend
+              spec:
+                # Node affinity to avoid control-plane nodes
+                affinity:
+                  nodeAffinity:
+                    requiredDuringSchedulingIgnoredDuringExecution:
+                      nodeSelectorTerms:
+                      - matchExpressions:
+                        - key: node-role.kubernetes.io/control-plane
+                          operator: DoesNotExist
+
+                containers:
+                - name: frontend
+                  image: {{ frontend_image }}:{{ frontend_tag }}
+                  imagePullPolicy: IfNotPresent
+                  ports:
+                  - name: http
+                    containerPort: {{ frontend_port }}
+                    protocol: TCP
+
+                  # Volume mount for nginx config
+                  volumeMounts:
+                  - name: nginx-config
+                    mountPath: /etc/nginx/nginx.conf
+                    subPath: nginx.conf
+                    readOnly: true
+
+                  # Liveness probe
+                  livenessProbe:
+                    httpGet:
+                      path: /health
+                      port: {{ frontend_port }}
+                    initialDelaySeconds: 30
+                    periodSeconds: 30
+                    timeoutSeconds: 5
+                    failureThreshold: 3
+
+                  # Readiness probe
+                  readinessProbe:
+                    httpGet:
+                      path: /
+                      port: {{ frontend_port }}
+                    initialDelaySeconds: 10
+                    periodSeconds: 10
+                    timeoutSeconds: 5
+                    failureThreshold: 3
+
+                  # Resource limits
+                  resources:
+                    requests:
+                      cpu: {{ cpu_request }}
+                      memory: {{ memory_request }}
+                      ephemeral-storage: "500Mi"
+                    limits:
+                      cpu: {{ cpu_limit }}
+                      memory: {{ memory_limit }}
+                      ephemeral-storage: "1Gi"
+
+                volumes:
+                - name: nginx-config
+                  configMap:
+                    name: frontend-config
+        mode: '0644'
+
+    - name: Apply frontend deployment
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/frontend-deployment.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: deployment_apply
+
+    - name: Display frontend deployment
+      ansible.builtin.debug:
+        msg: "{{ deployment_apply.stdout_lines }}"
+
+    # ==============================================================
+    # PART 4: CREATE SERVICE
+    # ==============================================================
+
+    - name: Display service creation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 4: CREATING FRONTEND SERVICE"
+          - "================================================================"
+
+    - name: Create frontend service
+      ansible.builtin.copy:
+        dest: /tmp/frontend-service.yaml
+        content: |
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: ajasta-frontend
+            namespace: {{ namespace }}
+            labels:
+              app: ajasta
+              component: frontend
+          spec:
+            type: ClusterIP
+            selector:
+              app: ajasta
+              component: frontend
+            ports:
+            - name: http
+              protocol: TCP
+              port: {{ frontend_port }}
+              targetPort: {{ frontend_port }}
+        mode: '0644'
+
+    - name: Apply frontend service
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/frontend-service.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: service_apply
+
+    - name: Display frontend service creation
+      ansible.builtin.debug:
+        msg: "{{ service_apply.stdout_lines }}"
+
+    # ==============================================================
+    # PART 5: VERIFICATION
+    # ==============================================================
+
+    - name: Display verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 5: VERIFYING FRONTEND DEPLOYMENT"
+          - "================================================================"
+
+    - name: Pause for deployment to rollout
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Wait for frontend deployment to be ready
+      ansible.builtin.command:
+        cmd: kubectl rollout status deployment/ajasta-frontend -n {{ namespace }} --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: rollout_wait
+      until: rollout_wait.rc == 0
+      retries: 30
+      delay: 5
+
+    - name: Get frontend pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ namespace }} -l component=frontend
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: frontend_pods
+      changed_when: false
+
+    - name: Display frontend pods
+      ansible.builtin.debug:
+        msg: "{{ frontend_pods.stdout_lines }}"
+
+    - name: Get frontend service
+      ansible.builtin.command:
+        cmd: kubectl get svc -n {{ namespace }} ajasta-frontend
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: frontend_service
+      changed_when: false
+
+    - name: Display frontend service
+      ansible.builtin.debug:
+        msg: "{{ frontend_service.stdout_lines }}"
+
+    - name: Check frontend logs
+      ansible.builtin.command:
+        cmd: kubectl logs -n {{ namespace }} -l component=frontend --tail=20
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: frontend_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Display frontend logs
+      ansible.builtin.debug:
+        msg: "{{ frontend_logs.stdout_lines }}"
+
+    - name: Test frontend health endpoint
+      ansible.builtin.command:
+        cmd: kubectl exec -n {{ namespace }} $(kubectl get pod -n {{ namespace }} -l component=frontend -o jsonpath='{.items[0].metadata.name}') -- curl -s http://localhost/health || echo "Health check failed"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: health_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display frontend health check
+      ansible.builtin.debug:
+        msg: "Frontend health: {{ health_check.stdout }}"
+
+    # ==============================================================
+    # PART 6: SUMMARY
+    # ==============================================================
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "FRONTEND DEPLOYMENT COMPLETE"
+          - "================================================================"
+          - ""
+          - "Configuration:"
+          - "  - Image: {{ frontend_image }}:{{ frontend_tag }}"
+          - "  - Replicas: {{ frontend_replicas }}"
+          - "  - Namespace: {{ namespace }}"
+          - ""
+          - "Service:"
+          - "  - Name: ajasta-frontend"
+          - "  - Type: ClusterIP"
+          - "  - Port: {{ frontend_port }}"
+          - "  - Internal URL: ajasta-frontend.{{ namespace }}.svc:{{ frontend_port }}"
+          - ""
+          - "API Proxy:"
+          - "  - Backend: {{ backend_service }}.{{ namespace }}.svc:{{ backend_port }}"
+          - "  - API Path: /api/*"
+          - ""
+          - "Useful Commands:"
+          - "  kubectl get pods -n {{ namespace }} -l component=frontend"
+          - "  kubectl get svc -n {{ namespace }} ajasta-frontend"
+          - "  kubectl logs -n {{ namespace }} -l component=frontend --tail=50 -f"
+          - "  kubectl exec -it -n {{ namespace }} <pod> -- sh"
+          - ""
+          - "Test Frontend Locally:"
+          - "  kubectl port-forward -n {{ namespace }} svc/ajasta-frontend 3000:{{ frontend_port }}"
+          - "  Open http://localhost:3000 in browser"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "FRONTEND READY"
+          - "================================================================"
+          - ""
+          - "Your Ajasta Frontend is now running!"
+          - ""
+          - "Next Steps:"
+          - "  1. Configure Ingress to expose the application"
+          - "  2. Test the complete application stack"
+          - "  3. Configure DNS/hosts for external access"
+          - ""
+          - "================================================================"

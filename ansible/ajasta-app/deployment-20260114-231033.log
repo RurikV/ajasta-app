@@ -1,0 +1,1921 @@
+
+[0;34m================================================================================================[0m
+[0;34mAJASTA APPLICATION DEPLOYMENT[0m
+[0;34m================================================================================================[0m
+
+Deployment started at: Wed Jan 14 23:10:33 EET 2026
+Log file: deployment-20260114-231033.log
+Starting from step: 1
+Verbosity level: -vv
+
+[0;34m================================================================[0m
+[0;32mSTEP 1: Deploy PostgreSQL HA Cluster[0m
+[0;34m================================================================[0m
+Deploying PostgreSQL cluster with CloudNativePG operator...
+  - Instances: 2 (1 primary, 1 replica)
+  - Storage: Longhorn 5Gi
+  - Namespace: postgresql-cluster
+
+ansible-playbook [core 2.19.2]
+  config file = None
+  configured module search path = ['/Users/rurik/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']
+  ansible python module location = /opt/homebrew/Cellar/ansible/12.0.0/libexec/lib/python3.13/site-packages/ansible
+  ansible collection location = /Users/rurik/.ansible/collections:/usr/share/ansible/collections
+  executable location = /opt/homebrew/bin/ansible-playbook
+  python version = 3.13.7 (main, Aug 14 2025, 11:12:11) [Clang 17.0.0 (clang-1700.0.13.3)] (/opt/homebrew/Cellar/ansible/12.0.0/libexec/bin/python)
+  jinja version = 3.1.6
+  pyyaml version = 6.0.2 (with libyaml v0.2.5)
+No config file found; using defaults
+Skipping callback 'minimal', as we already have a stdout callback.
+Skipping callback 'oneline', as we already have a stdout callback.
+
+PLAYBOOK: 21-deploy-postgres-cluster.yml ***************************************
+2 plays in 21-deploy-postgres-cluster.yml
+
+PLAY [Deploy PostgreSQL Cluster for Ajasta] ************************************
+
+TASK [Gathering Facts] *********************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:8
+[WARNING]: Host 'master-node' is using the discovered Python interpreter at '/usr/bin/python3.9', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [master-node]
+
+TASK [Display PostgreSQL deployment information] *******************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:39
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "DEPLOYING POSTGRESQL CLUSTER FOR AJASTA",
+        "================================================================",
+        "",
+        "Cluster Configuration:",
+        "  - Name: cluster-postgresql",
+        "  - Namespace: postgresql-cluster",
+        "  - Instances: 2 (1 primary, 1 replica)",
+        "  - Image: ghcr.io/cloudnative-pg/postgresql:15.4",
+        "",
+        "Storage:",
+        "  - Class: longhorn",
+        "  - Size: 5Gi",
+        "  - Type: Persistent Volume Claim",
+        "",
+        "Resources:",
+        "  - CPU: 200m / 500m",
+        "  - Memory: 256Mi / 512Mi",
+        "",
+        "PostgreSQL Parameters:",
+        "  - Max Connections: 100",
+        "  - Shared Buffers: 128MB",
+        "  - Effective Cache: 4000MB",
+        "================================================================"
+    ]
+}
+
+TASK [Display namespace creation message] **************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:71
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 1: CREATING NAMESPACE",
+        "================================================================"
+    ]
+}
+
+TASK [Create postgresql-cluster namespace] *************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:78
+changed: [master-node] => {"changed": true, "cmd": "kubectl create namespace postgresql-cluster --dry-run=client -o yaml | kubectl apply -f -", "delta": "0:00:00.194125", "end": "2026-01-14 21:10:38.772873", "msg": "", "rc": 0, "start": "2026-01-14 21:10:38.578748", "stderr": "", "stderr_lines": [], "stdout": "namespace/postgresql-cluster configured", "stdout_lines": ["namespace/postgresql-cluster configured"]}
+
+TASK [Display namespace creation result] ***************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:85
+ok: [master-node] => {
+    "msg": [
+        "namespace/postgresql-cluster configured"
+    ]
+}
+
+TASK [Display CloudNativePG deployment message] ********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:93
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 2: DEPLOYING CLOUDNATIVEPG OPERATOR",
+        "================================================================"
+    ]
+}
+
+TASK [Check if CloudNativePG operator is already installed] ********************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:100
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "deployment", "-n", "cnpg-system", "cnpg-controller-manager"], "delta": "0:00:00.062000", "end": "2026-01-14 21:10:40.049891", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:10:39.987891", "stderr": "", "stderr_lines": [], "stdout": "NAME                      READY   UP-TO-DATE   AVAILABLE   AGE\ncnpg-controller-manager   1/1     1            1           140m", "stdout_lines": ["NAME                      READY   UP-TO-DATE   AVAILABLE   AGE", "cnpg-controller-manager   1/1     1            1           140m"]}
+
+TASK [Set CNPG installed fact] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:109
+ok: [master-node] => {"ansible_facts": {"cnpg_installed": true}, "changed": false}
+
+TASK [Display CloudNativePG status] ********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:113
+ok: [master-node] => {
+    "msg": "CloudNativePG operator already installed"
+}
+
+TASK [Download CloudNativePG operator manifest] ********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:117
+skipping: [master-node] => {"changed": false, "false_condition": "not cnpg_installed", "skip_reason": "Conditional result was False"}
+
+TASK [Display CloudNativePG download] ******************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:125
+skipping: [master-node] => {"false_condition": "not cnpg_installed"}
+
+TASK [Apply CloudNativePG operator manifest] ***********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:130
+skipping: [master-node] => {"changed": false, "false_condition": "not cnpg_installed", "skip_reason": "Conditional result was False"}
+
+TASK [Display CloudNativePG operator deployment] *******************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:138
+skipping: [master-node] => {"false_condition": "not cnpg_installed"}
+
+TASK [Pause for operator to initialize] ****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:143
+skipping: [master-node] => {"changed": false, "false_condition": "not cnpg_installed", "skip_reason": "Conditional result was False"}
+
+TASK [Wait for CloudNativePG controller to be ready] ***************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:148
+skipping: [master-node] => {"changed": false, "false_condition": "not cnpg_installed", "skip_reason": "Conditional result was False"}
+
+TASK [Get CloudNativePG controller status] *************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:159
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "deployment", "-n", "cnpg-system", "cnpg-controller-manager"], "delta": "0:00:00.068889", "end": "2026-01-14 21:10:41.364471", "msg": "", "rc": 0, "start": "2026-01-14 21:10:41.295582", "stderr": "", "stderr_lines": [], "stdout": "NAME                      READY   UP-TO-DATE   AVAILABLE   AGE\ncnpg-controller-manager   1/1     1            1           140m", "stdout_lines": ["NAME                      READY   UP-TO-DATE   AVAILABLE   AGE", "cnpg-controller-manager   1/1     1            1           140m"]}
+
+TASK [Display CloudNativePG controller status] *********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:167
+ok: [master-node] => {
+    "msg": [
+        "NAME                      READY   UP-TO-DATE   AVAILABLE   AGE",
+        "cnpg-controller-manager   1/1     1            1           140m"
+    ]
+}
+
+TASK [Display PostgreSQL cluster creation message] *****************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:175
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 3: CREATING POSTGRESQL CLUSTER",
+        "================================================================"
+    ]
+}
+
+TASK [Check if app secret already exists] **************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:182
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "secret", "-n", "postgresql-cluster", "cluster-postgresql-app"], "delta": "0:00:00.059657", "end": "2026-01-14 21:10:42.626521", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:10:42.566864", "stderr": "", "stderr_lines": [], "stdout": "NAME                     TYPE     DATA   AGE\ncluster-postgresql-app   Opaque   2      59m", "stdout_lines": ["NAME                     TYPE     DATA   AGE", "cluster-postgresql-app   Opaque   2      59m"]}
+
+TASK [Generate app password] ***************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:191
+skipping: [master-node] => {"changed": false, "false_condition": "app_secret_check.rc != 0", "skip_reason": "Conditional result was False"}
+
+TASK [Create app secret] *******************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:198
+skipping: [master-node] => {"changed": false, "false_condition": "app_secret_check.rc != 0", "skip_reason": "Conditional result was False"}
+
+TASK [Display app secret creation] *********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:210
+ok: [master-node] => {
+    "msg": "App secret already exists"
+}
+
+TASK [Check if PostgreSQL cluster already exists] ******************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:214
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "cluster", "-n", "postgresql-cluster", "cluster-postgresql"], "delta": "0:00:00.059261", "end": "2026-01-14 21:10:43.905174", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:10:43.845913", "stderr": "", "stderr_lines": [], "stdout": "NAME                 AGE   INSTANCES   READY   STATUS                     PRIMARY\ncluster-postgresql   57m   2           2       Cluster in healthy state   cluster-postgresql-1", "stdout_lines": ["NAME                 AGE   INSTANCES   READY   STATUS                     PRIMARY", "cluster-postgresql   57m   2           2       Cluster in healthy state   cluster-postgresql-1"]}
+
+TASK [Delete existing PostgreSQL cluster if found] *****************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:223
+changed: [master-node] => {"changed": true, "cmd": ["kubectl", "delete", "cluster", "-n", "postgresql-cluster", "cluster-postgresql"], "delta": "0:00:00.083285", "end": "2026-01-14 21:10:45.141809", "msg": "", "rc": 0, "start": "2026-01-14 21:10:45.058524", "stderr": "", "stderr_lines": [], "stdout": "cluster.postgresql.cnpg.io \"cluster-postgresql\" deleted", "stdout_lines": ["cluster.postgresql.cnpg.io \"cluster-postgresql\" deleted"]}
+
+TASK [Display cluster deletion status] *****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:232
+ok: [master-node] => {
+    "msg": "Existing cluster deleted"
+}
+
+TASK [Pause for cluster deletion to complete] **********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:236
+Pausing for 10 seconds
+(ctrl+C then 'C' = continue early, ctrl+C then 'A' = abort)
+ok: [master-node] => {"changed": false, "delta": 10, "echo": true, "rc": 0, "start": "2026-01-14 23:10:45.335299", "stderr": "", "stdout": "Paused for 10.0 seconds", "stop": "2026-01-14 23:10:55.337819", "user_input": ""}
+
+TASK [Create PostgreSQL Cluster manifest] **************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:241
+ok: [master-node] => {"changed": false, "checksum": "9b11af3f2eb05dc9b5268d52d1fb74bb33690611", "dest": "/tmp/ajasta-postgres-cluster.yaml", "gid": 0, "group": "root", "mode": "0644", "owner": "root", "path": "/tmp/ajasta-postgres-cluster.yaml", "secontext": "unconfined_u:object_r:user_home_t:s0", "size": 1137, "state": "file", "uid": 0}
+
+TASK [Display PostgreSQL cluster manifest created] *****************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:300
+ok: [master-node] => {
+    "msg": "PostgreSQL cluster manifest created at /tmp/ajasta-postgres-cluster.yaml"
+}
+
+TASK [Apply PostgreSQL cluster manifest] ***************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:304
+changed: [master-node] => {"changed": true, "cmd": ["kubectl", "apply", "-f", "/tmp/ajasta-postgres-cluster.yaml"], "delta": "0:00:00.136141", "end": "2026-01-14 21:10:58.641608", "msg": "", "rc": 0, "start": "2026-01-14 21:10:58.505467", "stderr": "", "stderr_lines": [], "stdout": "cluster.postgresql.cnpg.io/cluster-postgresql created", "stdout_lines": ["cluster.postgresql.cnpg.io/cluster-postgresql created"]}
+
+TASK [Display PostgreSQL cluster deployment] ***********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:311
+ok: [master-node] => {
+    "msg": [
+        "cluster.postgresql.cnpg.io/cluster-postgresql created"
+    ]
+}
+
+TASK [Pause for PostgreSQL cluster to initialize] ******************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:315
+Pausing for 30 seconds
+(ctrl+C then 'C' = continue early, ctrl+C then 'A' = abort)
+ok: [master-node] => {"changed": false, "delta": 30, "echo": true, "rc": 0, "start": "2026-01-14 23:10:58.842755", "stderr": "", "stdout": "Paused for 30.0 seconds", "stop": "2026-01-14 23:11:28.847315", "user_input": ""}
+
+TASK [Display verification message] ********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:323
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 4: VERIFYING POSTGRESQL CLUSTER",
+        "================================================================"
+    ]
+}
+
+TASK [Wait for PostgreSQL pods to be ready] ************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:330
+FAILED - RETRYING: [master-node]: Wait for PostgreSQL pods to be ready (60 retries left).
+FAILED - RETRYING: [master-node]: Wait for PostgreSQL pods to be ready (59 retries left).
+changed: [master-node] => {"attempts": 3, "changed": true, "cmd": ["kubectl", "wait", "--for=condition=ready", "pod", "-l", "cnpg.io/podRole=instance", "-n", "postgresql-cluster", "--timeout=300s"], "delta": "0:00:25.615312", "end": "2026-01-14 21:12:07.940531", "msg": "", "rc": 0, "start": "2026-01-14 21:11:42.325219", "stderr": "", "stderr_lines": [], "stdout": "pod/cluster-postgresql-1 condition met", "stdout_lines": ["pod/cluster-postgresql-1 condition met"]}
+
+TASK [Get PostgreSQL cluster status] *******************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:340
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "cluster", "-n", "postgresql-cluster"], "delta": "0:00:00.068178", "end": "2026-01-14 21:12:09.207450", "msg": "", "rc": 0, "start": "2026-01-14 21:12:09.139272", "stderr": "", "stderr_lines": [], "stdout": "NAME                 AGE   INSTANCES   READY   STATUS                   PRIMARY\ncluster-postgresql   71s   1           1       Creating a new replica   cluster-postgresql-1", "stdout_lines": ["NAME                 AGE   INSTANCES   READY   STATUS                   PRIMARY", "cluster-postgresql   71s   1           1       Creating a new replica   cluster-postgresql-1"]}
+
+TASK [Display PostgreSQL cluster status] ***************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:348
+ok: [master-node] => {
+    "msg": [
+        "NAME                 AGE   INSTANCES   READY   STATUS                   PRIMARY",
+        "cluster-postgresql   71s   1           1       Creating a new replica   cluster-postgresql-1"
+    ]
+}
+
+TASK [Get PostgreSQL pods] *****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:352
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "pods", "-n", "postgresql-cluster", "-l", "cnpg.io/podRole=instance"], "delta": "0:00:00.074514", "end": "2026-01-14 21:12:10.449683", "msg": "", "rc": 0, "start": "2026-01-14 21:12:10.375169", "stderr": "", "stderr_lines": [], "stdout": "NAME                   READY   STATUS    RESTARTS   AGE\ncluster-postgresql-1   1/1     Running   0          31s", "stdout_lines": ["NAME                   READY   STATUS    RESTARTS   AGE", "cluster-postgresql-1   1/1     Running   0          31s"]}
+
+TASK [Display PostgreSQL pods] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:360
+ok: [master-node] => {
+    "msg": [
+        "NAME                   READY   STATUS    RESTARTS   AGE",
+        "cluster-postgresql-1   1/1     Running   0          31s"
+    ]
+}
+
+TASK [Get PostgreSQL services] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:364
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "svc", "-n", "postgresql-cluster"], "delta": "0:00:00.112811", "end": "2026-01-14 21:12:11.789120", "msg": "", "rc": 0, "start": "2026-01-14 21:12:11.676309", "stderr": "", "stderr_lines": [], "stdout": "NAME                     TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE\ncluster-postgresql-any   ClusterIP   10.103.225.248   <none>        5432/TCP   73s\ncluster-postgresql-r     ClusterIP   10.107.160.16    <none>        5432/TCP   73s\ncluster-postgresql-ro    ClusterIP   10.111.120.104   <none>        5432/TCP   73s\ncluster-postgresql-rw    ClusterIP   10.104.105.164   <none>        5432/TCP   73s", "stdout_lines": ["NAME                     TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE", "cluster-postgresql-any   ClusterIP   10.103.225.248   <none>        5432/TCP   73s", "cluster-postgresql-r     ClusterIP   10.107.160.16    <none>        5432/TCP   73s", "cluster-postgresql-ro    ClusterIP   10.111.120.104   <none>        5432/TCP   73s", "cluster-postgresql-rw    ClusterIP   10.104.105.164   <none>        5432/TCP   73s"]}
+
+TASK [Display PostgreSQL services] *********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:372
+ok: [master-node] => {
+    "msg": [
+        "NAME                     TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE",
+        "cluster-postgresql-any   ClusterIP   10.103.225.248   <none>        5432/TCP   73s",
+        "cluster-postgresql-r     ClusterIP   10.107.160.16    <none>        5432/TCP   73s",
+        "cluster-postgresql-ro    ClusterIP   10.111.120.104   <none>        5432/TCP   73s",
+        "cluster-postgresql-rw    ClusterIP   10.104.105.164   <none>        5432/TCP   73s"
+    ]
+}
+
+TASK [Get PVCs] ****************************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:376
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "pvc", "-n", "postgresql-cluster"], "delta": "0:00:00.073142", "end": "2026-01-14 21:12:13.037632", "msg": "", "rc": 0, "start": "2026-01-14 21:12:12.964490", "stderr": "", "stderr_lines": [], "stdout": "NAME                   STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE\ncluster-postgresql-1   Bound    pvc-5d5cbf1c-dbde-4bdf-b9f9-1b4e6d4e19e6   5Gi        RWO            longhorn       <unset>                 57s\ncluster-postgresql-2   Bound    pvc-631175de-8781-430c-9021-67e4d765906e   5Gi        RWO            longhorn       <unset>                 5s", "stdout_lines": ["NAME                   STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE", "cluster-postgresql-1   Bound    pvc-5d5cbf1c-dbde-4bdf-b9f9-1b4e6d4e19e6   5Gi        RWO            longhorn       <unset>                 57s", "cluster-postgresql-2   Bound    pvc-631175de-8781-430c-9021-67e4d765906e   5Gi        RWO            longhorn       <unset>                 5s"]}
+
+TASK [Display PVCs] ************************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:384
+ok: [master-node] => {
+    "msg": [
+        "NAME                   STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE",
+        "cluster-postgresql-1   Bound    pvc-5d5cbf1c-dbde-4bdf-b9f9-1b4e6d4e19e6   5Gi        RWO            longhorn       <unset>                 57s",
+        "cluster-postgresql-2   Bound    pvc-631175de-8781-430c-9021-67e4d765906e   5Gi        RWO            longhorn       <unset>                 5s"
+    ]
+}
+
+TASK [Get secrets] *************************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:388
+ok: [master-node] => {"changed": false, "cmd": "kubectl get secrets -n postgresql-cluster | grep cluster-postgresql || true", "delta": "0:00:00.065651", "end": "2026-01-14 21:12:14.303316", "msg": "", "rc": 0, "start": "2026-01-14 21:12:14.237665", "stderr": "", "stderr_lines": [], "stdout": "cluster-postgresql-app           Opaque                     2      61m\ncluster-postgresql-ca            Opaque                     2      76s\ncluster-postgresql-replication   kubernetes.io/tls          2      76s\ncluster-postgresql-server        kubernetes.io/tls          2      76s\ncluster-postgresql-superuser     kubernetes.io/basic-auth   3      76s", "stdout_lines": ["cluster-postgresql-app           Opaque                     2      61m", "cluster-postgresql-ca            Opaque                     2      76s", "cluster-postgresql-replication   kubernetes.io/tls          2      76s", "cluster-postgresql-server        kubernetes.io/tls          2      76s", "cluster-postgresql-superuser     kubernetes.io/basic-auth   3      76s"]}
+
+TASK [Display PostgreSQL secrets] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:396
+ok: [master-node] => {
+    "msg": [
+        "cluster-postgresql-app           Opaque                     2      61m",
+        "cluster-postgresql-ca            Opaque                     2      76s",
+        "cluster-postgresql-replication   kubernetes.io/tls          2      76s",
+        "cluster-postgresql-server        kubernetes.io/tls          2      76s",
+        "cluster-postgresql-superuser     kubernetes.io/basic-auth   3      76s"
+    ]
+}
+
+TASK [Display deployment summary] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:404
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "POSTGRESQL CLUSTER DEPLOYMENT COMPLETE",
+        "================================================================",
+        "",
+        "Cluster Configuration:",
+        "  - Name: cluster-postgresql",
+        "  - Namespace: postgresql-cluster",
+        "  - Instances: 2 (1 primary, 1 replica)",
+        "  - Database: ajastadb",
+        "  - Image: ghcr.io/cloudnative-pg/postgresql:15.4",
+        "",
+        "Connection Details:",
+        "  - Read Write Service: cluster-postgresql-rw.postgresql-cluster.svc",
+        "  - Read Only Service: cluster-postgresql-ro.postgresql-cluster.svc",
+        "  - Port: 5432",
+        "  - User: app",
+        "  - Password: (in cluster-postgresql-app secret)",
+        "",
+        "JDBC URL:",
+        "  jdbc:postgresql://cluster-postgresql-rw.postgresql-cluster.svc:5432/ajastadb",
+        "",
+        "Useful Commands:",
+        "  kubectl get cluster -n postgresql-cluster",
+        "  kubectl get pods -n postgresql-cluster",
+        "  kubectl get pvc -n postgresql-cluster",
+        "  kubectl exec -it -n postgresql-cluster cluster-postgresql-1 -- psql -U app -d ajastadb",
+        "",
+        "Connection String for Spring Boot:",
+        "  DB_URL=jdbc:postgresql://cluster-postgresql-rw.postgresql-cluster.svc:5432/ajastadb",
+        "  DB_USERNAME=app",
+        "  DB_PASSWORD=<from secret>",
+        "",
+        "================================================================"
+    ]
+}
+
+PLAY [Final summary] ***********************************************************
+
+TASK [Display completion message] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/21-deploy-postgres-cluster.yml:445
+ok: [localhost] => {
+    "msg": [
+        "================================================================",
+        "POSTGRESQL CLUSTER READY",
+        "================================================================",
+        "",
+        "Your PostgreSQL cluster is now ready for Ajasta application!",
+        "",
+        "Next Steps:",
+        "  1. Deploy Backend API with PostgreSQL connection details",
+        "  2. Test database connectivity",
+        "  3. Deploy Frontend",
+        "",
+        "================================================================"
+    ]
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+master-node                : ok=36   changed=4    unreachable=0    failed=0    skipped=8    rescued=0    ignored=0   
+
+[0;32m✓ PostgreSQL cluster deployed successfully[0m
+[0;34m================================================================[0m
+[0;32mSTEP 2: Deploy Backend API[0m
+[0;34m================================================================[0m
+Deploying Spring Boot Backend API...
+  - Image: vladimirryrik/ajasta-backend:alpine
+  - Replicas: 1
+  - Namespace: ajasta
+
+[WARNING]: Found variable using reserved name 'namespace'.
+Origin: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:14:5
+
+12   vars:
+13     # Namespace
+14     namespace: ajasta
+       ^ column 5
+
+ansible-playbook [core 2.19.2]
+  config file = None
+  configured module search path = ['/Users/rurik/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']
+  ansible python module location = /opt/homebrew/Cellar/ansible/12.0.0/libexec/lib/python3.13/site-packages/ansible
+  ansible collection location = /Users/rurik/.ansible/collections:/usr/share/ansible/collections
+  executable location = /opt/homebrew/bin/ansible-playbook
+  python version = 3.13.7 (main, Aug 14 2025, 11:12:11) [Clang 17.0.0 (clang-1700.0.13.3)] (/opt/homebrew/Cellar/ansible/12.0.0/libexec/bin/python)
+  jinja version = 3.1.6
+  pyyaml version = 6.0.2 (with libyaml v0.2.5)
+No config file found; using defaults
+Skipping callback 'minimal', as we already have a stdout callback.
+Skipping callback 'oneline', as we already have a stdout callback.
+
+PLAYBOOK: 22-deploy-backend.yml ************************************************
+2 plays in 22-deploy-backend.yml
+
+PLAY [Deploy Ajasta Backend API] ***********************************************
+
+TASK [Gathering Facts] *********************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:7
+[WARNING]: Host 'master-node' is using the discovered Python interpreter at '/usr/bin/python3.9', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [master-node]
+
+TASK [Display backend deployment information] **********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:50
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "DEPLOYING AJASTA BACKEND API",
+        "================================================================",
+        "",
+        "Backend Configuration:",
+        "  - Image: vladimirryrik/ajasta-backend:alpine",
+        "  - Replicas: 1",
+        "  - Port: 8090",
+        "  - Namespace: ajasta",
+        "",
+        "Database Connection:",
+        "  - PostgreSQL Cluster: cluster-postgresql",
+        "  - PostgreSQL Namespace: postgresql-cluster",
+        "  - Database: ajastadb",
+        "  - Service: cluster-postgresql-rw.postgresql-cluster.svc",
+        "",
+        "Resources:",
+        "  - CPU: 500m / 1000m",
+        "  - Memory: 512Mi / 1Gi",
+        "",
+        "================================================================"
+    ]
+}
+
+TASK [Display namespace creation message] **************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:79
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 1: CREATING NAMESPACE",
+        "================================================================"
+    ]
+}
+
+TASK [Create ajasta namespace] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:86
+changed: [master-node] => {"changed": true, "cmd": "kubectl create namespace ajasta --dry-run=client -o yaml | kubectl apply -f -", "delta": "0:00:00.195441", "end": "2026-01-14 21:12:18.873468", "msg": "", "rc": 0, "start": "2026-01-14 21:12:18.678027", "stderr": "", "stderr_lines": [], "stdout": "namespace/ajasta configured", "stdout_lines": ["namespace/ajasta configured"]}
+
+TASK [Display namespace creation result] ***************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:93
+ok: [master-node] => {
+    "msg": [
+        "namespace/ajasta configured"
+    ]
+}
+
+TASK [Display secrets creation message] ****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:101
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 2: CREATING SECRETS",
+        "================================================================"
+    ]
+}
+
+TASK [Get PostgreSQL app user password from secret] ****************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:108
+ok: [master-node] => {"changed": false, "cmd": "kubectl get secret cluster-postgresql-app -n postgresql-cluster -o jsonpath='{.data.password}' | base64 -d", "delta": "0:00:00.065543", "end": "2026-01-14 21:12:20.200752", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:12:20.135209", "stderr": "", "stderr_lines": [], "stdout": "KfuJ35c2n31T8sPB6V6s1p1JDvDKOSc2lcwVfS5uWZI=", "stdout_lines": ["KfuJ35c2n31T8sPB6V6s1p1JDvDKOSc2lcwVfS5uWZI="]}
+
+TASK [Display PostgreSQL password retrieval] ***********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:117
+ok: [master-node] => {
+    "msg": "PostgreSQL password retrieved"
+}
+
+TASK [Create backend secret] ***************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:121
+ok: [master-node] => {"changed": false, "checksum": "b1e9d37bb8c901ee7b0abe8b3c7710803af32553", "dest": "/tmp/backend-secret.yaml", "gid": 0, "group": "root", "mode": "0644", "owner": "root", "path": "/tmp/backend-secret.yaml", "secontext": "unconfined_u:object_r:user_home_t:s0", "size": 552, "state": "file", "uid": 0}
+
+TASK [Apply backend secret] ****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:154
+changed: [master-node] => {"changed": true, "cmd": ["kubectl", "apply", "-f", "/tmp/backend-secret.yaml"], "delta": "0:00:00.169207", "end": "2026-01-14 21:12:23.692499", "msg": "", "rc": 0, "start": "2026-01-14 21:12:23.523292", "stderr": "", "stderr_lines": [], "stdout": "secret/backend-secret configured", "stdout_lines": ["secret/backend-secret configured"]}
+
+TASK [Display secret creation] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:161
+ok: [master-node] => {
+    "msg": [
+        "secret/backend-secret configured"
+    ]
+}
+
+TASK [Display configmap creation message] **************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:169
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 3: CREATING CONFIGMAP",
+        "================================================================"
+    ]
+}
+
+TASK [Create backend configmap] ************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:176
+ok: [master-node] => {"changed": false, "checksum": "ed3ab6efdf713b5018bc0d9939fcde4ad4fc4373", "dest": "/tmp/backend-configmap.yaml", "gid": 0, "group": "root", "mode": "0644", "owner": "root", "path": "/tmp/backend-configmap.yaml", "secontext": "unconfined_u:object_r:user_home_t:s0", "size": 425, "state": "file", "uid": 0}
+
+TASK [Apply backend configmap] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:201
+changed: [master-node] => {"changed": true, "cmd": ["kubectl", "apply", "-f", "/tmp/backend-configmap.yaml"], "delta": "0:00:00.194226", "end": "2026-01-14 21:12:27.053810", "msg": "", "rc": 0, "start": "2026-01-14 21:12:26.859584", "stderr": "", "stderr_lines": [], "stdout": "configmap/backend-config unchanged", "stdout_lines": ["configmap/backend-config unchanged"]}
+
+TASK [Display configmap creation] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:208
+ok: [master-node] => {
+    "msg": [
+        "configmap/backend-config unchanged"
+    ]
+}
+
+TASK [Display deployment creation message] *************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:216
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 4: CREATING BACKEND DEPLOYMENT",
+        "================================================================"
+    ]
+}
+
+TASK [Create backend deployment] ***********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:223
+ok: [master-node] => {"changed": false, "checksum": "90bafc3a49f359e4326786d32ec5e6d681832cca", "dest": "/tmp/backend-deployment.yaml", "gid": 0, "group": "root", "mode": "0644", "owner": "root", "path": "/tmp/backend-deployment.yaml", "secontext": "unconfined_u:object_r:user_home_t:s0", "size": 3664, "state": "file", "uid": 0}
+
+TASK [Apply backend deployment] ************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:374
+changed: [master-node] => {"changed": true, "cmd": ["kubectl", "apply", "-f", "/tmp/backend-deployment.yaml"], "delta": "0:00:00.133109", "end": "2026-01-14 21:12:30.407075", "msg": "", "rc": 0, "start": "2026-01-14 21:12:30.273966", "stderr": "", "stderr_lines": [], "stdout": "deployment.apps/ajasta-backend configured", "stdout_lines": ["deployment.apps/ajasta-backend configured"]}
+
+TASK [Display backend deployment] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:381
+ok: [master-node] => {
+    "msg": [
+        "deployment.apps/ajasta-backend configured"
+    ]
+}
+
+TASK [Display service creation message] ****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:389
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 5: CREATING BACKEND SERVICE",
+        "================================================================"
+    ]
+}
+
+TASK [Create backend service] **************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:396
+ok: [master-node] => {"changed": false, "checksum": "9a3550ff46aec32b92fb5f431634d829f8d1715c", "dest": "/tmp/backend-service.yaml", "gid": 0, "group": "root", "mode": "0644", "owner": "root", "path": "/tmp/backend-service.yaml", "secontext": "unconfined_u:object_r:user_home_t:s0", "size": 284, "state": "file", "uid": 0}
+
+TASK [Apply backend service] ***************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:420
+changed: [master-node] => {"changed": true, "cmd": ["kubectl", "apply", "-f", "/tmp/backend-service.yaml"], "delta": "0:00:00.180143", "end": "2026-01-14 21:12:33.782062", "msg": "", "rc": 0, "start": "2026-01-14 21:12:33.601919", "stderr": "", "stderr_lines": [], "stdout": "service/ajasta-backend unchanged", "stdout_lines": ["service/ajasta-backend unchanged"]}
+
+TASK [Display backend service creation] ****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:427
+ok: [master-node] => {
+    "msg": [
+        "service/ajasta-backend unchanged"
+    ]
+}
+
+TASK [Display verification message] ********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:435
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 6: VERIFYING BACKEND DEPLOYMENT",
+        "================================================================"
+    ]
+}
+
+TASK [Pause for deployment to rollout] *****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:442
+Pausing for 10 seconds
+(ctrl+C then 'C' = continue early, ctrl+C then 'A' = abort)
+ok: [master-node] => {"changed": false, "delta": 10, "echo": true, "rc": 0, "start": "2026-01-14 23:12:33.992965", "stderr": "", "stdout": "Paused for 10.0 seconds", "stop": "2026-01-14 23:12:43.997308", "user_input": ""}
+
+TASK [Wait for backend deployment to be ready] *********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:446
+changed: [master-node] => {"attempts": 1, "changed": true, "cmd": ["kubectl", "rollout", "status", "deployment/ajasta-backend", "-n", "ajasta", "--timeout=300s"], "delta": "0:00:00.071187", "end": "2026-01-14 21:12:45.103577", "msg": "", "rc": 0, "start": "2026-01-14 21:12:45.032390", "stderr": "", "stderr_lines": [], "stdout": "deployment \"ajasta-backend\" successfully rolled out", "stdout_lines": ["deployment \"ajasta-backend\" successfully rolled out"]}
+
+TASK [Get backend pods] ********************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:456
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "pods", "-n", "ajasta", "-l", "component=backend"], "delta": "0:00:00.058759", "end": "2026-01-14 21:12:46.332244", "msg": "", "rc": 0, "start": "2026-01-14 21:12:46.273485", "stderr": "", "stderr_lines": [], "stdout": "NAME                              READY   STATUS    RESTARTS   AGE\najasta-backend-645d79b468-lhqzk   1/1     Running   0          42m", "stdout_lines": ["NAME                              READY   STATUS    RESTARTS   AGE", "ajasta-backend-645d79b468-lhqzk   1/1     Running   0          42m"]}
+
+TASK [Display backend pods] ****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:464
+ok: [master-node] => {
+    "msg": [
+        "NAME                              READY   STATUS    RESTARTS   AGE",
+        "ajasta-backend-645d79b468-lhqzk   1/1     Running   0          42m"
+    ]
+}
+
+TASK [Get backend service] *****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:468
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "svc", "-n", "ajasta", "ajasta-backend"], "delta": "0:00:00.074509", "end": "2026-01-14 21:12:47.586694", "msg": "", "rc": 0, "start": "2026-01-14 21:12:47.512185", "stderr": "", "stderr_lines": [], "stdout": "NAME             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE\najasta-backend   ClusterIP   10.102.160.173   <none>        8090/TCP   42m", "stdout_lines": ["NAME             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE", "ajasta-backend   ClusterIP   10.102.160.173   <none>        8090/TCP   42m"]}
+
+TASK [Display backend service] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:476
+ok: [master-node] => {
+    "msg": [
+        "NAME             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE",
+        "ajasta-backend   ClusterIP   10.102.160.173   <none>        8090/TCP   42m"
+    ]
+}
+
+TASK [Check backend logs] ******************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:480
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "logs", "-n", "ajasta", "-l", "component=backend", "--tail=20"], "delta": "0:00:00.074721", "end": "2026-01-14 21:12:48.828893", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:12:48.754172", "stderr": "", "stderr_lines": [], "stdout": "2026-01-14T20:30:13.539Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initializing database with sample data...\n2026-01-14T20:30:13.642Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initialized 3 roles\n2026-01-14T20:30:15.041Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initialized 6 users\n2026-01-14T20:30:15.042Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Database initialization completed successfully!\n2026-01-14T20:30:15.042Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Starting role initialization for booking system...\n2026-01-14T20:30:15.046Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Found existing roles: [CUSTOMER, ADMIN, RESOURCE_MANAGER]\n2026-01-14T20:30:15.046Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : All required roles already exist: [ADMIN, CUSTOMER]\n2026-01-14T20:30:15.049Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Role initialization completed. Available roles: [CUSTOMER, ADMIN, RESOURCE_MANAGER]\n2026-01-14T20:30:15.068Z  INFO 1 --- [AjastaApp] [           main] t.a.A.config.ResourceDataInitializer     : Seeded 4 resources for booking\n2026-01-14T20:33:55.993Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'\n2026-01-14T20:33:55.994Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'\n2026-01-14T20:33:55.995Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.s.web.servlet.DispatcherServlet        : Completed initialization in 1 ms\n2026-01-14T21:10:55.916Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@5fa12459 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:11:05.928Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@1ff9b332 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:11:15.935Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@4d74156a (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:11:30.399Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@551f1c9b (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:11:55.583Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@28d149a1 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:12:24.057Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@68bc0a11 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:12:34.069Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@1163ade4 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:12:44.072Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@d966123 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "stdout_lines": ["2026-01-14T20:30:13.539Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initializing database with sample data...", "2026-01-14T20:30:13.642Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initialized 3 roles", "2026-01-14T20:30:15.041Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initialized 6 users", "2026-01-14T20:30:15.042Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Database initialization completed successfully!", "2026-01-14T20:30:15.042Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Starting role initialization for booking system...", "2026-01-14T20:30:15.046Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Found existing roles: [CUSTOMER, ADMIN, RESOURCE_MANAGER]", "2026-01-14T20:30:15.046Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : All required roles already exist: [ADMIN, CUSTOMER]", "2026-01-14T20:30:15.049Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Role initialization completed. Available roles: [CUSTOMER, ADMIN, RESOURCE_MANAGER]", "2026-01-14T20:30:15.068Z  INFO 1 --- [AjastaApp] [           main] t.a.A.config.ResourceDataInitializer     : Seeded 4 resources for booking", "2026-01-14T20:33:55.993Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'", "2026-01-14T20:33:55.994Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'", "2026-01-14T20:33:55.995Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.s.web.servlet.DispatcherServlet        : Completed initialization in 1 ms", "2026-01-14T21:10:55.916Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@5fa12459 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:11:05.928Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@1ff9b332 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:11:15.935Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@4d74156a (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:11:30.399Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@551f1c9b (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:11:55.583Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@28d149a1 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:12:24.057Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@68bc0a11 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:12:34.069Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@1163ade4 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:12:44.072Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@d966123 (This connection has been closed.). Possibly consider using a shorter maxLifetime value."]}
+
+TASK [Display backend logs] ****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:489
+ok: [master-node] => {
+    "msg": [
+        "2026-01-14T20:30:13.539Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initializing database with sample data...",
+        "2026-01-14T20:30:13.642Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initialized 3 roles",
+        "2026-01-14T20:30:15.041Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initialized 6 users",
+        "2026-01-14T20:30:15.042Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Database initialization completed successfully!",
+        "2026-01-14T20:30:15.042Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Starting role initialization for booking system...",
+        "2026-01-14T20:30:15.046Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Found existing roles: [CUSTOMER, ADMIN, RESOURCE_MANAGER]",
+        "2026-01-14T20:30:15.046Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : All required roles already exist: [ADMIN, CUSTOMER]",
+        "2026-01-14T20:30:15.049Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Role initialization completed. Available roles: [CUSTOMER, ADMIN, RESOURCE_MANAGER]",
+        "2026-01-14T20:30:15.068Z  INFO 1 --- [AjastaApp] [           main] t.a.A.config.ResourceDataInitializer     : Seeded 4 resources for booking",
+        "2026-01-14T20:33:55.993Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'",
+        "2026-01-14T20:33:55.994Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'",
+        "2026-01-14T20:33:55.995Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.s.web.servlet.DispatcherServlet        : Completed initialization in 1 ms",
+        "2026-01-14T21:10:55.916Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@5fa12459 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:11:05.928Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@1ff9b332 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:11:15.935Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@4d74156a (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:11:30.399Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@551f1c9b (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:11:55.583Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@28d149a1 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:12:24.057Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@68bc0a11 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:12:34.069Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@1163ade4 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:12:44.072Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@d966123 (This connection has been closed.). Possibly consider using a shorter maxLifetime value."
+    ]
+}
+
+TASK [Display deployment summary] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:497
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "BACKEND API DEPLOYMENT COMPLETE",
+        "================================================================",
+        "",
+        "Configuration:",
+        "  - Image: vladimirryrik/ajasta-backend:alpine",
+        "  - Replicas: 1",
+        "  - Namespace: ajasta",
+        "",
+        "Service:",
+        "  - Name: ajasta-backend",
+        "  - Type: ClusterIP",
+        "  - Port: 8090",
+        "  - Internal URL: ajasta-backend.ajasta.svc:8090",
+        "",
+        "Database Connection:",
+        "  - PostgreSQL: cluster-postgresql-rw.postgresql-cluster.svc",
+        "  - Database: ajastadb",
+        "  - User: app",
+        "",
+        "Useful Commands:",
+        "  kubectl get pods -n ajasta -l component=backend",
+        "  kubectl get svc -n ajasta ajasta-backend",
+        "  kubectl logs -n ajasta -l component=backend --tail=50 -f",
+        "  kubectl exec -it -n ajasta <pod> -- sh",
+        "",
+        "Test Backend API:",
+        "  kubectl port-forward -n ajasta svc/ajasta-backend 8090:8090",
+        "  curl http://localhost:8090/api/health",
+        "",
+        "================================================================"
+    ]
+}
+
+PLAY [Final summary] ***********************************************************
+
+TASK [Display completion message] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/22-deploy-backend.yml:536
+ok: [localhost] => {
+    "msg": [
+        "================================================================",
+        "BACKEND API READY",
+        "================================================================",
+        "",
+        "Your Ajasta Backend API is now running!",
+        "",
+        "Next Steps:",
+        "  1. Deploy Frontend",
+        "  2. Configure Ingress",
+        "  3. Test the complete application",
+        "",
+        "================================================================"
+    ]
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+master-node                : ok=33   changed=6    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[0;32m✓ Backend API deployed successfully[0m
+[0;34m================================================================[0m
+[0;32mSTEP 3: Deploy Frontend[0m
+[0;34m================================================================[0m
+Deploying React Frontend (Nginx)...
+  - Image: vladimirryrik/ajasta-frontend:alpine
+  - Replicas: 1
+  - Namespace: ajasta
+
+[WARNING]: Found variable using reserved name 'namespace'.
+Origin: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:14:5
+
+12   vars:
+13     # Namespace
+14     namespace: ajasta
+       ^ column 5
+
+ansible-playbook [core 2.19.2]
+  config file = None
+  configured module search path = ['/Users/rurik/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']
+  ansible python module location = /opt/homebrew/Cellar/ansible/12.0.0/libexec/lib/python3.13/site-packages/ansible
+  ansible collection location = /Users/rurik/.ansible/collections:/usr/share/ansible/collections
+  executable location = /opt/homebrew/bin/ansible-playbook
+  python version = 3.13.7 (main, Aug 14 2025, 11:12:11) [Clang 17.0.0 (clang-1700.0.13.3)] (/opt/homebrew/Cellar/ansible/12.0.0/libexec/bin/python)
+  jinja version = 3.1.6
+  pyyaml version = 6.0.2 (with libyaml v0.2.5)
+No config file found; using defaults
+Skipping callback 'minimal', as we already have a stdout callback.
+Skipping callback 'oneline', as we already have a stdout callback.
+
+PLAYBOOK: 23-deploy-frontend.yml ***********************************************
+2 plays in 23-deploy-frontend.yml
+
+PLAY [Deploy Ajasta Frontend] **************************************************
+
+TASK [Gathering Facts] *********************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:7
+[WARNING]: Host 'master-node' is using the discovered Python interpreter at '/usr/bin/python3.9', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [master-node]
+
+TASK [Display frontend deployment information] *********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:34
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "DEPLOYING AJASTA FRONTEND",
+        "================================================================",
+        "",
+        "Frontend Configuration:",
+        "  - Image: vladimirryrik/ajasta-frontend:alpine",
+        "  - Replicas: 1",
+        "  - Port: 80",
+        "  - Namespace: ajasta",
+        "",
+        "API Configuration:",
+        "  - Backend Service: ajasta-backend",
+        "  - Backend Port: 8090",
+        "",
+        "Resources:",
+        "  - CPU: 100m / 200m",
+        "  - Memory: 64Mi / 128Mi",
+        "",
+        "================================================================"
+    ]
+}
+
+TASK [Display namespace creation message] **************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:61
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 1: CREATING NAMESPACE",
+        "================================================================"
+    ]
+}
+
+TASK [Create ajasta namespace] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:68
+changed: [master-node] => {"changed": true, "cmd": "kubectl create namespace ajasta --dry-run=client -o yaml | kubectl apply -f -", "delta": "0:00:00.205964", "end": "2026-01-14 21:12:53.377556", "msg": "", "rc": 0, "start": "2026-01-14 21:12:53.171592", "stderr": "", "stderr_lines": [], "stdout": "namespace/ajasta configured", "stdout_lines": ["namespace/ajasta configured"]}
+
+TASK [Display namespace creation result] ***************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:75
+ok: [master-node] => {
+    "msg": [
+        "namespace/ajasta configured"
+    ]
+}
+
+TASK [Display configmap creation message] **************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:83
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 2: CREATING NGINX CONFIGMAP",
+        "================================================================"
+    ]
+}
+
+TASK [Create nginx configmap] **************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:90
+ok: [master-node] => {"changed": false, "checksum": "c9e43344e10c457e1abec08aa7ca50f3ffe0ab39", "dest": "/tmp/frontend-configmap.yaml", "gid": 0, "group": "root", "mode": "0644", "owner": "root", "path": "/tmp/frontend-configmap.yaml", "secontext": "unconfined_u:object_r:user_home_t:s0", "size": 2846, "state": "file", "uid": 0}
+
+TASK [Apply nginx configmap] ***************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:192
+changed: [master-node] => {"changed": true, "cmd": ["kubectl", "apply", "-f", "/tmp/frontend-configmap.yaml"], "delta": "0:00:00.173711", "end": "2026-01-14 21:12:56.941355", "msg": "", "rc": 0, "start": "2026-01-14 21:12:56.767644", "stderr": "", "stderr_lines": [], "stdout": "configmap/frontend-config unchanged", "stdout_lines": ["configmap/frontend-config unchanged"]}
+
+TASK [Display configmap creation] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:199
+ok: [master-node] => {
+    "msg": [
+        "configmap/frontend-config unchanged"
+    ]
+}
+
+TASK [Display deployment creation message] *************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:207
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 3: CREATING FRONTEND DEPLOYMENT",
+        "================================================================"
+    ]
+}
+
+TASK [Create frontend deployment] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:214
+ok: [master-node] => {"changed": false, "checksum": "5a46f4d04fba57c3aebd3c843a9e1b2e8fe100f3", "dest": "/tmp/frontend-deployment.yaml", "gid": 0, "group": "root", "mode": "0644", "owner": "root", "path": "/tmp/frontend-deployment.yaml", "secontext": "unconfined_u:object_r:user_home_t:s0", "size": 1865, "state": "file", "uid": 0}
+
+TASK [Apply frontend deployment] ***********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:300
+changed: [master-node] => {"changed": true, "cmd": ["kubectl", "apply", "-f", "/tmp/frontend-deployment.yaml"], "delta": "0:00:00.117826", "end": "2026-01-14 21:13:00.227335", "msg": "", "rc": 0, "start": "2026-01-14 21:13:00.109509", "stderr": "", "stderr_lines": [], "stdout": "deployment.apps/ajasta-frontend unchanged", "stdout_lines": ["deployment.apps/ajasta-frontend unchanged"]}
+
+TASK [Display frontend deployment] *********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:307
+ok: [master-node] => {
+    "msg": [
+        "deployment.apps/ajasta-frontend unchanged"
+    ]
+}
+
+TASK [Display service creation message] ****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:315
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 4: CREATING FRONTEND SERVICE",
+        "================================================================"
+    ]
+}
+
+TASK [Create frontend service] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:322
+ok: [master-node] => {"changed": false, "checksum": "f7580dfbf0c0608fc67f2961d6171704ee3486fd", "dest": "/tmp/frontend-service.yaml", "gid": 0, "group": "root", "mode": "0644", "owner": "root", "path": "/tmp/frontend-service.yaml", "secontext": "unconfined_u:object_r:user_home_t:s0", "size": 283, "state": "file", "uid": 0}
+
+TASK [Apply frontend service] **************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:346
+changed: [master-node] => {"changed": true, "cmd": ["kubectl", "apply", "-f", "/tmp/frontend-service.yaml"], "delta": "0:00:00.202949", "end": "2026-01-14 21:13:03.610643", "msg": "", "rc": 0, "start": "2026-01-14 21:13:03.407694", "stderr": "", "stderr_lines": [], "stdout": "service/ajasta-frontend unchanged", "stdout_lines": ["service/ajasta-frontend unchanged"]}
+
+TASK [Display frontend service creation] ***************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:353
+ok: [master-node] => {
+    "msg": [
+        "service/ajasta-frontend unchanged"
+    ]
+}
+
+TASK [Display verification message] ********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:361
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 5: VERIFYING FRONTEND DEPLOYMENT",
+        "================================================================"
+    ]
+}
+
+TASK [Pause for deployment to rollout] *****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:368
+Pausing for 10 seconds
+(ctrl+C then 'C' = continue early, ctrl+C then 'A' = abort)
+ok: [master-node] => {"changed": false, "delta": 10, "echo": true, "rc": 0, "start": "2026-01-14 23:13:03.818191", "stderr": "", "stdout": "Paused for 10.0 seconds", "stop": "2026-01-14 23:13:13.821829", "user_input": ""}
+
+TASK [Wait for frontend deployment to be ready] ********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:372
+changed: [master-node] => {"attempts": 1, "changed": true, "cmd": ["kubectl", "rollout", "status", "deployment/ajasta-frontend", "-n", "ajasta", "--timeout=300s"], "delta": "0:00:00.072348", "end": "2026-01-14 21:13:14.881447", "msg": "", "rc": 0, "start": "2026-01-14 21:13:14.809099", "stderr": "", "stderr_lines": [], "stdout": "deployment \"ajasta-frontend\" successfully rolled out", "stdout_lines": ["deployment \"ajasta-frontend\" successfully rolled out"]}
+
+TASK [Get frontend pods] *******************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:382
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "pods", "-n", "ajasta", "-l", "component=frontend"], "delta": "0:00:00.068614", "end": "2026-01-14 21:13:16.153980", "msg": "", "rc": 0, "start": "2026-01-14 21:13:16.085366", "stderr": "", "stderr_lines": [], "stdout": "NAME                               READY   STATUS    RESTARTS   AGE\najasta-frontend-777b7799b9-7pv4q   1/1     Running   0          42m", "stdout_lines": ["NAME                               READY   STATUS    RESTARTS   AGE", "ajasta-frontend-777b7799b9-7pv4q   1/1     Running   0          42m"]}
+
+TASK [Display frontend pods] ***************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:390
+ok: [master-node] => {
+    "msg": [
+        "NAME                               READY   STATUS    RESTARTS   AGE",
+        "ajasta-frontend-777b7799b9-7pv4q   1/1     Running   0          42m"
+    ]
+}
+
+TASK [Get frontend service] ****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:394
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "svc", "-n", "ajasta", "ajasta-frontend"], "delta": "0:00:00.060051", "end": "2026-01-14 21:13:17.386018", "msg": "", "rc": 0, "start": "2026-01-14 21:13:17.325967", "stderr": "", "stderr_lines": [], "stdout": "NAME              TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE\najasta-frontend   ClusterIP   10.107.137.51   <none>        80/TCP    42m", "stdout_lines": ["NAME              TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE", "ajasta-frontend   ClusterIP   10.107.137.51   <none>        80/TCP    42m"]}
+
+TASK [Display frontend service] ************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:402
+ok: [master-node] => {
+    "msg": [
+        "NAME              TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE",
+        "ajasta-frontend   ClusterIP   10.107.137.51   <none>        80/TCP    42m"
+    ]
+}
+
+TASK [Check frontend logs] *****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:406
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "logs", "-n", "ajasta", "-l", "component=frontend", "--tail=20"], "delta": "0:00:00.076393", "end": "2026-01-14 21:13:18.640231", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:13:18.563838", "stderr": "", "stderr_lines": [], "stdout": "10.217.1.202 - - [14/Jan/2026:21:10:04 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:10:14 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:10:24 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:10:34 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:10:44 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:10:54 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:11:04 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:11:14 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:11:24 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:11:34 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:11:44 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:11:54 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:12:04 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:12:14 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:12:24 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:12:34 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:12:44 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:12:54 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:13:04 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"\n10.217.1.202 - - [14/Jan/2026:21:13:14 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "stdout_lines": ["10.217.1.202 - - [14/Jan/2026:21:10:04 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:10:14 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:10:24 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:10:34 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:10:44 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:10:54 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:11:04 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:11:14 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:11:24 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:11:34 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:11:44 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:11:54 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:12:04 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:12:14 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:12:24 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:12:34 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:12:44 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:12:54 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:13:04 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"", "10.217.1.202 - - [14/Jan/2026:21:13:14 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\""]}
+
+TASK [Display frontend logs] ***************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:415
+ok: [master-node] => {
+    "msg": [
+        "10.217.1.202 - - [14/Jan/2026:21:10:04 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:10:14 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:10:24 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:10:34 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:10:44 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:10:54 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:11:04 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:11:14 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:11:24 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:11:34 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:11:44 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:11:54 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:12:04 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:12:14 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:12:24 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:12:34 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:12:44 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:12:54 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:13:04 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\"",
+        "10.217.1.202 - - [14/Jan/2026:21:13:14 +0000] \"GET / HTTP/1.1\" 200 644 \"-\" \"kube-probe/1.33\" \"-\""
+    ]
+}
+
+TASK [Test frontend health endpoint] *******************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:419
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "exec", "-n", "ajasta", "$(kubectl", "get", "pod", "-n", "ajasta", "-l", "component=frontend", "-o", "jsonpath={.items[0].metadata.name})", "--", "curl", "-s", "http://localhost/health", "||", "echo", "Health check failed"], "delta": "0:00:00.044965", "end": "2026-01-14 21:13:19.893781", "failed_when_result": false, "failed_when_suppressed_exception": "(traceback unavailable)", "msg": "non-zero return code", "rc": 1, "start": "2026-01-14 21:13:19.848816", "stderr": "error: unknown shorthand flag: 'l' in -l\nSee 'kubectl exec --help' for usage.", "stderr_lines": ["error: unknown shorthand flag: 'l' in -l", "See 'kubectl exec --help' for usage."], "stdout": "", "stdout_lines": []}
+
+TASK [Display frontend health check] *******************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:428
+ok: [master-node] => {
+    "msg": "Frontend health: "
+}
+
+TASK [Display deployment summary] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:436
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "FRONTEND DEPLOYMENT COMPLETE",
+        "================================================================",
+        "",
+        "Configuration:",
+        "  - Image: vladimirryrik/ajasta-frontend:alpine",
+        "  - Replicas: 1",
+        "  - Namespace: ajasta",
+        "",
+        "Service:",
+        "  - Name: ajasta-frontend",
+        "  - Type: ClusterIP",
+        "  - Port: 80",
+        "  - Internal URL: ajasta-frontend.ajasta.svc:80",
+        "",
+        "API Proxy:",
+        "  - Backend: ajasta-backend.ajasta.svc:8090",
+        "  - API Path: /api/*",
+        "",
+        "Useful Commands:",
+        "  kubectl get pods -n ajasta -l component=frontend",
+        "  kubectl get svc -n ajasta ajasta-frontend",
+        "  kubectl logs -n ajasta -l component=frontend --tail=50 -f",
+        "  kubectl exec -it -n ajasta <pod> -- sh",
+        "",
+        "Test Frontend Locally:",
+        "  kubectl port-forward -n ajasta svc/ajasta-frontend 3000:80",
+        "  Open http://localhost:3000 in browser",
+        "",
+        "================================================================"
+    ]
+}
+
+PLAY [Final summary] ***********************************************************
+
+TASK [Display completion message] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/23-deploy-frontend.yml:474
+ok: [localhost] => {
+    "msg": [
+        "================================================================",
+        "FRONTEND READY",
+        "================================================================",
+        "",
+        "Your Ajasta Frontend is now running!",
+        "",
+        "Next Steps:",
+        "  1. Configure Ingress to expose the application",
+        "  2. Test the complete application stack",
+        "  3. Configure DNS/hosts for external access",
+        "",
+        "================================================================"
+    ]
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+master-node                : ok=29   changed=5    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[0;32m✓ Frontend deployed successfully[0m
+[0;34m================================================================[0m
+[0;32mSTEP 4: Configure Ingress[0m
+[0;34m================================================================[0m
+Configuring NGINX Ingress for external access...
+  - Ingress Class: nginx
+  - Host: ajasta.local
+  - Routes: / → frontend, /api → backend
+
+[WARNING]: Found variable using reserved name 'namespace'.
+Origin: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:14:5
+
+12   vars:
+13     # Namespace
+14     namespace: ajasta
+       ^ column 5
+
+ansible-playbook [core 2.19.2]
+  config file = None
+  configured module search path = ['/Users/rurik/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']
+  ansible python module location = /opt/homebrew/Cellar/ansible/12.0.0/libexec/lib/python3.13/site-packages/ansible
+  ansible collection location = /Users/rurik/.ansible/collections:/usr/share/ansible/collections
+  executable location = /opt/homebrew/bin/ansible-playbook
+  python version = 3.13.7 (main, Aug 14 2025, 11:12:11) [Clang 17.0.0 (clang-1700.0.13.3)] (/opt/homebrew/Cellar/ansible/12.0.0/libexec/bin/python)
+  jinja version = 3.1.6
+  pyyaml version = 6.0.2 (with libyaml v0.2.5)
+No config file found; using defaults
+Skipping callback 'minimal', as we already have a stdout callback.
+Skipping callback 'oneline', as we already have a stdout callback.
+
+PLAYBOOK: 24-deploy-ingress.yml ************************************************
+2 plays in 24-deploy-ingress.yml
+
+PLAY [Deploy Ajasta Ingress Configuration] *************************************
+
+TASK [Gathering Facts] *********************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:7
+[WARNING]: Host 'master-node' is using the discovered Python interpreter at '/usr/bin/python3.9', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [master-node]
+
+TASK [Display ingress deployment information] **********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:41
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "CONFIGURING AJASTA INGRESS",
+        "================================================================",
+        "",
+        "Ingress Configuration:",
+        "  - Name: ajasta-ingress",
+        "  - Class: nginx",
+        "  - Namespace: ajasta",
+        "",
+        "Routing:",
+        "  - Host: ajasta.local",
+        "  - Frontend: / (ajasta-frontend:80)",
+        "  - Backend API: /api (ajasta-backend:8090)",
+        "",
+        "TLS:",
+        "  - Enabled: False",
+        "",
+        "================================================================"
+    ]
+}
+
+TASK [Display ingress controller check message] ********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:67
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 1: CHECKING INGRESS CONTROLLER",
+        "================================================================"
+    ]
+}
+
+TASK [Check if NGINX Ingress Controller is installed] **************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:74
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "namespace", "ingress-nginx"], "delta": "0:00:00.064378", "end": "2026-01-14 21:13:25.316154", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:13:25.251776", "stderr": "", "stderr_lines": [], "stdout": "NAME            STATUS   AGE\ningress-nginx   Active   4h9m", "stdout_lines": ["NAME            STATUS   AGE", "ingress-nginx   Active   4h9m"]}
+
+TASK [Set ingress controller fact] *********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:83
+ok: [master-node] => {"ansible_facts": {"ingress_controller_installed": true}, "changed": false}
+
+TASK [Display ingress controller status] ***************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:87
+ok: [master-node] => {
+    "msg": "Ingress controller installed"
+}
+
+TASK [Fail if ingress controller is not installed] *****************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:91
+skipping: [master-node] => {"changed": false, "false_condition": "not ingress_controller_installed", "skip_reason": "Conditional result was False"}
+
+TASK [Get ingress controller service] ******************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:96
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "svc", "-n", "ingress-nginx", "ingress-nginx-controller"], "delta": "0:00:00.064073", "end": "2026-01-14 21:13:26.588422", "msg": "", "rc": 0, "start": "2026-01-14 21:13:26.524349", "stderr": "", "stderr_lines": [], "stdout": "NAME                       TYPE       CLUSTER-IP     EXTERNAL-IP   PORT(S)                      AGE\ningress-nginx-controller   NodePort   10.103.63.15   <none>        80:32402/TCP,443:30096/TCP   4h9m", "stdout_lines": ["NAME                       TYPE       CLUSTER-IP     EXTERNAL-IP   PORT(S)                      AGE", "ingress-nginx-controller   NodePort   10.103.63.15   <none>        80:32402/TCP,443:30096/TCP   4h9m"]}
+
+TASK [Display ingress controller service] **************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:104
+ok: [master-node] => {
+    "msg": [
+        "NAME                       TYPE       CLUSTER-IP     EXTERNAL-IP   PORT(S)                      AGE",
+        "ingress-nginx-controller   NodePort   10.103.63.15   <none>        80:32402/TCP,443:30096/TCP   4h9m"
+    ]
+}
+
+TASK [Display ingress creation message] ****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:112
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 2: CREATING INGRESS RESOURCE",
+        "================================================================"
+    ]
+}
+
+TASK [Create Ajasta ingress resource] ******************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:119
+ok: [master-node] => {"changed": false, "checksum": "e7affa473166915f67df53b71cc28330d8ce8848", "dest": "/tmp/ajasta-ingress.yaml", "gid": 0, "group": "root", "mode": "0644", "owner": "root", "path": "/tmp/ajasta-ingress.yaml", "secontext": "unconfined_u:object_r:user_home_t:s0", "size": 941, "state": "file", "uid": 0}
+
+TASK [Display ingress manifest created] ****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:165
+ok: [master-node] => {
+    "msg": "Ingress manifest created at /tmp/ajasta-ingress.yaml"
+}
+
+TASK [Apply ingress resource] **************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:169
+changed: [master-node] => {"changed": true, "cmd": ["kubectl", "apply", "-f", "/tmp/ajasta-ingress.yaml"], "delta": "0:00:00.153568", "end": "2026-01-14 21:13:30.119379", "msg": "", "rc": 0, "start": "2026-01-14 21:13:29.965811", "stderr": "", "stderr_lines": [], "stdout": "ingress.networking.k8s.io/ajasta-ingress unchanged", "stdout_lines": ["ingress.networking.k8s.io/ajasta-ingress unchanged"]}
+
+TASK [Display ingress application] *********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:176
+ok: [master-node] => {
+    "msg": [
+        "ingress.networking.k8s.io/ajasta-ingress unchanged"
+    ]
+}
+
+TASK [Display verification message] ********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:184
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 3: VERIFYING INGRESS CONFIGURATION",
+        "================================================================"
+    ]
+}
+
+TASK [Pause for ingress to initialize] *****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:191
+Pausing for 5 seconds
+(ctrl+C then 'C' = continue early, ctrl+C then 'A' = abort)
+ok: [master-node] => {"changed": false, "delta": 5, "echo": true, "rc": 0, "start": "2026-01-14 23:13:30.318478", "stderr": "", "stdout": "Paused for 5.0 seconds", "stop": "2026-01-14 23:13:35.322826", "user_input": ""}
+
+TASK [Get ingress resources] ***************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:195
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "ingress", "-n", "ajasta"], "delta": "0:00:00.064955", "end": "2026-01-14 21:13:36.403452", "msg": "", "rc": 0, "start": "2026-01-14 21:13:36.338497", "stderr": "", "stderr_lines": [], "stdout": "NAME             CLASS   HOSTS          ADDRESS      PORTS   AGE\najasta-ingress   nginx   ajasta.local   10.10.0.29   80      41m", "stdout_lines": ["NAME             CLASS   HOSTS          ADDRESS      PORTS   AGE", "ajasta-ingress   nginx   ajasta.local   10.10.0.29   80      41m"]}
+
+TASK [Display ingress resources] ***********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:203
+ok: [master-node] => {
+    "msg": [
+        "NAME             CLASS   HOSTS          ADDRESS      PORTS   AGE",
+        "ajasta-ingress   nginx   ajasta.local   10.10.0.29   80      41m"
+    ]
+}
+
+TASK [Get detailed ingress information] ****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:207
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "describe", "ingress", "ajasta-ingress", "-n", "ajasta"], "delta": "0:00:00.070271", "end": "2026-01-14 21:13:37.670010", "msg": "", "rc": 0, "start": "2026-01-14 21:13:37.599739", "stderr": "", "stderr_lines": [], "stdout": "Name:             ajasta-ingress\nLabels:           app=ajasta\nNamespace:        ajasta\nAddress:          10.10.0.29\nIngress Class:    nginx\nDefault backend:  <default>\nRules:\n  Host          Path  Backends\n  ----          ----  --------\n  ajasta.local  \n                /      ajasta-frontend:80 (10.217.1.149:80)\n                /api   ajasta-backend:8090 (10.217.3.82:8090)\nAnnotations:    nginx.ingress.kubernetes.io/proxy-body-size: 20m\n                nginx.ingress.kubernetes.io/proxy-connect-timeout: 75\n                nginx.ingress.kubernetes.io/proxy-read-timeout: 300\n                nginx.ingress.kubernetes.io/proxy-send-timeout: 300\n                nginx.ingress.kubernetes.io/rewrite-target: /\n                nginx.ingress.kubernetes.io/ssl-redirect: false\nEvents:\n  Type    Reason  Age                From                      Message\n  ----    ------  ----               ----                      -------\n  Normal  Sync    41m (x2 over 41m)  nginx-ingress-controller  Scheduled for sync", "stdout_lines": ["Name:             ajasta-ingress", "Labels:           app=ajasta", "Namespace:        ajasta", "Address:          10.10.0.29", "Ingress Class:    nginx", "Default backend:  <default>", "Rules:", "  Host          Path  Backends", "  ----          ----  --------", "  ajasta.local  ", "                /      ajasta-frontend:80 (10.217.1.149:80)", "                /api   ajasta-backend:8090 (10.217.3.82:8090)", "Annotations:    nginx.ingress.kubernetes.io/proxy-body-size: 20m", "                nginx.ingress.kubernetes.io/proxy-connect-timeout: 75", "                nginx.ingress.kubernetes.io/proxy-read-timeout: 300", "                nginx.ingress.kubernetes.io/proxy-send-timeout: 300", "                nginx.ingress.kubernetes.io/rewrite-target: /", "                nginx.ingress.kubernetes.io/ssl-redirect: false", "Events:", "  Type    Reason  Age                From                      Message", "  ----    ------  ----               ----                      -------", "  Normal  Sync    41m (x2 over 41m)  nginx-ingress-controller  Scheduled for sync"]}
+
+TASK [Display ingress details] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:215
+ok: [master-node] => {
+    "msg": [
+        "Name:             ajasta-ingress",
+        "Labels:           app=ajasta",
+        "Namespace:        ajasta",
+        "Address:          10.10.0.29",
+        "Ingress Class:    nginx",
+        "Default backend:  <default>",
+        "Rules:",
+        "  Host          Path  Backends",
+        "  ----          ----  --------",
+        "  ajasta.local  ",
+        "                /      ajasta-frontend:80 (10.217.1.149:80)",
+        "                /api   ajasta-backend:8090 (10.217.3.82:8090)",
+        "Annotations:    nginx.ingress.kubernetes.io/proxy-body-size: 20m",
+        "                nginx.ingress.kubernetes.io/proxy-connect-timeout: 75",
+        "                nginx.ingress.kubernetes.io/proxy-read-timeout: 300",
+        "                nginx.ingress.kubernetes.io/proxy-send-timeout: 300",
+        "                nginx.ingress.kubernetes.io/rewrite-target: /",
+        "                nginx.ingress.kubernetes.io/ssl-redirect: false",
+        "Events:",
+        "  Type    Reason  Age                From                      Message",
+        "  ----    ------  ----               ----                      -------",
+        "  Normal  Sync    41m (x2 over 41m)  nginx-ingress-controller  Scheduled for sync"
+    ]
+}
+
+TASK [Get ingress controller external IP] **************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:219
+ok: [master-node] => {"changed": false, "cmd": "kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo \"No external IP assigned\"", "delta": "0:00:00.061356", "end": "2026-01-14 21:13:38.891081", "msg": "", "rc": 0, "start": "2026-01-14 21:13:38.829725", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+
+TASK [Get ingress controller external hostname (if any)] ***********************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:227
+ok: [master-node] => {"changed": false, "cmd": "kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || echo \"\"", "delta": "0:00:00.065189", "end": "2026-01-14 21:13:40.120689", "msg": "", "rc": 0, "start": "2026-01-14 21:13:40.055500", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+
+TASK [Set external address fact] ***********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:235
+ok: [master-node] => {"ansible_facts": {"external_address": ""}, "changed": false}
+
+TASK [Display external access information] *************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:239
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "EXTERNAL ACCESS CONFIGURATION",
+        "================================================================",
+        "",
+        "Ingress Controller Address:",
+        "  Not assigned yet (check LoadBalancer status)",
+        "",
+        "Configure your local /etc/hosts file:",
+        "   ajasta.local",
+        "",
+        "Or configure DNS:",
+        "  ajasta.local  A  ",
+        "",
+        "Then access the application at:",
+        "  - Frontend: http://ajasta.local/",
+        "  - Backend API: http://ajasta.local/api",
+        "",
+        "================================================================"
+    ]
+}
+
+TASK [Create local test playbook] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:265
+ok: [master-node] => {"changed": false, "checksum": "6b89b004f760aad7fd625d2947300648fd187ca5", "dest": "/tmp/ingress-test.sh", "gid": 0, "group": "root", "mode": "0755", "owner": "root", "path": "/tmp/ingress-test.sh", "secontext": "unconfined_u:object_r:user_home_t:s0", "size": 994, "state": "file", "uid": 0}
+
+TASK [Display test script information] *****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:307
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "INGRESS TEST SCRIPT CREATED",
+        "================================================================",
+        "",
+        "Test script created at: /tmp/ingress-test.sh",
+        "",
+        "To test ingress from your local machine:",
+        "  1. Update /etc/hosts:  ajasta.local",
+        "  2. Run: bash /tmp/ingress-test.sh",
+        "",
+        "Or manually test:",
+        "  curl http://ajasta.local/",
+        "  curl http://ajasta.local/api",
+        "",
+        "================================================================"
+    ]
+}
+
+TASK [Display deployment summary] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:330
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "INGRESS CONFIGURATION COMPLETE",
+        "================================================================",
+        "",
+        "Configuration:",
+        "  - Ingress Name: ajasta-ingress",
+        "  - Ingress Class: nginx",
+        "  - Namespace: ajasta",
+        "",
+        "Routes:",
+        "  - Host: ajasta.local",
+        "  - Frontend: / → ajasta-frontend:80",
+        "  - Backend: /api → ajasta-backend:8090",
+        "",
+        "Ingress Controller:",
+        "  - Namespace: ingress-nginx",
+        "  - Service: ingress-nginx-controller",
+        "  - External Address: Pending",
+        "",
+        "Useful Commands:",
+        "  kubectl get ingress -n ajasta",
+        "  kubectl describe ingress ajasta-ingress -n ajasta",
+        "  kubectl get svc -n ingress-nginx",
+        "",
+        "================================================================"
+    ]
+}
+
+PLAY [Final summary] ***********************************************************
+
+TASK [Display completion message] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/24-deploy-ingress.yml:363
+ok: [localhost] => {
+    "msg": [
+        "================================================================",
+        "INGRESS CONFIGURATION COMPLETE",
+        "================================================================",
+        "",
+        "Your Ajasta application is now accessible via Ingress!",
+        "",
+        "To access the application:",
+        "  1. Get the Ingress controller external IP or NodePort",
+        "  2. Add ajasta.local to your /etc/hosts file",
+        "  3. Open http://ajasta.local in your browser",
+        "",
+        "Get Ingress IP/Port:",
+        "  kubectl get svc -n ingress-nginx ingress-nginx-controller",
+        "",
+        "Example /etc/hosts entry:",
+        "  <EXTERNAL_IP> ajasta.local",
+        "",
+        "Or use NodePort:",
+        "  http://<NODE_IP>:32402",
+        "",
+        "================================================================"
+    ]
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+master-node                : ok=26   changed=1    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+
+[0;32m✓ Ingress configured successfully[0m
+[0;34m================================================================[0m
+[0;32mSTEP 5: Verify Deployment[0m
+[0;34m================================================================[0m
+Running comprehensive verification of all components...
+
+ansible-playbook [core 2.19.2]
+  config file = None
+  configured module search path = ['/Users/rurik/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']
+  ansible python module location = /opt/homebrew/Cellar/ansible/12.0.0/libexec/lib/python3.13/site-packages/ansible
+  ansible collection location = /Users/rurik/.ansible/collections:/usr/share/ansible/collections
+  executable location = /opt/homebrew/bin/ansible-playbook
+  python version = 3.13.7 (main, Aug 14 2025, 11:12:11) [Clang 17.0.0 (clang-1700.0.13.3)] (/opt/homebrew/Cellar/ansible/12.0.0/libexec/bin/python)
+  jinja version = 3.1.6
+  pyyaml version = 6.0.2 (with libyaml v0.2.5)
+No config file found; using defaults
+Skipping callback 'minimal', as we already have a stdout callback.
+Skipping callback 'oneline', as we already have a stdout callback.
+
+PLAYBOOK: 25-verify-deployment.yml *********************************************
+2 plays in 25-verify-deployment.yml
+
+PLAY [Verify Ajasta Application Deployment] ************************************
+
+TASK [Gathering Facts] *********************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:7
+[WARNING]: Host 'master-node' is using the discovered Python interpreter at '/usr/bin/python3.9', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.
+ok: [master-node]
+
+TASK [Display verification information] ****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:19
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "VERIFYING AJASTA APPLICATION DEPLOYMENT",
+        "================================================================",
+        "",
+        "This playbook will verify:",
+        "  1. PostgreSQL cluster health",
+        "  2. Backend API deployment",
+        "  3. Frontend deployment",
+        "  4. Service connectivity",
+        "  5. Ingress configuration",
+        "",
+        "================================================================"
+    ]
+}
+
+TASK [Display PostgreSQL verification message] *********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:39
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 1: VERIFYING POSTGRESQL CLUSTER",
+        "================================================================"
+    ]
+}
+
+TASK [Get PostgreSQL cluster status] *******************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:46
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "cluster", "-n", "postgresql-cluster"], "delta": "0:00:00.068761", "end": "2026-01-14 21:13:46.539914", "msg": "", "rc": 0, "start": "2026-01-14 21:13:46.471153", "stderr": "", "stderr_lines": [], "stdout": "NAME                 AGE     INSTANCES   READY   STATUS                     PRIMARY\ncluster-postgresql   2m48s   2           2       Cluster in healthy state   cluster-postgresql-1", "stdout_lines": ["NAME                 AGE     INSTANCES   READY   STATUS                     PRIMARY", "cluster-postgresql   2m48s   2           2       Cluster in healthy state   cluster-postgresql-1"]}
+
+TASK [Display PostgreSQL cluster status] ***************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:54
+ok: [master-node] => {
+    "msg": [
+        "NAME                 AGE     INSTANCES   READY   STATUS                     PRIMARY",
+        "cluster-postgresql   2m48s   2           2       Cluster in healthy state   cluster-postgresql-1"
+    ]
+}
+
+TASK [Get PostgreSQL pods] *****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:58
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "pods", "-n", "postgresql-cluster", "-l", "cnpg.io/podRole=instance"], "delta": "0:00:00.126599", "end": "2026-01-14 21:13:47.830991", "msg": "", "rc": 0, "start": "2026-01-14 21:13:47.704392", "stderr": "", "stderr_lines": [], "stdout": "NAME                   READY   STATUS    RESTARTS   AGE\ncluster-postgresql-1   1/1     Running   0          2m8s\ncluster-postgresql-2   1/1     Running   0          74s", "stdout_lines": ["NAME                   READY   STATUS    RESTARTS   AGE", "cluster-postgresql-1   1/1     Running   0          2m8s", "cluster-postgresql-2   1/1     Running   0          74s"]}
+
+TASK [Display PostgreSQL pods] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:66
+ok: [master-node] => {
+    "msg": [
+        "NAME                   READY   STATUS    RESTARTS   AGE",
+        "cluster-postgresql-1   1/1     Running   0          2m8s",
+        "cluster-postgresql-2   1/1     Running   0          74s"
+    ]
+}
+
+TASK [Check PostgreSQL pods are ready] *****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:70
+ok: [master-node] => {"changed": false, "cmd": "kubectl get pods -n postgresql-cluster -l cnpg.io/podRole=instance -o jsonpath='{.items[*].status.conditions[?(@.type==\"Ready\")].status}' | grep -q \"True True\" || echo \"not_ready\"", "delta": "0:00:00.069025", "end": "2026-01-14 21:13:49.066569", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:13:48.997544", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+
+TASK [Set PostgreSQL ready fact] ***********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:79
+ok: [master-node] => {"ansible_facts": {"postgresql_ready": true}, "changed": false}
+
+TASK [Display PostgreSQL readiness] ********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:83
+ok: [master-node] => {
+    "msg": "PostgreSQL Cluster: ✓ READY"
+}
+
+TASK [Get PostgreSQL services] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:87
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "svc", "-n", "postgresql-cluster"], "delta": "0:00:00.064364", "end": "2026-01-14 21:13:50.311562", "msg": "", "rc": 0, "start": "2026-01-14 21:13:50.247198", "stderr": "", "stderr_lines": [], "stdout": "NAME                     TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE\ncluster-postgresql-any   ClusterIP   10.103.225.248   <none>        5432/TCP   2m52s\ncluster-postgresql-r     ClusterIP   10.107.160.16    <none>        5432/TCP   2m52s\ncluster-postgresql-ro    ClusterIP   10.111.120.104   <none>        5432/TCP   2m52s\ncluster-postgresql-rw    ClusterIP   10.104.105.164   <none>        5432/TCP   2m52s", "stdout_lines": ["NAME                     TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE", "cluster-postgresql-any   ClusterIP   10.103.225.248   <none>        5432/TCP   2m52s", "cluster-postgresql-r     ClusterIP   10.107.160.16    <none>        5432/TCP   2m52s", "cluster-postgresql-ro    ClusterIP   10.111.120.104   <none>        5432/TCP   2m52s", "cluster-postgresql-rw    ClusterIP   10.104.105.164   <none>        5432/TCP   2m52s"]}
+
+TASK [Display PostgreSQL services] *********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:95
+ok: [master-node] => {
+    "msg": [
+        "NAME                     TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE",
+        "cluster-postgresql-any   ClusterIP   10.103.225.248   <none>        5432/TCP   2m52s",
+        "cluster-postgresql-r     ClusterIP   10.107.160.16    <none>        5432/TCP   2m52s",
+        "cluster-postgresql-ro    ClusterIP   10.111.120.104   <none>        5432/TCP   2m52s",
+        "cluster-postgresql-rw    ClusterIP   10.104.105.164   <none>        5432/TCP   2m52s"
+    ]
+}
+
+TASK [Display backend verification message] ************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:103
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 2: VERIFYING BACKEND API",
+        "================================================================"
+    ]
+}
+
+TASK [Get backend deployment] **************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:110
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "deployment", "-n", "ajasta", "ajasta-backend"], "delta": "0:00:00.082602", "end": "2026-01-14 21:13:51.576885", "msg": "", "rc": 0, "start": "2026-01-14 21:13:51.494283", "stderr": "", "stderr_lines": [], "stdout": "NAME             READY   UP-TO-DATE   AVAILABLE   AGE\najasta-backend   1/1     1            1           44m", "stdout_lines": ["NAME             READY   UP-TO-DATE   AVAILABLE   AGE", "ajasta-backend   1/1     1            1           44m"]}
+
+TASK [Display backend deployment] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:118
+ok: [master-node] => {
+    "msg": [
+        "NAME             READY   UP-TO-DATE   AVAILABLE   AGE",
+        "ajasta-backend   1/1     1            1           44m"
+    ]
+}
+
+TASK [Get backend pods] ********************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:122
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "pods", "-n", "ajasta", "-l", "component=backend"], "delta": "0:00:00.059199", "end": "2026-01-14 21:13:52.791007", "msg": "", "rc": 0, "start": "2026-01-14 21:13:52.731808", "stderr": "", "stderr_lines": [], "stdout": "NAME                              READY   STATUS    RESTARTS   AGE\najasta-backend-645d79b468-lhqzk   1/1     Running   0          44m", "stdout_lines": ["NAME                              READY   STATUS    RESTARTS   AGE", "ajasta-backend-645d79b468-lhqzk   1/1     Running   0          44m"]}
+
+TASK [Display backend pods] ****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:130
+ok: [master-node] => {
+    "msg": [
+        "NAME                              READY   STATUS    RESTARTS   AGE",
+        "ajasta-backend-645d79b468-lhqzk   1/1     Running   0          44m"
+    ]
+}
+
+TASK [Check backend pods are ready] ********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:134
+ok: [master-node] => {"changed": false, "cmd": "kubectl get pods -n ajasta -l component=backend -o jsonpath='{.items[0].status.conditions[?(@.type==\"Ready\")].status}' | grep -q \"True\" || echo \"not_ready\"", "delta": "0:00:00.068030", "end": "2026-01-14 21:13:54.021250", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:13:53.953220", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+
+TASK [Set backend ready fact] **************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:143
+ok: [master-node] => {"ansible_facts": {"backend_ready": true}, "changed": false}
+
+TASK [Display backend readiness] ***********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:147
+ok: [master-node] => {
+    "msg": "Backend API: ✓ READY"
+}
+
+TASK [Get backend service] *****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:151
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "svc", "-n", "ajasta", "ajasta-backend"], "delta": "0:00:00.055192", "end": "2026-01-14 21:13:55.227220", "msg": "", "rc": 0, "start": "2026-01-14 21:13:55.172028", "stderr": "", "stderr_lines": [], "stdout": "NAME             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE\najasta-backend   ClusterIP   10.102.160.173   <none>        8090/TCP   44m", "stdout_lines": ["NAME             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE", "ajasta-backend   ClusterIP   10.102.160.173   <none>        8090/TCP   44m"]}
+
+TASK [Display backend service] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:159
+ok: [master-node] => {
+    "msg": [
+        "NAME             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE",
+        "ajasta-backend   ClusterIP   10.102.160.173   <none>        8090/TCP   44m"
+    ]
+}
+
+TASK [Get backend logs (last 30 lines)] ****************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:163
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "logs", "-n", "ajasta", "-l", "component=backend", "--tail=30"], "delta": "0:00:00.064504", "end": "2026-01-14 21:13:56.435383", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:13:56.370879", "stderr": "", "stderr_lines": [], "stdout": "2026-01-14T20:30:04.032Z  WARN 1 --- [AjastaApp] [           main] o.h.engine.jdbc.spi.SqlExceptionHelper   : constraint \"uk6dotkott2kjsp8vw4d0m25fb7\" of relation \"users\" does not exist, skipping\n2026-01-14T20:30:04.294Z  INFO 1 --- [AjastaApp] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'\n2026-01-14T20:30:07.536Z  INFO 1 --- [AjastaApp] [           main] o.s.d.j.r.query.QueryEnhancerFactory     : Hibernate is in classpath; If applicable, HQL parser will be used.\n2026-01-14T20:30:11.851Z  WARN 1 --- [AjastaApp] [           main] JpaBaseConfiguration$JpaWebConfiguration : spring.jpa.open-in-view is enabled by default. Therefore, database queries may be performed during view rendering. Explicitly configure spring.jpa.open-in-view to disable this warning\n2026-01-14T20:30:12.335Z  INFO 1 --- [AjastaApp] [           main] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name customUserDetailsService\n2026-01-14T20:30:13.350Z  INFO 1 --- [AjastaApp] [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8090 (http) with context path '/'\n2026-01-14T20:30:13.359Z  INFO 1 --- [AjastaApp] [           main] top.ajasta.AjastaApp.AjastaApplication   : Started AjastaApplication in 22.328 seconds (process running for 23.687)\n2026-01-14T20:30:13.539Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initializing database with sample data...\n2026-01-14T20:30:13.642Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initialized 3 roles\n2026-01-14T20:30:15.041Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initialized 6 users\n2026-01-14T20:30:15.042Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Database initialization completed successfully!\n2026-01-14T20:30:15.042Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Starting role initialization for booking system...\n2026-01-14T20:30:15.046Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Found existing roles: [CUSTOMER, ADMIN, RESOURCE_MANAGER]\n2026-01-14T20:30:15.046Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : All required roles already exist: [ADMIN, CUSTOMER]\n2026-01-14T20:30:15.049Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Role initialization completed. Available roles: [CUSTOMER, ADMIN, RESOURCE_MANAGER]\n2026-01-14T20:30:15.068Z  INFO 1 --- [AjastaApp] [           main] t.a.A.config.ResourceDataInitializer     : Seeded 4 resources for booking\n2026-01-14T20:33:55.993Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'\n2026-01-14T20:33:55.994Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'\n2026-01-14T20:33:55.995Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.s.web.servlet.DispatcherServlet        : Completed initialization in 1 ms\n2026-01-14T21:10:55.916Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@5fa12459 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:11:05.928Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@1ff9b332 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:11:15.935Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@4d74156a (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:11:30.399Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@551f1c9b (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:11:55.583Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@28d149a1 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:12:24.057Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@68bc0a11 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:12:34.069Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@1163ade4 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:12:44.072Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@d966123 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:12:54.081Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@59201bad (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:13:04.089Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@729e1a25 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.\n2026-01-14T21:13:04.090Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Thread starvation or clock leap detected (housekeeper delta=58s160ms902µs650ns).", "stdout_lines": ["2026-01-14T20:30:04.032Z  WARN 1 --- [AjastaApp] [           main] o.h.engine.jdbc.spi.SqlExceptionHelper   : constraint \"uk6dotkott2kjsp8vw4d0m25fb7\" of relation \"users\" does not exist, skipping", "2026-01-14T20:30:04.294Z  INFO 1 --- [AjastaApp] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'", "2026-01-14T20:30:07.536Z  INFO 1 --- [AjastaApp] [           main] o.s.d.j.r.query.QueryEnhancerFactory     : Hibernate is in classpath; If applicable, HQL parser will be used.", "2026-01-14T20:30:11.851Z  WARN 1 --- [AjastaApp] [           main] JpaBaseConfiguration$JpaWebConfiguration : spring.jpa.open-in-view is enabled by default. Therefore, database queries may be performed during view rendering. Explicitly configure spring.jpa.open-in-view to disable this warning", "2026-01-14T20:30:12.335Z  INFO 1 --- [AjastaApp] [           main] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name customUserDetailsService", "2026-01-14T20:30:13.350Z  INFO 1 --- [AjastaApp] [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8090 (http) with context path '/'", "2026-01-14T20:30:13.359Z  INFO 1 --- [AjastaApp] [           main] top.ajasta.AjastaApp.AjastaApplication   : Started AjastaApplication in 22.328 seconds (process running for 23.687)", "2026-01-14T20:30:13.539Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initializing database with sample data...", "2026-01-14T20:30:13.642Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initialized 3 roles", "2026-01-14T20:30:15.041Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initialized 6 users", "2026-01-14T20:30:15.042Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Database initialization completed successfully!", "2026-01-14T20:30:15.042Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Starting role initialization for booking system...", "2026-01-14T20:30:15.046Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Found existing roles: [CUSTOMER, ADMIN, RESOURCE_MANAGER]", "2026-01-14T20:30:15.046Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : All required roles already exist: [ADMIN, CUSTOMER]", "2026-01-14T20:30:15.049Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Role initialization completed. Available roles: [CUSTOMER, ADMIN, RESOURCE_MANAGER]", "2026-01-14T20:30:15.068Z  INFO 1 --- [AjastaApp] [           main] t.a.A.config.ResourceDataInitializer     : Seeded 4 resources for booking", "2026-01-14T20:33:55.993Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'", "2026-01-14T20:33:55.994Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'", "2026-01-14T20:33:55.995Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.s.web.servlet.DispatcherServlet        : Completed initialization in 1 ms", "2026-01-14T21:10:55.916Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@5fa12459 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:11:05.928Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@1ff9b332 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:11:15.935Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@4d74156a (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:11:30.399Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@551f1c9b (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:11:55.583Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@28d149a1 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:12:24.057Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@68bc0a11 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:12:34.069Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@1163ade4 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:12:44.072Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@d966123 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:12:54.081Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@59201bad (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:13:04.089Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@729e1a25 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.", "2026-01-14T21:13:04.090Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Thread starvation or clock leap detected (housekeeper delta=58s160ms902µs650ns)."]}
+
+TASK [Display backend logs] ****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:172
+ok: [master-node] => {
+    "msg": [
+        "2026-01-14T20:30:04.032Z  WARN 1 --- [AjastaApp] [           main] o.h.engine.jdbc.spi.SqlExceptionHelper   : constraint \"uk6dotkott2kjsp8vw4d0m25fb7\" of relation \"users\" does not exist, skipping",
+        "2026-01-14T20:30:04.294Z  INFO 1 --- [AjastaApp] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'",
+        "2026-01-14T20:30:07.536Z  INFO 1 --- [AjastaApp] [           main] o.s.d.j.r.query.QueryEnhancerFactory     : Hibernate is in classpath; If applicable, HQL parser will be used.",
+        "2026-01-14T20:30:11.851Z  WARN 1 --- [AjastaApp] [           main] JpaBaseConfiguration$JpaWebConfiguration : spring.jpa.open-in-view is enabled by default. Therefore, database queries may be performed during view rendering. Explicitly configure spring.jpa.open-in-view to disable this warning",
+        "2026-01-14T20:30:12.335Z  INFO 1 --- [AjastaApp] [           main] r$InitializeUserDetailsManagerConfigurer : Global AuthenticationManager configured with UserDetailsService bean with name customUserDetailsService",
+        "2026-01-14T20:30:13.350Z  INFO 1 --- [AjastaApp] [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8090 (http) with context path '/'",
+        "2026-01-14T20:30:13.359Z  INFO 1 --- [AjastaApp] [           main] top.ajasta.AjastaApp.AjastaApplication   : Started AjastaApplication in 22.328 seconds (process running for 23.687)",
+        "2026-01-14T20:30:13.539Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initializing database with sample data...",
+        "2026-01-14T20:30:13.642Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initialized 3 roles",
+        "2026-01-14T20:30:15.041Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Initialized 6 users",
+        "2026-01-14T20:30:15.042Z  INFO 1 --- [AjastaApp] [           main] t.a.AjastaApp.config.DataInitializer     : Database initialization completed successfully!",
+        "2026-01-14T20:30:15.042Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Starting role initialization for booking system...",
+        "2026-01-14T20:30:15.046Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Found existing roles: [CUSTOMER, ADMIN, RESOURCE_MANAGER]",
+        "2026-01-14T20:30:15.046Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : All required roles already exist: [ADMIN, CUSTOMER]",
+        "2026-01-14T20:30:15.049Z  INFO 1 --- [AjastaApp] [           main] t.a.A.c.EnsureBookingRolesInitializer    : Role initialization completed. Available roles: [CUSTOMER, ADMIN, RESOURCE_MANAGER]",
+        "2026-01-14T20:30:15.068Z  INFO 1 --- [AjastaApp] [           main] t.a.A.config.ResourceDataInitializer     : Seeded 4 resources for booking",
+        "2026-01-14T20:33:55.993Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'",
+        "2026-01-14T20:33:55.994Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'",
+        "2026-01-14T20:33:55.995Z  INFO 1 --- [AjastaApp] [nio-8090-exec-7] o.s.web.servlet.DispatcherServlet        : Completed initialization in 1 ms",
+        "2026-01-14T21:10:55.916Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@5fa12459 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:11:05.928Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@1ff9b332 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:11:15.935Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@4d74156a (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:11:30.399Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@551f1c9b (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:11:55.583Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@28d149a1 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:12:24.057Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@68bc0a11 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:12:34.069Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@1163ade4 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:12:44.072Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@d966123 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:12:54.081Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@59201bad (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:13:04.089Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.PoolBase          : HikariPool-1 - Failed to validate connection org.postgresql.jdbc.PgConnection@729e1a25 (This connection has been closed.). Possibly consider using a shorter maxLifetime value.",
+        "2026-01-14T21:13:04.090Z  WARN 1 --- [AjastaApp] [l-1:housekeeper] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Thread starvation or clock leap detected (housekeeper delta=58s160ms902µs650ns)."
+    ]
+}
+
+TASK [Display frontend verification message] ***********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:180
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 3: VERIFYING FRONTEND",
+        "================================================================"
+    ]
+}
+
+TASK [Get frontend deployment] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:187
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "deployment", "-n", "ajasta", "ajasta-frontend"], "delta": "0:00:00.071006", "end": "2026-01-14 21:13:57.692360", "msg": "", "rc": 0, "start": "2026-01-14 21:13:57.621354", "stderr": "", "stderr_lines": [], "stdout": "NAME              READY   UP-TO-DATE   AVAILABLE   AGE\najasta-frontend   1/1     1            1           42m", "stdout_lines": ["NAME              READY   UP-TO-DATE   AVAILABLE   AGE", "ajasta-frontend   1/1     1            1           42m"]}
+
+TASK [Display frontend deployment] *********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:195
+ok: [master-node] => {
+    "msg": [
+        "NAME              READY   UP-TO-DATE   AVAILABLE   AGE",
+        "ajasta-frontend   1/1     1            1           42m"
+    ]
+}
+
+TASK [Get frontend pods] *******************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:199
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "pods", "-n", "ajasta", "-l", "component=frontend"], "delta": "0:00:00.059207", "end": "2026-01-14 21:13:58.927226", "msg": "", "rc": 0, "start": "2026-01-14 21:13:58.868019", "stderr": "", "stderr_lines": [], "stdout": "NAME                               READY   STATUS    RESTARTS   AGE\najasta-frontend-777b7799b9-7pv4q   1/1     Running   0          42m", "stdout_lines": ["NAME                               READY   STATUS    RESTARTS   AGE", "ajasta-frontend-777b7799b9-7pv4q   1/1     Running   0          42m"]}
+
+TASK [Display frontend pods] ***************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:207
+ok: [master-node] => {
+    "msg": [
+        "NAME                               READY   STATUS    RESTARTS   AGE",
+        "ajasta-frontend-777b7799b9-7pv4q   1/1     Running   0          42m"
+    ]
+}
+
+TASK [Check frontend pods are ready] *******************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:211
+ok: [master-node] => {"changed": false, "cmd": "kubectl get pods -n ajasta -l component=frontend -o jsonpath='{.items[0].status.conditions[?(@.type==\"Ready\")].status}' | grep -q \"True\" || echo \"not_ready\"", "delta": "0:00:00.063370", "end": "2026-01-14 21:14:00.196376", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:14:00.133006", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+
+TASK [Set frontend ready fact] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:220
+ok: [master-node] => {"ansible_facts": {"frontend_ready": true}, "changed": false}
+
+TASK [Display frontend readiness] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:224
+ok: [master-node] => {
+    "msg": "Frontend: ✓ READY"
+}
+
+TASK [Get frontend service] ****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:228
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "svc", "-n", "ajasta", "ajasta-frontend"], "delta": "0:00:00.068736", "end": "2026-01-14 21:14:01.489446", "msg": "", "rc": 0, "start": "2026-01-14 21:14:01.420710", "stderr": "", "stderr_lines": [], "stdout": "NAME              TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE\najasta-frontend   ClusterIP   10.107.137.51   <none>        80/TCP    42m", "stdout_lines": ["NAME              TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE", "ajasta-frontend   ClusterIP   10.107.137.51   <none>        80/TCP    42m"]}
+
+TASK [Display frontend service] ************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:236
+ok: [master-node] => {
+    "msg": [
+        "NAME              TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE",
+        "ajasta-frontend   ClusterIP   10.107.137.51   <none>        80/TCP    42m"
+    ]
+}
+
+TASK [Display connectivity verification message] *******************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:244
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 4: VERIFYING SERVICE CONNECTIVITY",
+        "================================================================"
+    ]
+}
+
+TASK [Test backend to PostgreSQL connectivity] *********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:251
+ok: [master-node] => {"changed": false, "cmd": "POD=$(kubectl get pod -n ajasta -l component=backend -o jsonpath='{.items[0].metadata.name}')\nkubectl exec -n ajasta ${POD} -- sh -c \"nc -zv cluster-postgresql-rw.postgresql-cluster.svc 5432 -w 5\" 2>&1 | grep -q \"succeeded\" && echo \"connected\" || echo \"failed\"\n", "delta": "0:00:00.163166", "end": "2026-01-14 21:14:02.857781", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:14:02.694615", "stderr": "", "stderr_lines": [], "stdout": "failed", "stdout_lines": ["failed"]}
+
+TASK [Display backend to PostgreSQL connectivity] ******************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:262
+ok: [master-node] => {
+    "msg": "Backend → PostgreSQL: ✗ FAILED"
+}
+
+TASK [Test frontend health endpoint] *******************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:266
+ok: [master-node] => {"changed": false, "cmd": "POD=$(kubectl get pod -n ajasta -l component=frontend -o jsonpath='{.items[0].metadata.name}')\nkubectl exec -n ajasta ${POD} -- curl -s http://localhost/health || echo \"failed\"\n", "delta": "0:00:00.175075", "end": "2026-01-14 21:14:04.185181", "failed_when_result": false, "msg": "", "rc": 0, "start": "2026-01-14 21:14:04.010106", "stderr": "", "stderr_lines": [], "stdout": "healthy", "stdout_lines": ["healthy"]}
+
+TASK [Display frontend health] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:277
+ok: [master-node] => {
+    "msg": "Frontend Health: ✓ HEALTHY"
+}
+
+TASK [Display ingress verification message] ************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:285
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 5: VERIFYING INGRESS CONFIGURATION",
+        "================================================================"
+    ]
+}
+
+TASK [Get ingress resources] ***************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:292
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "ingress", "-n", "ajasta"], "delta": "0:00:00.062675", "end": "2026-01-14 21:14:05.458195", "msg": "", "rc": 0, "start": "2026-01-14 21:14:05.395520", "stderr": "", "stderr_lines": [], "stdout": "NAME             CLASS   HOSTS          ADDRESS      PORTS   AGE\najasta-ingress   nginx   ajasta.local   10.10.0.29   80      42m", "stdout_lines": ["NAME             CLASS   HOSTS          ADDRESS      PORTS   AGE", "ajasta-ingress   nginx   ajasta.local   10.10.0.29   80      42m"]}
+
+TASK [Display ingress resources] ***********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:300
+ok: [master-node] => {
+    "msg": [
+        "NAME             CLASS   HOSTS          ADDRESS      PORTS   AGE",
+        "ajasta-ingress   nginx   ajasta.local   10.10.0.29   80      42m"
+    ]
+}
+
+TASK [Get ingress details] *****************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:304
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "describe", "ingress", "-n", "ajasta"], "delta": "0:00:00.084517", "end": "2026-01-14 21:14:06.719115", "msg": "", "rc": 0, "start": "2026-01-14 21:14:06.634598", "stderr": "", "stderr_lines": [], "stdout": "Name:             ajasta-ingress\nLabels:           app=ajasta\nNamespace:        ajasta\nAddress:          10.10.0.29\nIngress Class:    nginx\nDefault backend:  <default>\nRules:\n  Host          Path  Backends\n  ----          ----  --------\n  ajasta.local  \n                /      ajasta-frontend:80 (10.217.1.149:80)\n                /api   ajasta-backend:8090 (10.217.3.82:8090)\nAnnotations:    nginx.ingress.kubernetes.io/proxy-body-size: 20m\n                nginx.ingress.kubernetes.io/proxy-connect-timeout: 75\n                nginx.ingress.kubernetes.io/proxy-read-timeout: 300\n                nginx.ingress.kubernetes.io/proxy-send-timeout: 300\n                nginx.ingress.kubernetes.io/rewrite-target: /\n                nginx.ingress.kubernetes.io/ssl-redirect: false\nEvents:\n  Type    Reason  Age                From                      Message\n  ----    ------  ----               ----                      -------\n  Normal  Sync    42m (x2 over 42m)  nginx-ingress-controller  Scheduled for sync", "stdout_lines": ["Name:             ajasta-ingress", "Labels:           app=ajasta", "Namespace:        ajasta", "Address:          10.10.0.29", "Ingress Class:    nginx", "Default backend:  <default>", "Rules:", "  Host          Path  Backends", "  ----          ----  --------", "  ajasta.local  ", "                /      ajasta-frontend:80 (10.217.1.149:80)", "                /api   ajasta-backend:8090 (10.217.3.82:8090)", "Annotations:    nginx.ingress.kubernetes.io/proxy-body-size: 20m", "                nginx.ingress.kubernetes.io/proxy-connect-timeout: 75", "                nginx.ingress.kubernetes.io/proxy-read-timeout: 300", "                nginx.ingress.kubernetes.io/proxy-send-timeout: 300", "                nginx.ingress.kubernetes.io/rewrite-target: /", "                nginx.ingress.kubernetes.io/ssl-redirect: false", "Events:", "  Type    Reason  Age                From                      Message", "  ----    ------  ----               ----                      -------", "  Normal  Sync    42m (x2 over 42m)  nginx-ingress-controller  Scheduled for sync"]}
+
+TASK [Display ingress details] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:312
+ok: [master-node] => {
+    "msg": [
+        "Name:             ajasta-ingress",
+        "Labels:           app=ajasta",
+        "Namespace:        ajasta",
+        "Address:          10.10.0.29",
+        "Ingress Class:    nginx",
+        "Default backend:  <default>",
+        "Rules:",
+        "  Host          Path  Backends",
+        "  ----          ----  --------",
+        "  ajasta.local  ",
+        "                /      ajasta-frontend:80 (10.217.1.149:80)",
+        "                /api   ajasta-backend:8090 (10.217.3.82:8090)",
+        "Annotations:    nginx.ingress.kubernetes.io/proxy-body-size: 20m",
+        "                nginx.ingress.kubernetes.io/proxy-connect-timeout: 75",
+        "                nginx.ingress.kubernetes.io/proxy-read-timeout: 300",
+        "                nginx.ingress.kubernetes.io/proxy-send-timeout: 300",
+        "                nginx.ingress.kubernetes.io/rewrite-target: /",
+        "                nginx.ingress.kubernetes.io/ssl-redirect: false",
+        "Events:",
+        "  Type    Reason  Age                From                      Message",
+        "  ----    ------  ----               ----                      -------",
+        "  Normal  Sync    42m (x2 over 42m)  nginx-ingress-controller  Scheduled for sync"
+    ]
+}
+
+TASK [Get ingress controller address] ******************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:316
+ok: [master-node] => {"changed": false, "cmd": "kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo \"no_ip\"", "delta": "0:00:00.088725", "end": "2026-01-14 21:14:07.969894", "msg": "", "rc": 0, "start": "2026-01-14 21:14:07.881169", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+
+TASK [Display ingress controller address] **************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:324
+ok: [master-node] => {
+    "msg": "Ingress Controller Address: "
+}
+
+TASK [Display resource verification message] ***********************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:332
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "PART 6: VERIFYING RESOURCE USAGE",
+        "================================================================"
+    ]
+}
+
+TASK [Get all pods resource usage] *********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:339
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "top", "pods", "-n", "ajasta", "||", "kubectl", "get", "pods", "-n", "ajasta"], "delta": "0:00:00.043045", "end": "2026-01-14 21:14:09.172950", "failed_when_result": false, "failed_when_suppressed_exception": "(traceback unavailable)", "msg": "non-zero return code", "rc": 1, "start": "2026-01-14 21:14:09.129905", "stderr": "error: pod [NAME | -l label]\nSee 'kubectl top pod -h' for help and examples", "stderr_lines": ["error: pod [NAME | -l label]", "See 'kubectl top pod -h' for help and examples"], "stdout": "", "stdout_lines": []}
+
+TASK [Display pod resource usage] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:348
+ok: [master-node] => {
+    "msg": []
+}
+
+TASK [Get PVCs] ****************************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:352
+ok: [master-node] => {"changed": false, "cmd": ["kubectl", "get", "pvc", "-n", "postgresql-cluster"], "delta": "0:00:00.081071", "end": "2026-01-14 21:14:10.410100", "msg": "", "rc": 0, "start": "2026-01-14 21:14:10.329029", "stderr": "", "stderr_lines": [], "stdout": "NAME                   STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE\ncluster-postgresql-1   Bound    pvc-5d5cbf1c-dbde-4bdf-b9f9-1b4e6d4e19e6   5Gi        RWO            longhorn       <unset>                 2m54s\ncluster-postgresql-2   Bound    pvc-631175de-8781-430c-9021-67e4d765906e   5Gi        RWO            longhorn       <unset>                 2m2s", "stdout_lines": ["NAME                   STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE", "cluster-postgresql-1   Bound    pvc-5d5cbf1c-dbde-4bdf-b9f9-1b4e6d4e19e6   5Gi        RWO            longhorn       <unset>                 2m54s", "cluster-postgresql-2   Bound    pvc-631175de-8781-430c-9021-67e4d765906e   5Gi        RWO            longhorn       <unset>                 2m2s"]}
+
+TASK [Display PVCs] ************************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:360
+ok: [master-node] => {
+    "msg": [
+        "NAME                   STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE",
+        "cluster-postgresql-1   Bound    pvc-5d5cbf1c-dbde-4bdf-b9f9-1b4e6d4e19e6   5Gi        RWO            longhorn       <unset>                 2m54s",
+        "cluster-postgresql-2   Bound    pvc-631175de-8781-430c-9021-67e4d765906e   5Gi        RWO            longhorn       <unset>                 2m2s"
+    ]
+}
+
+TASK [Display overall status] **************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:368
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "OVERALL DEPLOYMENT STATUS",
+        "================================================================",
+        "",
+        "PostgreSQL Cluster: ✓ READY",
+        "Backend API: ✓ READY",
+        "Frontend: ✓ READY",
+        "",
+        "Overall Status: ✓ ALL SYSTEMS OPERATIONAL",
+        "",
+        "================================================================"
+    ]
+}
+
+TASK [Display useful commands] *************************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:383
+ok: [master-node] => {
+    "msg": [
+        "================================================================",
+        "USEFUL COMMANDS",
+        "================================================================",
+        "",
+        "View logs:",
+        "  kubectl logs -n ajasta -l component=backend -f",
+        "  kubectl logs -n ajasta -l component=frontend -f",
+        "",
+        "Access services locally:",
+        "  kubectl port-forward -n ajasta svc/ajasta-backend 8090:8090",
+        "  kubectl port-forward -n ajasta svc/ajasta-frontend 3000:80",
+        "",
+        "Database access:",
+        "  kubectl exec -it -n postgresql-cluster cluster-postgresql-1 -- psql -U app -d cluster-postgresql",
+        "",
+        "Resource monitoring:",
+        "  kubectl top pods -n ajasta",
+        "  kubectl top nodes",
+        "",
+        "================================================================"
+    ]
+}
+
+PLAY [Final summary] ***********************************************************
+
+TASK [Display completion message] **********************************************
+task path: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:411
+[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': 'ingress_host' is undefined
+
+Task failed.
+Origin: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:411:7
+
+409   gather_facts: no
+410   tasks:
+411     - name: Display completion message
+          ^ column 7
+
+<<< caused by >>>
+
+Finalization of task args for 'ansible.builtin.debug' failed.
+Origin: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:412:7
+
+410   tasks:
+411     - name: Display completion message
+412       ansible.builtin.debug:
+          ^ column 7
+
+<<< caused by >>>
+
+Error while resolving value for 'msg'.
+Origin: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:414:11
+
+412       ansible.builtin.debug:
+413         msg:
+414           - "================================================================"
+              ^ column 11
+
+<<< caused by >>>
+
+'ingress_host' is undefined
+Origin: /Users/rurik/IdeaProjects/petrelevich/ajasta-app/ansible/ajasta-app/25-verify-deployment.yml:423:13
+
+421           - "  1. If all components are ready, test the application"
+422           - "  2. Configure /etc/hosts for ingress access"
+423           - "  3. Open http://{{ ingress_host }} in your browser"
+                ^ column 13
+
+fatal: [localhost]: FAILED! => {"msg": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': 'ingress_host' is undefined"}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+master-node                : ok=53   changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+
+[0;31m✗ ERROR: Verification failed or completed with warnings[0m
+Check the output above for details
+
+[0;34m================================================================================================[0m
+[0;34mDEPLOYMENT COMPLETE[0m
+[0;34m================================================================================================[0m
+
+
+[0;32mAjasta application has been deployed successfully![0m
+
+Deployment Summary:
+  ✓ PostgreSQL HA Cluster (2 instances)
+  ✓ Backend API (Spring Boot)
+  ✓ Frontend (React/Nginx)
+  ✓ Ingress Configuration
+  ✓ All components verified
+
+Next Steps:
+
+1. Get Ingress Controller IP:
+   kubectl get svc -n ingress-nginx ingress-nginx-controller
+
+2. Add to your /etc/hosts file:
+   <INGRESS_IP> ajasta.local
+
+3. Access the application:
+   Frontend: http://ajasta.local
+   Backend API: http://ajasta.local/api
+
+4. Verify components:
+   kubectl get pods -n ajasta
+   kubectl get pods -n postgresql-cluster
+   kubectl get ingress -n ajasta
+
+5. View logs:
+   kubectl logs -n ajasta -l component=backend -f
+   kubectl logs -n ajasta -l component=frontend -f
+
+Log file: deployment-20260114-231033.log
+Deployment completed at: Wed Jan 14 23:14:10 EET 2026
+

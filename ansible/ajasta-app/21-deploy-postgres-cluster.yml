@@ -1,0 +1,459 @@
+---
+# Deploy PostgreSQL Cluster for Ajasta Application
+# This playbook deploys a high-availability PostgreSQL cluster using CloudNativePG
+# The cluster will be created in the postgresql-cluster namespace
+# Usage:
+#   ansible-playbook -i ../k8s/inventory.ini 21-deploy-postgres-cluster.yml
+
+- name: Deploy PostgreSQL Cluster for Ajasta
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # Namespace configuration
+    pg_namespace: postgresql-cluster
+    pg_cluster_name: cluster-postgresql
+    pg_database: ajastadb
+
+    # Cluster configuration
+    pg_instances: 2
+    pg_image: ghcr.io/cloudnative-pg/postgresql:15.4
+
+    # Storage configuration
+    pg_storage_class: longhorn
+    pg_storage_size: 5Gi
+
+    # Resource configuration
+    pg_cpu_request: 200m
+    pg_cpu_limit: 500m
+    pg_memory_request: 256Mi
+    pg_memory_limit: 512Mi
+
+    # PostgreSQL configuration
+    pg_max_connections: 100
+    pg_shared_buffers: 128MB
+    pg_effective_cache_size: 4000MB
+
+  tasks:
+    - name: Display PostgreSQL deployment information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYING POSTGRESQL CLUSTER FOR AJASTA"
+          - "================================================================"
+          - ""
+          - "Cluster Configuration:"
+          - "  - Name: {{ pg_cluster_name }}"
+          - "  - Namespace: {{ pg_namespace }}"
+          - "  - Instances: {{ pg_instances }} (1 primary, 1 replica)"
+          - "  - Image: {{ pg_image }}"
+          - ""
+          - "Storage:"
+          - "  - Class: {{ pg_storage_class }}"
+          - "  - Size: {{ pg_storage_size }}"
+          - "  - Type: Persistent Volume Claim"
+          - ""
+          - "Resources:"
+          - "  - CPU: {{ pg_cpu_request }} / {{ pg_cpu_limit }}"
+          - "  - Memory: {{ pg_memory_request }} / {{ pg_memory_limit }}"
+          - ""
+          - "PostgreSQL Parameters:"
+          - "  - Max Connections: {{ pg_max_connections }}"
+          - "  - Shared Buffers: {{ pg_shared_buffers }}"
+          - "  - Effective Cache: {{ pg_effective_cache_size }}"
+          - "================================================================"
+
+    # ==============================================================
+    # PART 1: CREATE NAMESPACE
+    # ==============================================================
+
+    - name: Display namespace creation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 1: CREATING NAMESPACE"
+          - "================================================================"
+
+    - name: Create postgresql-cluster namespace
+      ansible.builtin.shell:
+        cmd: kubectl create namespace {{ pg_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: namespace_create
+
+    - name: Display namespace creation result
+      ansible.builtin.debug:
+        msg: "{{ namespace_create.stdout_lines }}"
+
+    # ==============================================================
+    # PART 2: DEPLOY CLOUDNATIVEPG OPERATOR
+    # ==============================================================
+
+    - name: Display CloudNativePG deployment message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 2: DEPLOYING CLOUDNATIVEPG OPERATOR"
+          - "================================================================"
+
+    - name: Check if CloudNativePG operator is already installed
+      ansible.builtin.command:
+        cmd: kubectl get deployment -n cnpg-system cnpg-controller-manager
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cnpg_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set CNPG installed fact
+      ansible.builtin.set_fact:
+        cnpg_installed: "{{ cnpg_check.rc == 0 }}"
+
+    - name: Display CloudNativePG status
+      ansible.builtin.debug:
+        msg: "CloudNativePG operator {{ 'already installed' if cnpg_installed else 'not installed, will deploy' }}"
+
+    - name: Download CloudNativePG operator manifest
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.19/releases/cnpg-1.19.1.yaml
+        dest: /tmp/cnpg-1.19.1.yaml
+        mode: '0644'
+      register: cnpg_download
+      when: not cnpg_installed
+
+    - name: Display CloudNativePG download
+      ansible.builtin.debug:
+        msg: "CloudNativePG manifest downloaded"
+      when: not cnpg_installed
+
+    - name: Apply CloudNativePG operator manifest
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/cnpg-1.19.1.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cnpg_apply
+      when: not cnpg_installed
+
+    - name: Display CloudNativePG operator deployment
+      ansible.builtin.debug:
+        msg: "{{ cnpg_apply.stdout_lines }}"
+      when: not cnpg_installed
+
+    - name: Pause for operator to initialize
+      ansible.builtin.pause:
+        seconds: 15
+      when: not cnpg_installed
+
+    - name: Wait for CloudNativePG controller to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=available deployment -n cnpg-system cnpg-controller-manager --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cnpg_wait
+      until: cnpg_wait.rc == 0
+      retries: 30
+      delay: 5
+      when: not cnpg_installed
+
+    - name: Get CloudNativePG controller status
+      ansible.builtin.command:
+        cmd: kubectl get deployment -n cnpg-system cnpg-controller-manager
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cnpg_status
+      changed_when: false
+
+    - name: Display CloudNativePG controller status
+      ansible.builtin.debug:
+        msg: "{{ cnpg_status.stdout_lines }}"
+
+    # ==============================================================
+    # PART 3: CREATE POSTGRESQL CLUSTER
+    # ==============================================================
+
+    - name: Display PostgreSQL cluster creation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 3: CREATING POSTGRESQL CLUSTER"
+          - "================================================================"
+
+    - name: Check if app secret already exists
+      ansible.builtin.command:
+        cmd: kubectl get secret -n {{ pg_namespace }} {{ pg_cluster_name }}-app
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: app_secret_check
+      changed_when: false
+      failed_when: false
+
+    - name: Generate app password
+      ansible.builtin.shell:
+        cmd: openssl rand -base64 32
+      register: app_password
+      when: app_secret_check.rc != 0
+      changed_when: false
+
+    - name: Create app secret
+      ansible.builtin.shell:
+        cmd: |
+          kubectl create secret generic {{ pg_cluster_name }}-app \
+            --from-literal=username=app \
+            --from-literal=password={{ app_password.stdout }} \
+            -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: app_secret_create
+      when: app_secret_check.rc != 0
+
+    - name: Display app secret creation
+      ansible.builtin.debug:
+        msg: "{{ 'App secret created' if app_secret_check.rc != 0 else 'App secret already exists' }}"
+
+    - name: Check if PostgreSQL cluster already exists
+      ansible.builtin.command:
+        cmd: kubectl get cluster -n {{ pg_namespace }} {{ pg_cluster_name }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_cluster_check
+      changed_when: false
+      failed_when: false
+
+    - name: Delete existing PostgreSQL cluster if found
+      ansible.builtin.command:
+        cmd: kubectl delete cluster -n {{ pg_namespace }} {{ pg_cluster_name }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_cluster_delete
+      when: pg_cluster_check.rc == 0
+      ignore_errors: yes
+
+    - name: Display cluster deletion status
+      ansible.builtin.debug:
+        msg: "{{ 'Existing cluster deleted' if pg_cluster_check.rc == 0 else 'No existing cluster found' }}"
+
+    - name: Pause for cluster deletion to complete
+      ansible.builtin.pause:
+        seconds: 10
+      when: pg_cluster_check.rc == 0
+
+    - name: Create PostgreSQL Cluster manifest
+      ansible.builtin.copy:
+        dest: /tmp/ajasta-postgres-cluster.yaml
+        content: |
+          apiVersion: postgresql.cnpg.io/v1
+          kind: Cluster
+          metadata:
+            name: {{ pg_cluster_name }}
+            namespace: {{ pg_namespace }}
+            labels:
+              app: ajasta
+              component: postgresql
+          spec:
+            instances: {{ pg_instances }}
+            primaryUpdateStrategy: unsupervised
+            imageName: {{ pg_image }}
+
+            # Bootstrap configuration
+            bootstrap:
+              initdb:
+                database: {{ pg_database }}
+                owner: app
+                secret:
+                  name: {{ pg_cluster_name }}-app
+
+            # Resource management
+            resources:
+              requests:
+                cpu: {{ pg_cpu_request }}
+                memory: {{ pg_memory_request }}
+              limits:
+                cpu: {{ pg_cpu_limit }}
+                memory: {{ pg_memory_limit }}
+
+            # Storage configuration
+            storage:
+              size: {{ pg_storage_size }}
+              storageClass: {{ pg_storage_class }}
+
+            # PostgreSQL configuration
+            postgresql:
+              parameters:
+                max_connections: "{{ pg_max_connections }}"
+                shared_buffers: "{{ pg_shared_buffers }}"
+                effective_cache_size: "{{ pg_effective_cache_size }}"
+                maintenance_work_mem: "64MB"
+                checkpoint_completion_target: "0.9"
+                wal_buffers: "16MB"
+                default_statistics_target: "100"
+                random_page_cost: "1.1"
+                effective_io_concurrency: "200"
+                work_mem: "1310kB"
+                min_wal_size: "1GB"
+                max_wal_size: "4GB"
+
+            # Managed services
+            enableSuperuserAccess: true
+        mode: '0644'
+
+    - name: Display PostgreSQL cluster manifest created
+      ansible.builtin.debug:
+        msg: "PostgreSQL cluster manifest created at /tmp/ajasta-postgres-cluster.yaml"
+
+    - name: Apply PostgreSQL cluster manifest
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/ajasta-postgres-cluster.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_apply
+
+    - name: Display PostgreSQL cluster deployment
+      ansible.builtin.debug:
+        msg: "{{ pg_apply.stdout_lines }}"
+
+    - name: Pause for PostgreSQL cluster to initialize
+      ansible.builtin.pause:
+        seconds: 30
+
+    # ==============================================================
+    # PART 4: VERIFICATION
+    # ==============================================================
+
+    - name: Display verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 4: VERIFYING POSTGRESQL CLUSTER"
+          - "================================================================"
+
+    - name: Wait for PostgreSQL pods to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod -l cnpg.io/podRole=instance -n {{ pg_namespace }} --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_wait
+      until: pg_wait.rc == 0
+      retries: 60
+      delay: 5
+
+    - name: Get PostgreSQL cluster status
+      ansible.builtin.command:
+        cmd: kubectl get cluster -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_cluster_status
+      changed_when: false
+
+    - name: Display PostgreSQL cluster status
+      ansible.builtin.debug:
+        msg: "{{ pg_cluster_status.stdout_lines }}"
+
+    - name: Get PostgreSQL pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ pg_namespace }} -l cnpg.io/podRole=instance
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_pods
+      changed_when: false
+
+    - name: Display PostgreSQL pods
+      ansible.builtin.debug:
+        msg: "{{ pg_pods.stdout_lines }}"
+
+    - name: Get PostgreSQL services
+      ansible.builtin.command:
+        cmd: kubectl get svc -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_services
+      changed_when: false
+
+    - name: Display PostgreSQL services
+      ansible.builtin.debug:
+        msg: "{{ pg_services.stdout_lines }}"
+
+    - name: Get PVCs
+      ansible.builtin.command:
+        cmd: kubectl get pvc -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_pvc
+      changed_when: false
+
+    - name: Display PVCs
+      ansible.builtin.debug:
+        msg: "{{ pg_pvc.stdout_lines }}"
+
+    - name: Get secrets
+      ansible.builtin.shell:
+        cmd: kubectl get secrets -n {{ pg_namespace }} | grep {{ pg_cluster_name }} || true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_secrets
+      changed_when: false
+
+    - name: Display PostgreSQL secrets
+      ansible.builtin.debug:
+        msg: "{{ pg_secrets.stdout_lines }}"
+
+    # ==============================================================
+    # PART 5: SUMMARY
+    # ==============================================================
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "POSTGRESQL CLUSTER DEPLOYMENT COMPLETE"
+          - "================================================================"
+          - ""
+          - "Cluster Configuration:"
+          - "  - Name: {{ pg_cluster_name }}"
+          - "  - Namespace: {{ pg_namespace }}"
+          - "  - Instances: {{ pg_instances }} (1 primary, 1 replica)"
+          - "  - Database: {{ pg_database }}"
+          - "  - Image: {{ pg_image }}"
+          - ""
+          - "Connection Details:"
+          - "  - Read Write Service: {{ pg_cluster_name }}-rw.{{ pg_namespace }}.svc"
+          - "  - Read Only Service: {{ pg_cluster_name }}-ro.{{ pg_namespace }}.svc"
+          - "  - Port: 5432"
+          - "  - User: app"
+          - "  - Password: (in {{ pg_cluster_name }}-app secret)"
+          - ""
+          - "JDBC URL:"
+          - "  jdbc:postgresql://{{ pg_cluster_name }}-rw.{{ pg_namespace }}.svc:5432/{{ pg_database }}"
+          - ""
+          - "Useful Commands:"
+          - "  kubectl get cluster -n {{ pg_namespace }}"
+          - "  kubectl get pods -n {{ pg_namespace }}"
+          - "  kubectl get pvc -n {{ pg_namespace }}"
+          - "  kubectl exec -it -n {{ pg_namespace }} {{ pg_cluster_name }}-1 -- psql -U app -d {{ pg_database }}"
+          - ""
+          - "Connection String for Spring Boot:"
+          - "  DB_URL=jdbc:postgresql://{{ pg_cluster_name }}-rw.{{ pg_namespace }}.svc:5432/{{ pg_database }}"
+          - "  DB_USERNAME=app"
+          - "  DB_PASSWORD=<from secret>"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "POSTGRESQL CLUSTER READY"
+          - "================================================================"
+          - ""
+          - "Your PostgreSQL cluster is now ready for Ajasta application!"
+          - ""
+          - "Next Steps:"
+          - "  1. Deploy Backend API with PostgreSQL connection details"
+          - "  2. Test database connectivity"
+          - "  3. Deploy Frontend"
+          - ""
+          - "================================================================"
