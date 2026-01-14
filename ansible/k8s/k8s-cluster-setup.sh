@@ -3,11 +3,13 @@
 # This script runs all playbooks in the correct order to set up a complete Kubernetes cluster
 #
 # Usage:
-#   ./k8s-cluster-setup.sh [start_step]
+#   ./k8s-cluster-setup.sh [start_step] [-v|-vv|-vvv|-vvvv|-vvvvv]
 #
 # Examples:
-#   ./k8s-cluster-setup.sh       # Start from step 1
-#   ./k8s-cluster-setup.sh 3     # Start from step 3 (resume)
+#   ./k8s-cluster-setup.sh              # Start from step 1
+#   ./k8s-cluster-setup.sh 3            # Start from step 3 (resume)
+#   ./k8s-cluster-setup.sh -vv          # Start from step 1 with verbose output
+#   ./k8s-cluster-setup.sh 3 -vvv       # Start from step 3 with more verbosity
 #
 # Prerequisites:
 #   - Ansible installed
@@ -25,8 +27,45 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Default starting step
-START_STEP=${1:-1}
+# Parse command line arguments
+START_STEP=1
+VERBOSITY=""
+
+# Process arguments
+for arg in "$@"; do
+    case $arg in
+        -v|--verbose)
+            VERBOSITY="-v"
+            shift
+            ;;
+        -vv)
+            VERBOSITY="-vv"
+            shift
+            ;;
+        -vvv)
+            VERBOSITY="-vvv"
+            shift
+            ;;
+        -vvvv)
+            VERBOSITY="-vvvv"
+            shift
+            ;;
+        -vvvvv)
+            VERBOSITY="-vvvvv"
+            shift
+            ;;
+        [0-9])
+            START_STEP=$arg
+            shift
+            ;;
+    esac
+done
+
+# Display verbosity mode if set
+if [ -n "$VERBOSITY" ]; then
+    echo -e "${YELLOW}Debug mode: Ansible verbosity level = ${VERBOSITY}${NC}"
+    echo ""
+fi
 
 # Function to print colored output
 print_step() {
@@ -110,7 +149,11 @@ if [ "$START_STEP" -eq 1 ]; then
     echo "  - Kubernetes Dashboard"
     echo "  - Ingress NGINX Controller"
     echo "  - Longhorn Storage"
-    echo "  - Test applications"
+    echo ""
+    echo "Usage Examples:"
+    echo "  ./k8s-cluster-setup.sh          # Start from step 1"
+    echo "  ./k8s-cluster-setup.sh -vv       # With verbose output"
+    echo "  ./k8s-cluster-setup.sh 3 -vvv    # Resume from step 3, very verbose"
     echo ""
     echo "Estimated time: 10-15 minutes"
 else
@@ -118,6 +161,9 @@ else
     echo ""
     echo "Steps before ${START_STEP} will be skipped."
     echo "To run from the beginning, use: ./k8s-cluster-setup.sh"
+    if [ -n "$VERBOSITY" ]; then
+        echo -e "${YELLOW}Verbosity: ${VERBOSITY}${NC}"
+    fi
 fi
 echo ""
 
@@ -144,7 +190,7 @@ echo ""
 print_step 1 "Preparing nodes for Kubernetes"
 
 if should_run_step 1; then
-    if ansible-playbook -i inventory.ini 01-prepare-nodes.yml; then
+    if ansible-playbook -i inventory.ini 01-prepare-nodes.yml $VERBOSITY; then
         print_success "Nodes prepared successfully"
     else
         print_error "Failed to prepare nodes"
@@ -159,7 +205,7 @@ fi
 print_step 2 "Installing containerd and nerdctl"
 
 if should_run_step 2; then
-    if ansible-playbook -i inventory.ini 5-install-containerd-nerdctl.yml; then
+    if ansible-playbook -i inventory.ini 5-install-containerd-nerdctl.yml $VERBOSITY; then
         print_success "Container runtime installed"
     else
         print_error "Failed to install container runtime"
@@ -174,7 +220,7 @@ fi
 print_step 3 "Initializing Kubernetes control plane"
 
 if should_run_step 3; then
-    if ansible-playbook -i inventory.ini 02-init-master.yml; then
+    if ansible-playbook -i inventory.ini 02-init-master.yml $VERBOSITY; then
         print_success "Control plane initialized"
     else
         print_error "Failed to initialize control plane"
@@ -189,7 +235,7 @@ fi
 print_step 4 "Joining worker nodes to cluster"
 
 if should_run_step 4; then
-    if ansible-playbook -i inventory.ini 04-join-workers.yml; then
+    if ansible-playbook -i inventory.ini 04-join-workers.yml $VERBOSITY; then
         print_success "Worker nodes joined"
     else
         print_error "Failed to join worker nodes"
@@ -204,7 +250,7 @@ fi
 print_step 5 "Installing Cilium CNI"
 
 if should_run_step 5; then
-    if ansible-playbook -i inventory.ini 03-install-cilium.yml; then
+    if ansible-playbook -i inventory.ini 03-install-cilium.yml $VERBOSITY; then
         print_success "Cilium CNI installed"
     else
         print_error "Failed to install Cilium"
@@ -219,7 +265,7 @@ fi
 print_step 6 "Installing Helm package manager"
 
 if should_run_step 6; then
-    if ansible-playbook -i inventory.ini 09-install-helm-binary.yml; then
+    if ansible-playbook -i inventory.ini 09-install-helm-binary.yml $VERBOSITY; then
         print_success "Helm installed"
     else
         print_error "Failed to install Helm"
@@ -239,7 +285,7 @@ if [ $START_STEP -le 6 ]; then
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         # Kubernetes Dashboard
         print_step 7 "Deploying Kubernetes Dashboard"
-        if ansible-playbook -i inventory.ini 10-deploy-kubernetes-dashboard.yml; then
+        if ansible-playbook -i inventory.ini 10-deploy-kubernetes-dashboard.yml $VERBOSITY; then
             print_success "Kubernetes Dashboard deployed"
         else
             print_error "Failed to deploy Dashboard"
@@ -247,7 +293,7 @@ if [ $START_STEP -le 6 ]; then
 
         # Ingress NGINX
         print_step 8 "Deploying Ingress NGINX Controller"
-        if ansible-playbook -i inventory.ini 13-deploy-ingress-nginx-controller.yml; then
+        if ansible-playbook -i inventory.ini 13-deploy-ingress-nginx-controller.yml $VERBOSITY; then
             print_success "Ingress NGINX Controller deployed"
         else
             print_error "Failed to deploy Ingress"
@@ -255,7 +301,7 @@ if [ $START_STEP -le 6 ]; then
 
         # Longhorn Storage
         print_step 9 "Deploying Longhorn Storage"
-        if ansible-playbook -i inventory.ini 14-deploy-longhorn-storage.yml; then
+        if ansible-playbook -i inventory.ini 14-deploy-longhorn-storage.yml $VERBOSITY; then
             print_success "Longhorn Storage deployed"
         else
             print_error "Failed to deploy Longhorn"
@@ -267,7 +313,7 @@ fi
 if [ $START_STEP -ge 7 ] && [ $START_STEP -le 9 ]; then
     if should_run_step 7; then
         print_step 7 "Deploying Kubernetes Dashboard"
-        if ansible-playbook -i inventory.ini 10-deploy-kubernetes-dashboard.yml; then
+        if ansible-playbook -i inventory.ini 10-deploy-kubernetes-dashboard.yml $VERBOSITY; then
             print_success "Kubernetes Dashboard deployed"
         else
             print_error "Failed to deploy Dashboard"
@@ -276,7 +322,7 @@ if [ $START_STEP -ge 7 ] && [ $START_STEP -le 9 ]; then
 
     if should_run_step 8; then
         print_step 8 "Deploying Ingress NGINX Controller"
-        if ansible-playbook -i inventory.ini 13-deploy-ingress-nginx-controller.yml; then
+        if ansible-playbook -i inventory.ini 13-deploy-ingress-nginx-controller.yml $VERBOSITY; then
             print_success "Ingress NGINX Controller deployed"
         else
             print_error "Failed to deploy Ingress"
@@ -285,7 +331,7 @@ if [ $START_STEP -ge 7 ] && [ $START_STEP -le 9 ]; then
 
     if should_run_step 9; then
         print_step 9 "Deploying Longhorn Storage"
-        if ansible-playbook -i inventory.ini 14-deploy-longhorn-storage.yml; then
+        if ansible-playbook -i inventory.ini 14-deploy-longhorn-storage.yml $VERBOSITY; then
             print_success "Longhorn Storage deployed"
         else
             print_error "Failed to deploy Longhorn"
