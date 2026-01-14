@@ -40,6 +40,14 @@
           - "Join Token: {{ join_token.stdout }}"
           - "CA Hash: sha256:{{ ca_cert_hash.stdout }}"
 
+    - name: Check which worker nodes are already joined
+      ansible.builtin.command:
+        cmd: kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: existing_nodes
+      changed_when: false
+
     - name: Set join information for all hosts
       ansible.builtin.add_host:
         name: "{{ item }}"
@@ -47,6 +55,7 @@
         master_join_ip: "{{ master_external_ip.stdout }}"
         worker_join_token: "{{ join_token.stdout }}"
         worker_ca_hash: "sha256:{{ ca_cert_hash.stdout }}"
+        already_joined: "{{ item + '.cloud.ut.ee' in existing_nodes.stdout }}"
       loop: "{{ groups['k8s_workers'] }}"
 
 - name: Join worker nodes to cluster
@@ -63,15 +72,16 @@
           - "Master IP: {{ master_join_ip }}"
           - "Join Token: {{ worker_join_token }}"
           - "CA Hash: {{ worker_ca_hash }}"
+          - "Already Joined: {{ already_joined | default(false) }}"
 
-    - name: Check if node is already joined
+    - name: Check if kubelet.conf exists
       ansible.builtin.stat:
         path: /etc/kubernetes/kubelet.conf
       register: kubelet_conf
 
-    - name: Node already joined status
+    - name: Display kubelet.conf status
       ansible.builtin.debug:
-        msg: "Node already part of cluster: {{ kubelet_conf.stat.exists }}"
+        msg: "Kubelet config exists: {{ kubelet_conf.stat.exists | default(false) }}"
 
     # ============== CREATE JOIN CONFIGURATION ==============
     - name: Create kubeadm join configuration
@@ -94,41 +104,42 @@
           kind: KubeletConfiguration
           apiVersion: kubelet.config.k8s.io/v1beta1
           cgroupDriver: systemd
+          readOnlyPort: 10250
           shutdownGracePeriod: 5m0s
           shutdownGracePeriodCriticalPods: 5m0s
           ---
         mode: '0644'
-      when: not kubelet_conf.stat.exists
+      when: not (kubelet_conf.stat.exists | default(false) | bool) and not (already_joined | default(false) | bool)
 
     - name: Display join config created
       ansible.builtin.debug:
         msg: "Join configuration created at /tmp/kubeadm-join.yaml"
-      when: not kubelet_conf.stat.exists
+      when: not (kubelet_conf.stat.exists | default(false) | bool) and not (already_joined | default(false) | bool)
 
     # ============== JOIN CLUSTER ==============
     - name: Reset existing kubeadm state if needed
       ansible.builtin.command:
         cmd: kubeadm reset --force
       register: kubeadm_reset
-      when: kubelet_conf.stat.exists
+      when: (kubelet_conf.stat.exists | default(false) | bool) and not (already_joined | default(false) | bool)
       failed_when: false
 
     - name: Reset kubelet
       ansible.builtin.systemd:
         name: kubelet
         state: restarted
-      when: kubelet_conf.stat.exists
+      when: (kubelet_conf.stat.exists | default(false) | bool) and not (already_joined | default(false) | bool)
 
     - name: Wait for kubelet restart
       ansible.builtin.pause:
         seconds: 5
-      when: kubelet_conf.stat.exists
+      when: (kubelet_conf.stat.exists | default(false) | bool) and not (already_joined | default(false) | bool)
 
     - name: Join worker node to cluster
       ansible.builtin.command:
         cmd: kubeadm join --config=/tmp/kubeadm-join.yaml --v=5
       register: kubeadm_join
-      when: not kubelet_conf.stat.exists or kubeadm_reset is defined
+      when: not (already_joined | default(false) | bool)
       # This can take a few minutes
 
     - name: Display join result
@@ -141,10 +152,11 @@
       ansible.builtin.debug:
         msg:
           - "================================================================"
-          - "WORKER NODE JOINED TO CLUSTER"
+          - "WORKER NODE JOIN STATUS"
           - "================================================================"
           - "Host: {{ inventory_hostname }}"
-          - "Join Status: {{ 'SUCCESS' if (kubeadm_join is defined and kubeadm_join.rc == 0) else 'ALREADY_JOINED' }}"
+          - "Join Status: {{ 'ALREADY_JOINED' if (already_joined | default(false) | bool) else 'SUCCESS' if (kubeadm_join is defined and kubeadm_join.rc == 0) else 'SKIPPED' }}"
+          - "Kubelet Config: {{ 'EXISTS' if (kubelet_conf.stat.exists | default(false) | bool) else 'NOT_FOUND' }}"
           - ""
           - "Master: {{ master_join_ip }}:6443"
           - "================================================================"
