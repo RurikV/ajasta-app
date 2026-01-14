@@ -106,9 +106,18 @@ ansible-playbook -i inventory.ini 13-deploy-ingress-nginx-controller.yml
 ```
 
 ### Longhorn Storage
+
 ```bash
 ansible-playbook -i inventory.ini 14-deploy-longhorn-storage.yml
 ```
+
+**Note**: This playbook:
+- Installs Longhorn distributed storage system
+- Creates local-storage StorageClass for manual PV provisioning
+- Optionally migrates existing MinIO deployments to Longhorn
+- Gracefully handles clusters without MinIO (skips migration)
+
+The playbook automatically detects if MinIO is deployed and only performs migration if MinIO StatefulSet exists.
 
 ### Test Application
 ```bash
@@ -176,6 +185,37 @@ sudo kubectl get nodes
 sudo kubectl get pods -A
 sudo kubectl get cs  # component status (deprecated in newer K8s)
 ```
+
+### Longhorn Storage Issues
+
+If the Longhorn deployment playbook fails:
+
+```bash
+# Check Longhorn pods
+sudo kubectl get pods -n longhorn-system
+
+# Check Longhorn volumes
+sudo kubectl get volumes -n longhorn-system
+
+# Check StorageClasses
+sudo kubectl get storageclass
+
+# View Longhorn UI
+kubectl --namespace longhorn-system port-forward --address 127.0.0.1 service/longhorn-frontend 5080:80
+# Open: http://localhost:5080
+```
+
+**MinIO Migration Skipped**: If you see "MINIO MIGRATION SKIPPED" message, this is normal behavior when MinIO is not deployed in your cluster. The playbook will continue and complete successfully.
+
+**MinIO Deployment Required**: To deploy MinIO with Longhorn storage:
+1. Create MinIO secret:
+```bash
+kubectl create secret generic minio-secret \
+  --from-literal=MINIO_ROOT_USER=minioadmin \
+  --from-literal=MINIO_ROOT_PASSWORD=minioadmin \
+  -n default
+```
+2. Re-run the Longhorn playbook to perform migration
 
 ### Check specific component
 
@@ -288,10 +328,3 @@ ansible-playbook -i inventory.ini 00-destroy-k8s-cluster.yml
 # Deploy apps
 ansible-playbook -i inventory.ini 06-deploy-test-app.yml
 ```
-
----
-
-**Last Updated**: 2025-01-13
-**Kubernetes Version**: 1.34.3
-**CNI**: Cilium
-**Maintainer**: Vladimir Rurik

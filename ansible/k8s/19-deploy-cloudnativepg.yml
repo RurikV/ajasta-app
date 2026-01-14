@@ -14,7 +14,7 @@
 
   vars:
     cnpg_namespace: "cnpg-system"
-    pg_namespace: "lab10"
+    pg_namespace: "postgresql-cluster"
     pg_cluster_name: "cluster-postgresql"
     pg_instances: 2
     pg_image: "ghcr.io/cloudnative-pg/postgresql:15.4"
@@ -53,7 +53,7 @@
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
 
-    - name: Create lab10 namespace
+    - name: Create postgresql-cluster namespace
       ansible.builtin.shell:
         cmd: kubectl create namespace {{ pg_namespace }} --dry-run=client -o yaml | kubectl apply -f -
       environment:
