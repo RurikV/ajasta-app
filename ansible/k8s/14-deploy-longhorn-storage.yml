@@ -4,8 +4,7 @@
 # 1. Creates local-storage StorageClass
 # 2. Creates local PV/PVC for MinIO
 # 3. Installs Longhorn storage system
-# 4. Creates test Longhorn workload
-# 5. Migrates MinIO to use Longhorn volumes
+# 4. Migrates MinIO to use Longhorn volumes
 # Usage:
 #   ansible-playbook -i inventory.ini 14-deploy-longhorn-storage.yml
 
@@ -20,7 +19,7 @@
     local_storage_path: /mnt/data
     minio_local_pv_name: minio-pv-0
     minio_local_pvc_name: minio-pvc-0
-    minio_namespace: production
+    minio_namespace: default
     minio_pv_size: 1Gi
 
     # Longhorn
@@ -47,8 +46,7 @@
           - "  2. Create local PV/PVC for MinIO"
           - "  3. Prepare nodes for Longhorn"
           - "  4. Install Longhorn"
-          - "  5. Create Longhorn test workload"
-          - "  6. Migrate MinIO to Longhorn"
+          - "  5. Migrate MinIO to Longhorn"
           - "================================================================"
 
     # ==============================================================
@@ -408,126 +406,7 @@
         msg: "{{ sc_final.stdout_lines }}"
 
     # ==============================================================
-    # PART 5: CREATE LONGHORN TEST WORKLOAD
-    # ==============================================================
-
-    - name: Display Longhorn test workload message
-      ansible.builtin.debug:
-        msg:
-          - "================================================================"
-          - "PART 5: LONGHORN TEST WORKLOAD"
-          - "================================================================"
-
-    - name: Create storage namespace
-      ansible.builtin.command:
-        cmd: kubectl create namespace {{ test_namespace }}
-      register: storage_ns
-      changed_when: storage_ns.rc == 0 or "already exists" in storage_ns.stderr
-      failed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-
-    - name: Create Longhorn test PVC and Pod manifest
-      ansible.builtin.copy:
-        dest: /tmp/longhorn-test.yaml
-        content: |
-          apiVersion: v1
-          kind: PersistentVolumeClaim
-          metadata:
-            name: longhorn-pvc
-            namespace: {{ test_namespace }}
-          spec:
-            accessModes:
-              - ReadWriteOnce
-            storageClassName: longhorn
-            resources:
-              requests:
-                storage: 1Gi
-          ---
-          apiVersion: v1
-          kind: Pod
-          metadata:
-            name: writer-pod
-            namespace: {{ test_namespace }}
-          spec:
-            containers:
-            - name: busybox
-              image: registry.hpc.ut.ee/mirror/library/busybox:1.36
-              command: ["/bin/sh", "-c", "echo 'Hello, Persistent Storage!' >> /data/hello.txt; sleep 3600"]
-              volumeMounts:
-              - name: longhorn-volume
-                mountPath: /data
-            volumes:
-            - name: longhorn-volume
-              persistentVolumeClaim:
-                claimName: longhorn-pvc
-        mode: '0644'
-
-    - name: Apply Longhorn test manifest
-      ansible.builtin.command:
-        cmd: kubectl apply -f /tmp/longhorn-test.yaml
-      register: longhorn_test_apply
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-
-    - name: Display Longhorn test result
-      ansible.builtin.debug:
-        msg: "{{ longhorn_test_apply.stdout_lines }}"
-
-    - name: Wait for writer-pod to be ready
-      ansible.builtin.command:
-        cmd: kubectl wait --for=condition=ready pod/writer-pod -n {{ test_namespace }} --timeout=120s
-      register: writer_ready
-      until: writer_ready.rc == 0
-      retries: 12
-      delay: 5
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      failed_when: false
-
-    - name: Display writer-pod ready
-      ansible.builtin.debug:
-        msg: "{{ writer_ready.stdout | default('writer-pod is ready', true) }}"
-
-    - name: Get Longhorn PVC
-      ansible.builtin.command:
-        cmd: kubectl get pvc -n {{ test_namespace }}
-      register: longhorn_pvc
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-
-    - name: Display Longhorn PVC
-      ansible.builtin.debug:
-        msg: "{{ longhorn_pvc.stdout_lines }}"
-
-    - name: Get Longhorn PV
-      ansible.builtin.shell:
-        cmd: kubectl get pv | grep longhorn || true
-      register: longhorn_pv
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-
-    - name: Display Longhorn PV
-      ansible.builtin.debug:
-        msg: "{{ longhorn_pv.stdout_lines }}"
-
-    - name: Get test pods
-      ansible.builtin.command:
-        cmd: kubectl get pods -n {{ test_namespace }}
-      register: test_pods
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-
-    - name: Display test pods
-      ansible.builtin.debug:
-        msg: "{{ test_pods.stdout_lines }}"
-
-    # ==============================================================
-    # PART 6: MIGRATE MINIO TO LONGHORN
+    # PART 5: MIGRATE MINIO TO LONGHORN
     # ==============================================================
 
     - name: Display MinIO migration message
@@ -774,11 +653,6 @@
           - "  - UI Port Forward: kubectl -n {{ longhorn_namespace }} port-forward svc/longhorn-frontend 5080:80"
           - "  - UI URL: http://localhost:5080"
           - ""
-          - "Test Workload:"
-          - "  - Namespace: {{ test_namespace }}"
-          - "  - PVC: longhorn-pvc"
-          - "  - Pod: writer-pod"
-          - ""
           - "MinIO Migration:"
           - "  - Migrated from local PV to Longhorn"
           - "  - VolumeClaimTemplate: minio-data (Longhorn, 1Gi)"
@@ -814,8 +688,7 @@
           - "  1. Local Storage Class (for manual PV provisioning)"
           - "  2. Local PV/PVC for MinIO (original setup)"
           - "  3. Longhorn distributed storage system"
-          - "  4. Longhorn test workload (writer-pod)"
-          - "  5. MinIO migrated to Longhorn volumes"
+          - "  4. MinIO migrated to Longhorn volumes"
           - ""
           - "Storage Comparison:"
           - "  Local Storage: Fast, node-specific, manual provisioning"
