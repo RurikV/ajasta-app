@@ -127,7 +127,7 @@
         state: directory
         mode: '0755'
       delegate_to: "{{ item }}"
-      loop: "{{ groups['k8s_nodes'] }}"
+      loop: "{{ groups['k8s_cluster'] }}"
 
     - name: Create MinIO PV directory on master node
       ansible.builtin.file:
