@@ -275,6 +275,21 @@ else
 fi
 
 # =================================================================
+# UPDATE LOCAL KUBECONFIG
+# =================================================================
+print_step "Updating local kubeconfig"
+
+if [ -f "./update-kubeconfig.sh" ]; then
+    if bash ./update-kubeconfig.sh 2>/dev/null; then
+        print_success "Local kubeconfig updated"
+    else
+        print_skip "Kubeconfig update skipped (non-critical)"
+    fi
+else
+    print_skip "update-kubeconfig.sh script not found (non-critical)"
+fi
+
+# =================================================================
 # OPTIONAL: Additional Components
 # =================================================================
 # Ask if user wants to install additional components

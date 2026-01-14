@@ -213,7 +213,7 @@
     # ============== VALIDATE CONTAINERD ==============
     - name: Pull test image using containerd (ctr)
       ansible.builtin.command:
-        cmd: ctr images pull registry.hpc.ut.ee/mirror/library/redis:alpine
+        cmd: ctr images pull redis:alpine
       register: ctr_pull
       changed_when: false
       failed_when: false  # Registry may be unreachable, not critical
@@ -224,7 +224,7 @@
 
     - name: Create test container with ctr
       ansible.builtin.command:
-        cmd: ctr run -d --name redis-test registry.hpc.ut.ee/mirror/library/redis:alpine redis
+        cmd: ctr run -d --name redis-test redis:alpine redis
       register: ctr_run
       changed_when: ctr_run.rc == 0
       failed_when: false
@@ -250,7 +250,7 @@
     # ============== VALIDATE NERDCTL ==============
     - name: Pull test image using nerdctl
       ansible.builtin.command:
-        cmd: nerdctl pull registry.hpc.ut.ee/mirror/library/nginx:alpine
+        cmd: nerdctl pull nginx:alpine
       register: nerdctl_pull
       changed_when: false
       failed_when: false  # Registry may be unreachable, not critical
@@ -261,7 +261,7 @@
 
     - name: Run whoami container for testing
       ansible.builtin.command:
-        cmd: nerdctl run -d --name whoami-test -p 8001:80 registry.hpc.ut.ee/mirror/containous/whoami
+        cmd: nerdctl run -d --name whoami-test -p 8001:80 containous/whoami
       register: nerdctl_run
       changed_when: nerdctl_run.rc == 0
       failed_when: false

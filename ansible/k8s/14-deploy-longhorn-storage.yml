@@ -350,6 +350,13 @@
         regexp: 'numberOfReplicas: "3"'
         replace: 'numberOfReplicas: "{{ longhorn_replicas }}"'
 
+    - name: Fix Longhorn manifest to use public registries
+      ansible.builtin.replace:
+        path: /tmp/longhorn.yaml
+        regexp: 'registry.hpc.ut.ee/mirror/'
+        replace: ''
+      ignore_errors: true
+
     - name: Apply Longhorn manifest
       ansible.builtin.command:
         cmd: kubectl apply -f /tmp/longhorn.yaml
@@ -559,7 +566,7 @@
               spec:
                 containers:
                 - name: minio
-                  image: registry.hpc.ut.ee/mirror/minio/minio:RELEASE.2024-09-13T20-26-02Z
+                  image: docker.io/minio/minio:RELEASE.2024-09-13T20-26-02Z
                   args:
                   - server
                   - /storage
