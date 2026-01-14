@@ -55,7 +55,7 @@
         master_join_ip: "{{ master_external_ip.stdout }}"
         worker_join_token: "{{ join_token.stdout }}"
         worker_ca_hash: "sha256:{{ ca_cert_hash.stdout }}"
-        already_joined: "{{ item + '.cloud.ut.ee' in existing_nodes.stdout }}"
+        already_joined: "{{ item in existing_nodes.stdout }}"
       loop: "{{ groups['k8s_workers'] }}"
 
 - name: Join worker nodes to cluster
@@ -98,7 +98,7 @@
               caCertHashes:
               - {{ worker_ca_hash }}
           nodeRegistration:
-            name: {{ inventory_hostname }}.cloud.ut.ee
+            name: {{ inventory_hostname }}
             criSocket: unix:///run/containerd/containerd.sock
           ---
           kind: KubeletConfiguration

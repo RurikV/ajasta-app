@@ -64,7 +64,7 @@
           apiVersion: kubeadm.k8s.io/v1beta3
           kind: InitConfiguration
           nodeRegistration:
-            name: "{{ inventory_hostname }}.cloud.ut.ee"
+            name: "{{ inventory_hostname }}"
             criSocket: "unix:///run/containerd/containerd.sock"
           ---
           kind: KubeletConfiguration
