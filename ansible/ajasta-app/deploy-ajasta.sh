@@ -60,11 +60,11 @@ for arg in "$@"; do
             echo "Usage: $0 [start_step] [-v|-vv|-vvv|-vvvv|-vvvvv]"
             echo ""
             echo "Arguments:"
-            echo "  start_step         Step number to start from (1-5)"
+            echo "  start_step         Step number to start from (1-6)"
             echo "  -v, -vv, -vvv      Ansible verbosity level"
             echo ""
             echo "Examples:"
-            echo "  $0                  # Run all steps (1-5)"
+            echo "  $0                  # Run all steps (1-6)"
             echo "  $0 3                # Start from step 3 (skip steps 1-2)"
             echo "  $0 -vv              # Run with verbose output"
             echo "  $0 3 -vvv           # Start from step 3 with more verbosity"
@@ -75,10 +75,19 @@ for arg in "$@"; do
             echo "  3. Deploy Frontend"
             echo "  4. Configure Ingress"
             echo "  5. Verify Deployment"
+            echo "  6. Configure TLS (Let's Encrypt - requires public domain!)"
             exit 0
             ;;
     esac
 done
+
+# Check if HELM is installed
+if ! command -v helm &> /dev/null; then
+    print_error "helm is not installed"
+    echo "TLS setup requires helm. Install with: brew install helm (macOS) or https://helm.sh/docs/intro/install/"
+    echo "To skip TLS setup, run: ./deploy-ajasta.sh 5"  # Stop after verification
+    exit 1
+fi
 
 # Display verbosity mode if set
 if [ -n "$VERBOSITY" ]; then
@@ -267,6 +276,66 @@ else
 fi
 
 # ==============================================================
+# STEP 6: Configure TLS (Let's Encrypt)
+# ==============================================================
+
+if [ "$START_STEP" -le 6 ]; then
+    print_step 6 "Configure TLS with Let's Encrypt"
+
+    echo "Configuring TLS with Let's Encrypt..."
+    echo "  - Deploying cert-manager"
+    echo "  - Configuring Let's Encrypt issuer"
+    echo "  - Enabling TLS on ingress"
+    echo ""
+    echo -e "${YELLOW}IMPORTANT: This step requires:${NC}"
+    echo "  1. A public domain name (not ajasta.local!)"
+    echo "  2. DNS pointing to your ingress controller"
+    echo "  3. Port 80 accessible from internet"
+    echo ""
+    echo -e "${YELLOW}Read: QUICKSTART.md section on TLS setup${NC}"
+    echo ""
+
+    # Deploy cert-manager
+    echo "Deploying cert-manager..."
+    if ansible-playbook -i "$INVENTORY" $VERBOSITY 26-deploy-cert-manager.yml; then
+        print_success "cert-manager deployed successfully"
+    else
+        print_error "cert-manager deployment failed"
+        echo "Check the log file for details: $LOG_FILE"
+        exit 1
+    fi
+
+    # Configure Let's Encrypt issuer
+    echo "Configuring Let's Encrypt issuer..."
+    if ansible-playbook -i "$INVENTORY" $VERBOSITY 27-configure-letsencrypt.yml; then
+        print_success "Let's Encrypt issuer configured successfully"
+    else
+        print_error "Let's Encrypt issuer configuration failed"
+        echo "Check the log file for details: $LOG_FILE"
+        exit 1
+    fi
+
+    # Deploy TLS ingress
+    echo "Deploying TLS-enabled ingress..."
+    if ansible-playbook -i "$INVENTORY" $VERBOSITY 28-deploy-ingress-tls.yml; then
+        print_success "TLS ingress deployed successfully"
+    else
+        print_error "TLS ingress deployment failed"
+        echo "Check the log file for details: $LOG_FILE"
+        echo ""
+        echo -e "${YELLOW}NOTE: TLS deployment may fail if:${NC}"
+        echo "  - You don't have a public domain name"
+        echo "  - DNS is not configured correctly"
+        echo "  - Port 80 is not accessible from internet"
+        echo ""
+        echo "You can skip TLS by running: ./deploy-ajasta.sh 5"
+        exit 1
+    fi
+else
+    print_skip "Step 6: TLS Configuration (skipped)"
+fi
+
+# ==============================================================
 # DEPLOYMENT COMPLETE
 # ==============================================================
 
@@ -281,27 +350,64 @@ echo "  ✓ Backend API (Spring Boot)"
 echo "  ✓ Frontend (React/Nginx)"
 echo "  ✓ Ingress Configuration"
 echo "  ✓ All components verified"
+
+# Check if TLS was configured
+if [ "$START_STEP" -le 6 ]; then
+    echo "  ✓ TLS with Let's Encrypt (cert-manager)"
+else
+    echo "  ⊘ TLS Configuration (skipped - run with step 6 to enable)"
+fi
+
 echo ""
 echo "Next Steps:"
 echo ""
-echo "1. Get Ingress Controller IP:"
-echo "   kubectl get svc -n ingress-nginx ingress-nginx-controller"
+
+# If TLS was configured
+if [ "$START_STEP" -le 6 ]; then
+    echo "TLS is enabled! Your application has HTTPS encryption."
+    echo ""
+    echo "1. Monitor certificate issuance:"
+    echo "   kubectl get certificate -n ajasta"
+    echo "   kubectl describe certificate -n ajasta ajasta-tls"
+    echo ""
+    echo "2. Access the application (once certificate is ready):"
+    echo "   Frontend: https://<YOUR_PUBLIC_DOMAIN>/"
+    echo "   Backend API: https://<YOUR_PUBLIC_DOMAIN>/api"
+    echo ""
+    echo "3. Current using STAGING environment (certificates are invalid)"
+    echo "   To switch to production, update playbook 28 and redeploy step 6"
+    echo ""
+else
+    echo "Access without TLS (HTTP only):"
+    echo ""
+    echo "1. Get Ingress Controller NodePort:"
+    echo "   kubectl get svc -n ingress-nginx ingress-nginx-controller"
+    echo ""
+    echo "2. Access the application:"
+    echo "   Frontend: http://<NODE_IP>:32402"
+    echo "   Backend API: http://<NODE_IP>:32402/api"
+    echo ""
+    echo "3. Optional: Add to /etc/hosts for local testing:"
+    echo "   <NODE_IP> ajasta.local"
+    echo ""
+    echo "4. To enable TLS with Let's Encrypt:"
+    echo "   ./deploy-ajasta.sh 6 -vv"
+    echo ""
+fi
+
+echo "Verify components:"
+echo "  kubectl get pods -n ajasta"
+echo "  kubectl get pods -n postgresql-cluster"
+echo "  kubectl get ingress -n ajasta"
+
+if [ "$START_STEP" -le 6 ]; then
+    echo "  kubectl get certificate -n ajasta"
+fi
+
 echo ""
-echo "2. Add to your /etc/hosts file:"
-echo "   <INGRESS_IP> ajasta.local"
-echo ""
-echo "3. Access the application:"
-echo "   Frontend: http://ajasta.local"
-echo "   Backend API: http://ajasta.local/api"
-echo ""
-echo "4. Verify components:"
-echo "   kubectl get pods -n ajasta"
-echo "   kubectl get pods -n postgresql-cluster"
-echo "   kubectl get ingress -n ajasta"
-echo ""
-echo "5. View logs:"
-echo "   kubectl logs -n ajasta -l component=backend -f"
-echo "   kubectl logs -n ajasta -l component=frontend -f"
+echo "View logs:"
+echo "  kubectl logs -n ajasta -l component=backend -f"
+echo "  kubectl logs -n ajasta -l component=frontend -f"
 echo ""
 echo "Log file: $LOG_FILE"
 echo "Deployment completed at: $(date)"

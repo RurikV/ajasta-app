@@ -1,0 +1,320 @@
+---
+# Configure Let's Encrypt Issuer for cert-manager
+# This playbook creates a ClusterIssuer for Let's Encrypt that will
+# automatically issue TLS certificates for your ingress resources
+# Usage:
+#   ansible-playbook -i ../k8s/inventory.ini 27-configure-letsencrypt.yml
+
+- name: Configure Let's Encrypt Issuer
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # Email for Let's Encrypt notifications
+    letsencrypt_email: "admin@ajasta.local"  # CHANGE THIS to your email!
+
+    # Environment: staging or production
+    # IMPORTANT: Start with staging to avoid hitting rate limits!
+    # Change to production when ready: letsencrypt_environment: "production"
+    letsencrypt_environment: "staging"
+
+    # Let's Encrypt servers
+    letsencrypt_staging_server: "https://acme-staging-v02.api.letsencrypt.org/directory"
+    letsencrypt_production_server: "https://acme-v02.api.letsencrypt.org/directory"
+
+    # Calculate the server based on environment
+    letsencrypt_server: "{{ letsencrypt_staging_server if letsencrypt_environment == 'staging' else letsencrypt_production_server }}"
+
+    # Issuer names
+    staging_issuer_name: "letsencrypt-staging"
+    production_issuer_name: "letsencrypt-prod"
+
+  tasks:
+    - name: Display Let's Encrypt configuration information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CONFIGURING LET'S ENCRYPT ISSUER"
+          - "================================================================"
+          - ""
+          - "This playbook configures cert-manager to automatically obtain"
+          - "TLS certificates from Let's Encrypt."
+          - ""
+          - "Configuration:"
+          - "  - Environment: {{ letsencrypt_environment }}"
+          - "  - Email: {{ letsencrypt_email }}"
+          - "  - Server: {{ letsencrypt_server }}"
+          - ""
+          - "IMPORTANT NOTES:"
+          - "  - Starting with STAGING environment to avoid rate limits"
+          - "  - Change to production when ready: letsencrypt_environment: 'production'"
+          - "  - UPDATE YOUR EMAIL ADDRESS!"
+          - "  - You MUST have a valid domain name pointing to your ingress"
+          - ""
+          - "Requirements:"
+          - "  1. Public domain name (e.g., ajasta.yourdomain.com)"
+          - "  2. DNS A record pointing to your ingress controller IP"
+          - "  3. Port 80 must be accessible from internet"
+          - ""
+          - "Rate Limits (Staging):"
+          - "  - Certificates per registered domain: Unlimited"
+          - "  - Valid certificates per Certificate: Unlimited"
+          - ""
+          - "Rate Limits (Production):"
+          - "  - Certificates per registered domain: 50 per week"
+          - "  - Failed validations: 5 failures per account, per hostname, per hour"
+          - "  - Duplicate certificates: 5 per week"
+          - ""
+          - "================================================================"
+
+    - name: Display warning about email and domain
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "WARNING!"
+          - "================================================================"
+          - ""
+          - "Before proceeding, ensure you have:"
+          - "  1. Updated 'letsencrypt_email' to your real email"
+          - "  2. A public domain name (not ajasta.local!)"
+          - "  3. DNS configured to point to your ingress"
+          - ""
+          - "Local domains like 'ajasta.local' will NOT work with Let's Encrypt!"
+          - ""
+          - "================================================================"
+
+    # ==============================================================
+    # PART 1: CREATE STAGING ISSUER
+    # ==============================================================
+
+    - name: Display staging issuer creation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 1: CREATING STAGING ISSUER"
+          - "================================================================"
+
+    - name: Create Let's Encrypt Staging ClusterIssuer manifest
+      ansible.builtin.copy:
+        dest: /tmp/letsencrypt-staging-issuer.yaml
+        content: |
+          apiVersion: cert-manager.io/v1
+          kind: ClusterIssuer
+          metadata:
+            name: {{ staging_issuer_name }}
+            labels:
+              app: ajasta
+              component: cert-manager
+          spec:
+            acme:
+              server: {{ letsencrypt_staging_server }}
+              email: {{ letsencrypt_email }}
+              privateKeySecretRef:
+                name: {{ staging_issuer_name }}
+              solvers:
+              - http01:
+                  ingress:
+                    class: nginx
+                  selector:
+                    matchLabels:
+                      app: ajasta
+        mode: '0644'
+
+    - name: Display staging issuer manifest created
+      ansible.builtin.debug:
+        msg: "Staging issuer manifest created at /tmp/letsencrypt-staging-issuer.yaml"
+
+    - name: Apply Let's Encrypt Staging ClusterIssuer
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/letsencrypt-staging-issuer.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: staging_issuer_apply
+
+    - name: Display staging issuer application
+      ansible.builtin.debug:
+        msg: "{{ staging_issuer_apply.stdout_lines }}"
+
+    - name: Pause for staging issuer to initialize
+      ansible.builtin.pause:
+        seconds: 10
+
+    # ==============================================================
+    # PART 2: CREATE PRODUCTION ISSUER (OPTIONAL)
+    # ==============================================================
+
+    - name: Display production issuer creation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 2: CREATING PRODUCTION ISSUER (OPTIONAL)"
+          - "================================================================"
+          - ""
+          - "NOTE: Production issuer created but NOT used by default."
+          - "      To use production, update ingress annotation."
+          - ""
+
+    - name: Create Let's Encrypt Production ClusterIssuer manifest
+      ansible.builtin.copy:
+        dest: /tmp/letsencrypt-production-issuer.yaml
+        content: |
+          apiVersion: cert-manager.io/v1
+          kind: ClusterIssuer
+          metadata:
+            name: {{ production_issuer_name }}
+            labels:
+              app: ajasta
+              component: cert-manager
+          spec:
+            acme:
+              server: {{ letsencrypt_production_server }}
+              email: {{ letsencrypt_email }}
+              privateKeySecretRef:
+                name: {{ production_issuer_name }}
+              solvers:
+              - http01:
+                  ingress:
+                    class: nginx
+                  selector:
+                    matchLabels:
+                      app: ajasta
+        mode: '0644'
+
+    - name: Display production issuer manifest created
+      ansible.builtin.debug:
+        msg: "Production issuer manifest created at /tmp/letsencrypt-production-issuer.yaml"
+
+    - name: Apply Let's Encrypt Production ClusterIssuer
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/letsencrypt-production-issuer.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: production_issuer_apply
+
+    - name: Display production issuer application
+      ansible.builtin.debug:
+        msg: "{{ production_issuer_apply.stdout_lines }}"
+
+    - name: Pause for production issuer to initialize
+      ansible.builtin.pause:
+        seconds: 10
+
+    # ==============================================================
+    # PART 3: VERIFY ISSUERS
+    # ==============================================================
+
+    - name: Display verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 3: VERIFYING ISSUERS"
+          - "================================================================"
+
+    - name: Wait for staging issuer to be ready
+      ansible.builtin.shell:
+        cmd: |
+          kubectl get clusterissuer {{ staging_issuer_name }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' | grep -q "True" || echo "not_ready"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: staging_issuer_ready
+      until: staging_issuer_ready.stdout == "True"
+      retries: 30
+      delay: 5
+      failed_when: false
+
+    - name: Get ClusterIssuers
+      ansible.builtin.command:
+        cmd: kubectl get clusterissuer
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: issuers
+      changed_when: false
+
+    - name: Display ClusterIssuers
+      ansible.builtin.debug:
+        msg: "{{ issuers.stdout_lines }}"
+
+    - name: Describe staging issuer
+      ansible.builtin.command:
+        cmd: kubectl describe clusterissuer {{ staging_issuer_name }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: issuer_details
+      changed_when: false
+
+    - name: Display staging issuer details
+      ansible.builtin.debug:
+        msg: "{{ issuer_details.stdout_lines }}"
+
+    # ==============================================================
+    # PART 4: SUMMARY
+    # ==============================================================
+
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "LET'S ENCRYPT CONFIGURATION COMPLETE"
+          - "================================================================"
+          - ""
+          - "ClusterIssuers Created:"
+          - "  - Staging: {{ staging_issuer_name }}"
+          - "  - Production: {{ production_issuer_name }}"
+          - ""
+          - "Email configured: {{ letsencrypt_email }}"
+          - ""
+          - "IMPORTANT: To obtain REAL certificates:"
+          - "  1. You must have a public domain name"
+          - "  2. DNS must point to your ingress controller"
+          - "  3. Update ingress to use the issuer"
+          - "  4. Change from staging to production when ready"
+          - ""
+          - "Current State:"
+          - "  - Using: {{ letsencrypt_environment }} environment"
+          - "  - Certificates will be: INVALID (staging uses fake CA)"
+          - ""
+          - "To switch to production:"
+          - "  1. Update ingress annotation:"
+          - "    cert-manager.io/cluster-issuer: {{ production_issuer_name }}"
+          - "  2. Delete existing certificate:"
+          - "    kubectl delete certificate -n ajasta ajasta-tls"
+          - "  3. Certificate will be re-issued with production CA"
+          - ""
+          - "Testing (with staging):"
+          - "  1. Update ingress host to your public domain"
+          - "  2. Apply TLS configuration (next step)"
+          - "  3. Certificate will be issued (but invalid)"
+          - "  4. Verify certificate: kubectl get certificate -n ajasta"
+          - ""
+          - "Useful Commands:"
+          - "  kubectl get clusterissuer"
+          - "  kubectl describe clusterissuer {{ staging_issuer_name }}"
+          - "  kubectl get certificaterequest -n ajasta"
+          - "  kubectl get certificate -n ajasta"
+          - "  kubectl describe certificate -n ajasta <cert-name>"
+          - "  kubectl logs -n cert-manager deployment/cert-manager"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "LET'S ENCRYPT ISSUER READY"
+          - "================================================================"
+          - ""
+          - "Your Let's Encrypt issuers are configured!"
+          - ""
+          - "Next Steps:"
+          - "  1. Ensure you have a public domain name"
+          - "  2. Update DNS to point to your ingress"
+          - "  3. Configure ingress with TLS (step 28)"
+          - "  4. Test with staging first"
+          - "  5. Switch to production when ready"
+          - ""
+          - "================================================================"

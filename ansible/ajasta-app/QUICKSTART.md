@@ -235,3 +235,212 @@ You'll know deployment succeeded when:
 **Time to deploy: ~5 minutes**
 **Total size: ~1.2GB (Docker images)**
 **Total resources: ~800m CPU / 832Mi RAM**
+
+## 🔐 TLS/HTTPS Configuration (Optional)
+
+### Enable TLS with Let's Encrypt
+
+The deployment script includes optional TLS setup using Let's Encrypt and cert-manager.
+
+**Requirements:**
+1. A public domain name (e.g., `ajasta.yourdomain.com`)
+2. DNS A record pointing to your ingress controller
+3. Port 80 accessible from the internet
+4. Helm installed (`brew install helm` on macOS)
+
+### Deploy with TLS
+
+```bash
+# Deploy everything including TLS
+./deploy-ajasta.sh 6 -vv
+
+# Or deploy TLS separately after initial deployment
+./deploy-ajasta.sh 6 -vv
+```
+
+**What happens:**
+1. Installs cert-manager (certificate management)
+2. Configures Let's Encrypt issuer (starts in staging mode)
+3. Updates ingress with TLS configuration
+4. Automatically obtains and installs certificates
+
+### Before Running TLS Setup
+
+**IMPORTANT:** You MUST update the configuration in `28-deploy-ingress-tls.yml`:
+
+```yaml
+# Change this to your ACTUAL public domain name
+tls_host: "ajasta.example.com"  # CHANGE THIS!
+```
+
+And update the email in `27-configure-letsencrypt.yml`:
+
+```yaml
+# Change to your email for Let's Encrypt notifications
+letsencrypt_email: "admin@ajasta.local"  # CHANGE THIS!
+```
+
+### DNS Configuration
+
+1. Get your ingress controller external IP or node IP:
+```bash
+kubectl get svc -n ingress-nginx ingress-nginx-controller
+```
+
+2. Create an A record in your DNS:
+```
+ajasta.yourdomain.com  A  <INGRESS_IP_OR_NODE_IP>
+```
+
+3. Verify DNS propagation:
+```bash
+dig ajasta.yourdomain.com
+nslookup ajasta.yourdomain.com
+```
+
+### Staging vs Production
+
+**Staging (Default):**
+- Unlimited certificates
+- Fake CA (not trusted by browsers)
+- No rate limits
+- Perfect for testing
+
+**Production:**
+- Real certificates trusted by browsers
+- Rate limits apply (50 per week per domain)
+- Switch when ready for production use
+
+**To switch to production:**
+
+1. Update `28-deploy-ingress-tls.yml`:
+```yaml
+letsencrypt_issuer: letsencrypt-prod  # Change from letsencrypt-staging
+```
+
+2. Delete existing certificate:
+```bash
+kubectl delete certificate -n ajasta ajasta-tls
+```
+
+3. Re-run TLS deployment:
+```bash
+./deploy-ajasta.sh 6 -vv
+```
+
+### Monitor Certificate Issuance
+
+```bash
+# Check certificate status
+kubectl get certificate -n ajasta
+
+# View certificate details
+kubectl describe certificate -n ajasta ajasta-tls
+
+# Check certificate requests
+kubectl get certificaterequest -n ajasta
+
+# View certificate request details
+kubectl describe certificaterequest -n ajasta <request-name>
+
+# View cert-manager logs
+kubectl logs -n cert-manager deployment/cert-manager -f
+```
+
+### Verify TLS is Working
+
+```bash
+# Test HTTPS access
+curl -I https://ajasta.yourdomain.com/
+
+# Check certificate details
+openssl s_client -connect ajasta.yourdomain.com:443 -servername ajasta.yourdomain.com
+
+# View certificate in browser
+# Visit https://ajasta.yourdomain.com in your browser
+```
+
+### Troubleshooting TLS
+
+**Certificate not issuing?**
+
+1. Check DNS is configured correctly:
+```bash
+dig ajasta.yourdomain.com
+```
+
+2. Verify port 80 is accessible:
+```bash
+curl http://ajasta.yourdomain.com/
+```
+
+3. Check certificate request errors:
+```bash
+kubectl describe certificaterequest -n ajasta
+```
+
+4. Review cert-manager logs:
+```bash
+kubectl logs -n cert-manager deployment/cert-manager --tail=100
+```
+
+**Common errors:**
+
+- `no matching challenge`: DNS not pointing correctly or wrong domain
+- `timeout`: Let's Encrypt can't reach your server (check firewall/port 80)
+- `rate limit`: Too many certificate requests (use staging for testing)
+- `urn:acme:error:unauthorized`: Domain validation failed (check DNS)
+
+**Force certificate retry:**
+
+```bash
+# Delete certificate to force re-issuance
+kubectl delete certificate -n ajasta ajasta-tls
+
+# Watch new certificate being created
+kubectl get certificate -n ajasta -w
+```
+
+### Certificate Auto-Renewal
+
+cert-manager automatically renews certificates before they expire (30 days before).
+
+Check renewal status:
+```bash
+kubectl describe certificate -n ajasta ajasta-tls | grep -A 5 Renewal
+```
+
+### Accessing the Application with TLS
+
+Once the certificate is issued and ready:
+
+```bash
+# HTTPS access (automatic redirect from HTTP)
+Frontend:  https://ajasta.yourdomain.com/
+Backend:   https://ajasta.yourdomain.com/api
+
+# HTTP will automatically redirect to HTTPS
+http://ajasta.yourdomain.com → https://ajasta.yourdomain.com
+```
+
+### Skip TLS Setup
+
+If you don't have a public domain or don't need TLS:
+
+```bash
+# Deploy without TLS (HTTP only)
+./deploy-ajasta.sh 5
+
+# Access via NodePort
+Frontend:  http://<NODE_IP>:32402
+Backend:   http://<NODE_IP>:32402/api
+```
+
+## 📚 Additional Documentation
+
+- **README.md** - Complete documentation
+- **DEPLOYMENT_CHECKLIST.md** - Detailed step-by-step guide
+- **20-deploy-ajasta-app.yml** - Deployment reference
+- **26-deploy-cert-manager.yml** - cert-manager installation
+- **27-configure-letsencrypt.yml** - Let's Encrypt configuration
+- **28-deploy-ingress-tls.yml** - TLS ingress setup

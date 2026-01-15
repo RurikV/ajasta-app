@@ -1,0 +1,432 @@
+---
+# Deploy TLS-enabled Ingress with Let's Encrypt
+# This playbook updates the Ajasta ingress to use TLS with automatic
+# certificate management from Let's Encrypt via cert-manager
+# Usage:
+#   ansible-playbook -i ../k8s/inventory.ini 28-deploy-ingress-tls.yml
+
+- name: Deploy TLS-enabled Ingress
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # Namespace
+    namespace: ajasta
+
+    # Ingress configuration
+    ingress_name: ajasta-ingress
+    ingress_class: nginx
+
+    # Certificate configuration
+    certificate_name: ajasta-tls
+    letsencrypt_issuer: letsencrypt-staging  # Change to letsencrypt-prod for production
+
+    # IMPORTANT: Set your PUBLIC domain name here
+    # This must be a real domain name that you own and control
+    # Local domains like "ajasta.local" will NOT work with Let's Encrypt!
+    tls_host: "ajasta.example.com"  # CHANGE THIS!
+
+  tasks:
+    - name: Display TLS ingress deployment information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYING TLS-ENABLED INGRESS"
+          - "================================================================"
+          - ""
+          - "This playbook configures TLS encryption for your Ajasta application"
+          - "using Let's Encrypt certificates managed by cert-manager."
+          - ""
+          - "Configuration:"
+          - "  - Ingress: {{ ingress_name }}"
+          - "  - Certificate: {{ certificate_name }}"
+          - "  - Let's Encrypt Issuer: {{ letsencrypt_issuer }}"
+          - "  - TLS Host: {{ tls_host }}"
+          - ""
+          - "CRITICAL REQUIREMENTS:"
+          - "  1. You MUST update 'tls_host' to your PUBLIC domain name"
+          - "  2. Domain must be owned and controlled by you"
+          - "  3. DNS A record must point to your ingress controller IP"
+          - "  4. Port 80 must be accessible from internet"
+          - ""
+          - "WARNING:"
+          - "  Local domains like 'ajasta.local' WILL NOT WORK!"
+          - "  Let's Encrypt requires valid public domain names!"
+          - ""
+          - "Process:"
+          - "  1. Ingress will be updated with TLS configuration"
+          - "  2. cert-manager will automatically request certificate"
+          - "  3. Let's Encrypt will validate domain ownership"
+          - "  4. Certificate will be issued and stored in Kubernetes secret"
+          - "  5. Ingress will start using the certificate"
+          - ""
+          - "================================================================"
+
+    - name: Display warning about domain name
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CRITICAL WARNING!"
+          - "================================================================"
+          - ""
+          - "If tls_host is not set to a REAL public domain name:"
+          - "  - Certificate issuance will FAIL"
+          - "  - You will see errors in certificate requests"
+          - "  - Your site will not be accessible via HTTPS"
+          - ""
+          - "Current tls_host value: {{ tls_host }}"
+          - ""
+          - "If this is not your domain, STOP and update the playbook!"
+          - ""
+          - "================================================================"
+      when: tls_host == "ajasta.example.com"
+
+    # ==============================================================
+    # PART 1: BACKUP EXISTING INGRESS
+    # ==============================================================
+
+    - name: Display backup message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 1: BACKING UP EXISTING INGRESS"
+          - "================================================================"
+
+    - name: Get current ingress
+      ansible.builtin.command:
+        cmd: kubectl get ingress {{ ingress_name }} -n {{ namespace }} -o yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: current_ingress
+      changed_when: false
+      failed_when: false
+
+    - name: Backup current ingress
+      ansible.builtin.copy:
+        content: "{{ current_ingress.stdout }}"
+        dest: /tmp/{{ ingress_name }}-backup.yaml
+        mode: '0644'
+      when: current_ingress.rc == 0
+
+    - name: Display backup status
+      ansible.builtin.debug:
+        msg: "{{ 'Existing ingress backed up' if current_ingress.rc == 0 else 'No existing ingress to backup' }}"
+
+    # ==============================================================
+    # PART 2: DELETE EXISTING INGRESS
+    # ==============================================================
+
+    - name: Display ingress deletion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 2: DELETING EXISTING INGRESS"
+          - "================================================================"
+
+    - name: Delete existing ingress
+      ansible.builtin.command:
+        cmd: kubectl delete ingress {{ ingress_name }} -n {{ namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_delete
+      failed_when: false
+      ignore_errors: yes
+
+    - name: Display ingress deletion
+      ansible.builtin.debug:
+        msg: "{{ ingress_delete.stdout_lines if ingress_delete.rc == 0 else ['No existing ingress to delete'] }}"
+
+    - name: Pause for ingress deletion
+      ansible.builtin.pause:
+        seconds: 5
+      when: ingress_delete.rc == 0
+
+    # ==============================================================
+    # PART 3: CREATE TLS-ENABLED INGRESS
+    # ==============================================================
+
+    - name: Display TLS ingress creation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 3: CREATING TLS-ENABLED INGRESS"
+          - "================================================================"
+
+    - name: Create TLS-enabled ingress manifest
+      ansible.builtin.copy:
+        dest: /tmp/{{ ingress_name }}-tls.yaml
+        content: |
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: {{ ingress_name }}
+            namespace: {{ namespace }}
+            labels:
+              app: ajasta
+            annotations:
+              # NGINX Ingress annotations
+              nginx.ingress.kubernetes.io/ssl-redirect: "true"
+              nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+              nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+              nginx.ingress.kubernetes.io/proxy-connect-timeout: "75"
+              nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+              nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+
+              # cert-manager annotations
+              cert-manager.io/cluster-issuer: "{{ letsencrypt_issuer }}"
+              cert-manager.io/acme-challenge-type: "http01"
+
+              # HTTP01 challenge configuration
+              acme.cert-manager.io/http01-edit-in-place: "true"
+          spec:
+            ingressClassName: {{ ingress_class }}
+            tls:
+            - hosts:
+              - {{ tls_host }}
+              secretName: {{ certificate_name }}
+            rules:
+            - host: {{ tls_host }}
+              http:
+                paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: ajasta-frontend
+                      port:
+                        number: 80
+                - path: /api
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: ajasta-backend
+                      port:
+                        number: 8090
+        mode: '0644'
+
+    - name: Display TLS ingress manifest created
+      ansible.builtin.debug:
+        msg: "TLS-enabled ingress manifest created at /tmp/{{ ingress_name }}-tls.yaml"
+
+    - name: Apply TLS-enabled ingress
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/{{ ingress_name }}-tls.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: tls_ingress_apply
+
+    - name: Display TLS ingress application
+      ansible.builtin.debug:
+        msg: "{{ tls_ingress_apply.stdout_lines }}"
+
+    - name: Pause for ingress to initialize
+      ansible.builtin.pause:
+        seconds: 5
+
+    # ==============================================================
+    # PART 4: VERIFY CERTIFICATE ISSUANCE
+    # ==============================================================
+
+    - name: Display certificate verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 4: VERIFYING CERTIFICATE ISSUANCE"
+          - "================================================================"
+
+    - name: Wait for certificate resource to be created
+      ansible.builtin.shell:
+        cmd: |
+          kubectl get certificate {{ certificate_name }} -n {{ namespace }} -o jsonpath='{.metadata.name}' || echo "not_found"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cert_check
+      until: cert_check.stdout == certificate_name
+      retries: 30
+      delay: 5
+      failed_when: false
+
+    - name: Display certificate creation status
+      ansible.builtin.debug:
+        msg: "{{ 'Certificate resource created' if cert_check.stdout == certificate_name else 'Certificate resource not found yet' }}"
+
+    - name: Get certificate details
+      ansible.builtin.command:
+        cmd: kubectl get certificate {{ certificate_name }} -n {{ namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: certificate
+      changed_when: false
+      failed_when: false
+
+    - name: Display certificate
+      ansible.builtin.debug:
+        msg: "{{ certificate.stdout_lines if certificate.rc == 0 else ['Certificate not yet issued'] }}"
+
+    - name: Get certificate requests
+      ansible.builtin.command:
+        cmd: kubectl get certificaterequest -n {{ namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cert_requests
+      changed_when: false
+      failed_when: false
+
+    - name: Display certificate requests
+      ansible.builtin.debug:
+        msg: "{{ cert_requests.stdout_lines if cert_requests.rc == 0 else ['No certificate requests yet'] }}"
+
+    - name: Describe certificate if it exists
+      ansible.builtin.command:
+        cmd: kubectl describe certificate {{ certificate_name }} -n {{ namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: certificate_describe
+      changed_when: false
+      failed_when: false
+      when: certificate.rc == 0
+
+    - name: Display certificate details
+      ansible.builtin.debug:
+        msg: "{{ certificate_describe.stdout_lines if certificate_describe.skipped | default(false) == false and certificate.rc == 0 else [] }}"
+
+    - name: Wait for certificate to be issued (up to 5 minutes)
+      ansible.builtin.shell:
+        cmd: |
+          kubectl get certificate {{ certificate_name }} -n {{ namespace }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' | grep -q "True" || echo "not_ready"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cert_ready
+      until: cert_ready.stdout == "True"
+      retries: 60
+      delay: 5
+      failed_when: false
+
+    - name: Display certificate readiness
+      ansible.builtin.debug:
+        msg: "{{ 'Certificate issued successfully!' if cert_ready.stdout == 'True' else 'Certificate not ready yet (this may take a few minutes)' }}"
+
+    # ==============================================================
+    # PART 5: VERIFY INGRESS
+    # ==============================================================
+
+    - name: Display ingress verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 5: VERIFYING INGRESS"
+          - "================================================================"
+
+    - name: Get ingress resources
+      ansible.builtin.command:
+        cmd: kubectl get ingress -n {{ namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_resources
+      changed_when: false
+
+    - name: Display ingress resources
+      ansible.builtin.debug:
+        msg: "{{ ingress_resources.stdout_lines }}"
+
+    - name: Get detailed ingress information
+      ansible.builtin.command:
+        cmd: kubectl describe ingress {{ ingress_name }} -n {{ namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_details
+      changed_when: false
+
+    - name: Display ingress details
+      ansible.builtin.debug:
+        msg: "{{ ingress_details.stdout_lines }}"
+
+    # ==============================================================
+    # PART 6: SUMMARY
+    # ==============================================================
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "TLS INGRESS DEPLOYMENT COMPLETE"
+          - "================================================================"
+          - ""
+          - "Configuration Summary:"
+          - "  - Ingress: {{ ingress_name }}"
+          - "  - Certificate: {{ certificate_name }}"
+          - "  - Issuer: {{ letsencrypt_issuer }}"
+          - "  - TLS Host: {{ tls_host }}"
+          - ""
+          - "Next Steps:"
+          - "  1. Verify certificate issuance:"
+          - "     kubectl get certificate -n {{ namespace }}"
+          - "     kubectl describe certificate -n {{ namespace }} {{ certificate_name }}"
+          - ""
+          - "  2. Check certificate request status:"
+          - "     kubectl get certificaterequest -n {{ namespace }}"
+          - "     kubectl describe certificaterequest -n {{ namespace }} <name>"
+          - ""
+          - "  3. View cert-manager logs if issues:"
+          - "     kubectl logs -n cert-manager deployment/cert-manager -f"
+          - ""
+          - "  4. Test HTTPS access once certificate is ready:"
+          - "     curl -I https://{{ tls_host }}/"
+          - ""
+          - "Troubleshooting:"
+          - "  - If certificate fails to issue:"
+          - "    1. Check DNS points to ingress controller"
+          - "    2. Verify domain is public (not local)"
+          - "    3. Check port 80 is accessible"
+          - "    4. Review certificate request errors"
+          - "    5. Check cert-manager logs"
+          - ""
+          - "  - Common errors:"
+          - "    - 'no matching challenge': Wrong domain or DNS issue"
+          - "    - 'timeout': Let's Encrypt can't reach your server"
+          - "    - 'rate limit': Too many requests to Let's Encrypt"
+          - ""
+          - "Switching to Production:"
+          - "  1. Update letsencrypt_issuer to 'letsencrypt-prod'"
+          - "  2. Delete certificate: kubectl delete certificate -n {{ namespace }} {{ certificate_name }}"
+          - "  3. Re-run this playbook"
+          - ""
+          - "Useful Commands:"
+          - "  kubectl get certificate -n {{ namespace }}"
+          - "  kubectl describe certificate -n {{ namespace }} {{ certificate_name }}"
+          - "  kubectl get certificaterequest -n {{ namespace }}"
+          - "  kubectl get secret {{ certificate_name }} -n {{ namespace }}"
+          - "  kubectl get ingress -n {{ namespace }}"
+          - "  curl -Iv https://{{ tls_host }}/"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "TLS INGRESS CONFIGURED"
+          - "================================================================"
+          - ""
+          - "Your Ajasta application now has TLS enabled!"
+          - ""
+          - "IMPORTANT NOTES:"
+          - "  1. Certificate may take a few minutes to be issued"
+          - "  2. Staging certificates are NOT trusted by browsers"
+          - "  3. Switch to production for real certificates"
+          - "  4. Monitor certificate status regularly"
+          - ""
+          - "Access the application:"
+          - "  - HTTPS: https://{{ tls_host }}/"
+          - "  - HTTP will redirect to HTTPS automatically"
+          - ""
+          - "Monitor certificate renewal:"
+          - "  cert-manager auto-renews before expiration"
+          - "  Check: kubectl get certificate -n ajasta"
+          - ""
+          - "================================================================"

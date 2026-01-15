@@ -1,0 +1,286 @@
+---
+# Deploy cert-manager for Let's Encrypt TLS certificates
+# This playbook installs cert-manager which will automatically manage
+# TLS certificates from Let's Encrypt for your Kubernetes ingress
+# Usage:
+#   ansible-playbook -i ../k8s/inventory.ini 26-deploy-cert-manager.yml
+
+- name: Deploy cert-manager
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # cert-manager version
+    cert_manager_version: "v1.13.1"
+    cert_manager_repo: "https://github.com/cert-manager/cert-manager/releases/download"
+
+    # Namespace
+    cert_manager_namespace: "cert-manager"
+
+  tasks:
+    - name: Display cert-manager deployment information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYING CERT-MANAGER"
+          - "================================================================"
+          - ""
+          - "cert-manager is a Kubernetes add-on to automate the management"
+          - "and issuance of TLS certificates from various issuing sources."
+          - ""
+          - "Configuration:"
+          - "  - Version: {{ cert_manager_version }}"
+          - "  - Namespace: {{ cert_manager_namespace }}"
+          - "  - Purpose: Let's Encrypt certificate automation"
+          - ""
+          - "================================================================"
+
+    # ==============================================================
+    # PART 1: CREATE NAMESPACE
+    # ==============================================================
+
+    - name: Display namespace creation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 1: CREATING NAMESPACE"
+          - "================================================================"
+
+    - name: Create cert-manager namespace
+      ansible.builtin.shell:
+        cmd: kubectl create namespace {{ cert_manager_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: namespace_create
+
+    - name: Display namespace creation result
+      ansible.builtin.debug:
+        msg: "{{ namespace_create.stdout_lines }}"
+
+    # ==============================================================
+    # PART 2: INSTALL CERT-MANAGER
+    # ==============================================================
+
+    - name: Display cert-manager installation message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 2: INSTALLING CERT-MANAGER"
+          - "================================================================"
+
+    - name: Check if cert-manager is already installed
+      ansible.builtin.command:
+        cmd: kubectl get deployment -n {{ cert_manager_namespace }} cert-manager
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cert_manager_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set cert-manager installed fact
+      ansible.builtin.set_fact:
+        cert_manager_installed: "{{ cert_manager_check.rc == 0 }}"
+
+    - name: Display cert-manager status
+      ansible.builtin.debug:
+        msg: "cert-manager {{ 'already installed' if cert_manager_installed else 'not installed, will deploy' }}"
+
+    - name: Disable validation webhook temporarily
+      ansible.builtin.shell:
+        cmd: |
+          cat > /tmp/cert-manager-no-webhook.yaml <<EOF
+          apiVersion: cert-manager.io/v1
+          kind: Installation
+          metadata:
+            name: cert-manager
+            namespace: cert-manager
+          spec:
+            # This webhook configuration is not necessary for cert-manager to function
+            webhook:
+              enabled: false
+          EOF
+      register: webhook_config
+      when: not cert_manager_installed
+
+    - name: Download cert-manager CRDs
+      ansible.builtin.get_url:
+        url: "{{ cert_manager_repo }}/{{ cert_manager_version }}/cert-manager.crds.yaml"
+        dest: /tmp/cert-manager-crds.yaml
+        mode: '0644'
+      register: crds_download
+      when: not cert_manager_installed
+
+    - name: Display CRDs download
+      ansible.builtin.debug:
+        msg: "cert-manager CRDs downloaded"
+      when: not cert_manager_installed
+
+    - name: Apply cert-manager CRDs
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/cert-manager-crds.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: crds_apply
+      when: not cert_manager_installed
+
+    - name: Display CRDs application
+      ansible.builtin.debug:
+        msg: "{{ crds_apply.stdout_lines }}"
+      when: not cert_manager_installed
+
+    - name: Add jetstack Helm repository
+      ansible.builtin.shell:
+        cmd: helm repo add jetstack https://charts.jetstack.io || true
+      register: helm_repo_add
+      changed_when: false
+      when: not cert_manager_installed
+
+    - name: Update Helm repository
+      ansible.builtin.shell:
+        cmd: helm repo update
+      register: helm_repo_update
+      when: not cert_manager_installed
+
+    - name: Display Helm repository update
+      ansible.builtin.debug:
+        msg: "Helm repository updated"
+      when: not cert_manager_installed
+
+    - name: Install cert-manager using Helm
+      ansible.builtin.shell:
+        cmd: |
+          helm install cert-manager jetstack/cert-manager \
+            --namespace {{ cert_manager_namespace }} \
+            --version {{ cert_manager_version }} \
+            --set installCRDs=true \
+            --set webhook.enabled=false \
+            --set prometheus.enabled=false \
+            --set global.leaderElection.namespace={{ cert_manager_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: helm_install
+      when: not cert_manager_installed
+      ignore_errors: yes
+
+    - name: Alternative: Install cert-manager using manifest
+      ansible.builtin.get_url:
+        url: "{{ cert_manager_repo }}/{{ cert_manager_version }}/cert-manager.yaml"
+        dest: /tmp/cert-manager.yaml
+        mode: '0644'
+      register: manifest_download
+      when: not cert_manager_installed and helm_install is failed
+
+    - name: Apply cert-manager manifest
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/cert-manager.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: manifest_apply
+      when: not cert_manager_installed and helm_install is failed
+
+    - name: Display cert-manager installation
+      ansible.builtin.debug:
+        msg: "{{ manifest_apply.stdout_lines if manifest_apply.skipped | default(false) == false else helm_install.stdout_lines }}"
+      when: not cert_manager_installed
+
+    - name: Pause for cert-manager to initialize
+      ansible.builtin.pause:
+        seconds: 20
+      when: not cert_manager_installed
+
+    # ==============================================================
+    # PART 3: VERIFY CERT-MANAGER INSTALLATION
+    # ==============================================================
+
+    - name: Display verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 3: VERIFYING CERT-MANAGER INSTALLATION"
+          - "================================================================"
+
+    - name: Wait for cert-manager pods to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=cert-manager -n {{ cert_manager_namespace }} --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cert_manager_wait
+      until: cert_manager_wait.rc == 0
+      retries: 30
+      delay: 5
+
+    - name: Get cert-manager pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ cert_manager_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cert_manager_pods
+      changed_when: false
+
+    - name: Display cert-manager pods
+      ansible.builtin.debug:
+        msg: "{{ cert_manager_pods.stdout_lines }}"
+
+    - name: Get cert-manager deployment
+      ansible.builtin.command:
+        cmd: kubectl get deployment -n {{ cert_manager_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cert_manager_deployment
+      changed_when: false
+
+    - name: Display cert-manager deployment
+      ansible.builtin.debug:
+        msg: "{{ cert_manager_deployment.stdout_lines }}"
+
+    # ==============================================================
+    # PART 4: SUMMARY
+    # ==============================================================
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CERT-MANAGER DEPLOYMENT COMPLETE"
+          - "================================================================"
+          - ""
+          - "cert-manager is now installed and ready to manage certificates!"
+          - ""
+          - "Components Installed:"
+          - "  - cert-manager: Certificate controller"
+          - "  - Namespace: {{ cert_manager_namespace }}"
+          - "  - Version: {{ cert_manager_version }}"
+          - ""
+          - "Next Steps:"
+          - "  1. Create a Let's Encrypt ClusterIssuer (step 27)"
+          - "  2. Update Ingress to use TLS (step 28)"
+          - "  3. Certificate will be automatically obtained"
+          - ""
+          - "Useful Commands:"
+          - "  kubectl get pods -n {{ cert_manager_namespace }}"
+          - "  kubectl get clusterissuers"
+          - "  kubectl get certificates -n ajasta"
+          - "  kubectl describe certificate -n ajasta"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CERT-MANAGER READY"
+          - "================================================================"
+          - ""
+          - "Your cert-manager installation is complete!"
+          - ""
+          - "Next Steps:"
+          - "  1. Configure Let's Encrypt issuer"
+          - "  2. Update ingress for TLS"
+          - "  3. Verify certificate issuance"
+          - ""
+          - "================================================================"

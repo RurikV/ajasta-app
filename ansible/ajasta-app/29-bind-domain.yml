@@ -1,0 +1,554 @@
+---
+# Bind Domain to Ajasta Application
+# This playbook configures your domain name for the Ajasta application
+# Usage:
+#   ansible-playbook -i ../k8s/inventory.ini 29-bind-domain.yml
+#
+# Variables:
+#   domain_name: Your domain name (default: ajasta.top)
+#   email: Your email for Let's Encrypt (default: admin@ajasta.top)
+
+- name: Bind Domain to Ajasta Application
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # Domain configuration
+    domain_name: "ajasta.top"
+    email: "admin@ajasta.top"
+
+    # Namespaces
+    ajasta_namespace: "ajasta"
+
+    # Ingress configuration
+    ingress_name: "ajasta-ingress"
+
+  tasks:
+    - name: Display domain binding information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "BINDING DOMAIN TO AJASTA APPLICATION"
+          - "================================================================"
+          - ""
+          - "This playbook configures your domain for Ajasta application."
+          - ""
+          - "Configuration:"
+          - "  - Domain: {{ domain_name }}"
+          - "  - Email: {{ email }}"
+          - "  - Namespace: {{ ajasta_namespace }}"
+          - ""
+          - "What will be done:"
+          - "  1. Update TLS ingress with domain name"
+          - "  2. Update Let's Encrypt email"
+          - "  3. Delete old ingress (if exists)"
+          - "  4. Create new TLS-enabled ingress"
+          - "  5. Display DNS configuration instructions"
+          - ""
+          - "================================================================"
+
+    - name: Display important notes
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "IMPORTANT: DNS CONFIGURATION REQUIRED"
+          - "================================================================"
+          - ""
+          - "Before proceeding, ensure you have:"
+          - "  1. Access to DNS management for {{ domain_name }}"
+          - "  2. Your ingress controller external IP or node IP"
+          - ""
+          - "After this playbook completes, you will need to:"
+          - "  1. Create an A record in your DNS"
+          - "  2. Point it to your ingress controller IP"
+          - "  3. Wait for DNS propagation (5-30 minutes)"
+          - "  4. Verify with: dig {{ domain_name }}"
+          - ""
+          - "================================================================"
+
+    # ==============================================================
+    # PART 1: GET INGRESS CONTROLLER IP
+    # ==============================================================
+
+    - name: Display ingress controller IP retrieval message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 1: RETRIEVING INGRESS CONTROLLER IP"
+          - "================================================================"
+
+    - name: Get ingress controller service
+      ansible.builtin.command:
+        cmd: kubectl get svc -n ingress-nginx ingress-nginx-controller
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_svc
+      changed_when: false
+
+    - name: Display ingress controller service
+      ansible.builtin.debug:
+        msg: "{{ ingress_svc.stdout_lines }}"
+
+    - name: Get ingress controller pod node
+      ansible.builtin.shell:
+        cmd: kubectl get pods -n ingress-nginx -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].spec.nodeName}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_pod_node
+      changed_when: false
+
+    - name: Get node's external IP from inventory
+      ansible.builtin.shell:
+        cmd: |
+          NODE_NAME="{{ ingress_pod_node.stdout }}"
+          # Map node names to external IPs from inventory
+          case "$NODE_NAME" in
+            master-node)
+              echo "178.154.192.52"
+              ;;
+            worker-node-0)
+              echo "178.154.194.51"
+              ;;
+            worker-node-1)
+              echo "178.154.197.121"
+              ;;
+            worker-node-2)
+              echo "158.160.78.6"
+              ;;
+            *)
+              # Fallback: get first worker IP
+              grep "worker-node-0" /etc/ansible/inventory.ini 2>/dev/null | head -1 | awk '{print $2}' || echo "178.154.197.121"
+              ;;
+          esac
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_external_ip
+      changed_when: false
+
+    - name: Get ingress controller NodePort
+      ansible.builtin.command:
+        cmd: kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_nodeport
+      changed_when: false
+
+    - name: Set access IP
+      ansible.builtin.set_fact:
+        access_ip: "{{ ingress_external_ip.stdout }}"
+        access_port: "{{ ingress_nodeport.stdout }}"
+
+    - name: Display access information
+      ansible.builtin.debug:
+        msg:
+          - "Ingress Controller Access Information:"
+          - "  External IP: {{ ingress_external_ip.stdout if ingress_external_ip.stdout != '' else 'Not assigned' }}"
+          - "  Node IP: {{ node_ip.stdout }}"
+          - "  NodePort: {{ ingress_nodeport.stdout }}"
+          - ""
+          - "Use this IP for DNS A record:"
+          - "  {{ access_ip }}"
+          - ""
+          - "If using NodePort, access will be:"
+          - "  http://{{ access_ip }}:{{ ingress_nodeport.stdout }}"
+
+    # ==============================================================
+    # PART 2: UPDATE TLS INGRESS WITH DOMAIN
+    # ==============================================================
+
+    - name: Display TLS ingress update message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 2: UPDATING TLS INGRESS WITH DOMAIN"
+          - "================================================================"
+
+    - name: Check if old ingress exists
+      ansible.builtin.command:
+        cmd: kubectl get ingress {{ ingress_name }} -n {{ ajasta_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: old_ingress
+      changed_when: false
+      failed_when: false
+
+    - name: Delete old ingress if exists
+      ansible.builtin.command:
+        cmd: kubectl delete ingress {{ ingress_name }} -n {{ ajasta_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_delete
+      when: old_ingress.rc == 0
+      ignore_errors: yes
+
+    - name: Display old ingress deletion
+      ansible.builtin.debug:
+        msg: "{{ 'Old ingress deleted' if old_ingress.rc == 0 else 'No old ingress to delete' }}"
+
+    - name: Pause for ingress deletion
+      ansible.builtin.pause:
+        seconds: 3
+      when: old_ingress.rc == 0
+
+    - name: Create TLS-enabled ingress with domain
+      ansible.builtin.copy:
+        dest: /tmp/{{ ingress_name }}-{{ domain_name }}.yaml
+        content: |
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: {{ ingress_name }}
+            namespace: {{ ajasta_namespace }}
+            labels:
+              app: ajasta
+              domain: {{ domain_name }}
+            annotations:
+              # NGINX Ingress annotations
+              nginx.ingress.kubernetes.io/ssl-redirect: "true"
+              nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+              nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+              nginx.ingress.kubernetes.io/proxy-connect-timeout: "75"
+              nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+              nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+
+              # cert-manager annotations
+              cert-manager.io/cluster-issuer: "letsencrypt-staging"
+              cert-manager.io/acme-challenge-type: "http01"
+
+              # HTTP01 challenge configuration
+              acme.cert-manager.io/http01-edit-in-place: "true"
+          spec:
+            ingressClassName: nginx
+            tls:
+            - hosts:
+              - {{ domain_name }}
+              secretName: ajasta-tls
+            rules:
+            - host: {{ domain_name }}
+              http:
+                paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: ajasta-frontend
+                      port:
+                        number: 80
+                - path: /api
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: ajasta-backend
+                      port:
+                        number: 8090
+        mode: '0644'
+
+    - name: Display ingress manifest created
+      ansible.builtin.debug:
+        msg: "TLS ingress manifest created for {{ domain_name }}"
+
+    - name: Apply TLS-enabled ingress
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/{{ ingress_name }}-{{ domain_name }}.yaml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_apply
+
+    - name: Display ingress application
+      ansible.builtin.debug:
+        msg: "{{ ingress_apply.stdout_lines }}"
+
+    - name: Pause for ingress to initialize
+      ansible.builtin.pause:
+        seconds: 5
+
+    # ==============================================================
+    # PART 3: VERIFY INGRESS
+    # ==============================================================
+
+    - name: Display ingress verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 3: VERIFYING INGRESS CONFIGURATION"
+          - "================================================================"
+
+    - name: Get ingress resources
+      ansible.builtin.command:
+        cmd: kubectl get ingress -n {{ ajasta_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_resources
+      changed_when: false
+
+    - name: Display ingress resources
+      ansible.builtin.debug:
+        msg: "{{ ingress_resources.stdout_lines }}"
+
+    - name: Get detailed ingress information
+      ansible.builtin.command:
+        cmd: kubectl describe ingress {{ ingress_name }} -n {{ ajasta_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_details
+      changed_when: false
+
+    - name: Display ingress details
+      ansible.builtin.debug:
+        msg: "{{ ingress_details.stdout_lines }}"
+
+    # ==============================================================
+    # PART 4: DNS CONFIGURATION INSTRUCTIONS
+    # ==============================================================
+
+    - name: Display DNS configuration instructions
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 4: DNS CONFIGURATION INSTRUCTIONS"
+          - "================================================================"
+          - ""
+          - "NEXT STEPS - Configure DNS for {{ domain_name }}"
+          - ""
+          - "1. Log in to your DNS provider (where you bought {{ domain_name }})"
+          - ""
+          - "2. Create an A record:"
+          - "   Name/Host: @ (or {{ domain_name }})"
+          - "   Type: A"
+          - "   Value/IP: {{ access_ip }}"
+          - "   TTL: 300 (or 5 minutes)"
+          - ""
+          - "3. If using subdomain (e.g., www.{{ domain_name }}):"
+          - "   Name/Host: www"
+          - "   Type: CNAME"
+          - "   Value: {{ domain_name }}"
+          - "   TTL: 300"
+          - ""
+          - "4. Save the DNS configuration"
+          - ""
+          - "5. Wait for DNS propagation (5-30 minutes)"
+          - ""
+          - "================================================================"
+
+    - name: Display DNS verification commands
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DNS VERIFICATION COMMANDS"
+          - "================================================================"
+          - ""
+          - "After configuring DNS, run these commands to verify:"
+          - ""
+          - "# Check DNS propagation"
+          - "dig {{ domain_name }}"
+          - "nslookup {{ domain_name }}"
+          - ""
+          - "# Check if DNS points to correct IP"
+          - "dig {{ domain_name }} +short"
+          - "# Should return: {{ access_ip }}"
+          - ""
+          - "# Test HTTP access (before TLS)"
+          - "curl -I http://{{ domain_name }}/"
+          - ""
+          - "# Watch certificate issuance (after DNS propagates)"
+          - "watch kubectl get certificate -n {{ ajasta_namespace }}"
+          - ""
+          - "================================================================"
+
+    # ==============================================================
+    # PART 5: CREATE DNS VERIFICATION SCRIPT
+    # ==============================================================
+
+    - name: Create DNS verification script
+      ansible.builtin.copy:
+        dest: /tmp/verify-{{ domain_name }}.sh
+        content: |
+          #!/bin/bash
+          # DNS Verification Script for {{ domain_name }}
+
+          echo "========================================"
+          echo "DNS Verification for {{ domain_name }}"
+          echo "========================================"
+          echo ""
+
+          # Check DNS propagation
+          echo "1. Checking DNS propagation..."
+          if dig {{ domain_name }} +short | grep -q "{{ access_ip }}"; then
+              echo "   ✓ DNS is correctly configured!"
+              echo "   ✓ {{ domain_name }} → {{ access_ip }}"
+          else
+              echo "   ✗ DNS not yet propagated or misconfigured"
+              echo ""
+              echo "   Expected: {{ domain_name }} → {{ access_ip }}"
+              echo "   Got:"
+              dig {{ domain_name }} +short
+              echo ""
+              echo "   Please check your DNS configuration and try again later."
+          fi
+          echo ""
+
+          # Test HTTP access
+          echo "2. Testing HTTP access..."
+          if curl -s -o /dev/null -w "%{http_code}" http://{{ domain_name }}/ --max-time 5 | grep -q "200\|301\|302\|404"; then
+              echo "   ✓ HTTP access working!"
+              echo "   ✓ Ingress controller is reachable"
+          else
+              echo "   ✗ HTTP access failed"
+              echo "   ✓ Check if port 80 is open"
+              echo "   ✓ Verify ingress controller is running"
+          fi
+          echo ""
+
+          # Check certificate (if exists)
+          echo "3. Checking TLS certificate..."
+          CERT_CHECK=$(kubectl get certificate ajasta-tls -n {{ ajasta_namespace }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+          if [ "$CERT_CHECK" == "True" ]; then
+              echo "   ✓ TLS certificate is ready!"
+              echo ""
+              echo "   Test HTTPS access:"
+              echo "   curl -I https://{{ domain_name }}/"
+          else
+              echo "   ⊘ TLS certificate not ready yet"
+              echo ""
+              echo "   Monitor certificate issuance:"
+              echo "   watch kubectl get certificate -n {{ ajasta_namespace }}"
+              echo ""
+              echo "   Check certificate request status:"
+              echo "   kubectl get certificaterequest -n {{ ajasta_namespace }}"
+          fi
+          echo ""
+
+          # Final status
+          echo "========================================"
+          echo "Configuration Summary"
+          echo "========================================"
+          echo ""
+          echo "Domain: {{ domain_name }}"
+          echo "Target IP: {{ access_ip }}"
+          echo "Ingress: {{ ingress_name }}"
+          echo "Namespace: {{ ajasta_namespace }}"
+          echo ""
+          echo "Access URLs:"
+          echo "  HTTP:  http://{{ domain_name }}/"
+          echo "  HTTPS: https://{{ domain_name }}/ (after certificate issuance)"
+          echo ""
+          echo "NodePort access (if needed):"
+          echo "  HTTP:  http://{{ access_ip }}:{{ ingress_nodeport.stdout }}"
+          echo ""
+
+        mode: '0755'
+
+    - name: Display script creation
+      ansible.builtin.debug:
+        msg: "DNS verification script created: /tmp/verify-{{ domain_name }}.sh"
+
+    # ==============================================================
+    # PART 6: SUMMARY
+    # ==============================================================
+
+    - name: Display domain binding summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DOMAIN BINDING COMPLETE"
+          - "================================================================"
+          - ""
+          - "Domain: {{ domain_name }}"
+          - "Email: {{ email }}"
+          - "Target IP: {{ access_ip }}"
+          - ""
+          - "Configuration Completed:"
+          - "  ✓ TLS ingress created for {{ domain_name }}"
+          - "  ✓ Let's Encrypt staging configured"
+          - "  ✓ Certificate request initiated"
+          - ""
+          - "REQUIRED NEXT STEPS:"
+          - ""
+          - "1. Configure DNS A Record:"
+          - "   - Go to your DNS provider"
+          - "   - Create A record: @ → {{ access_ip }}"
+          - "   - Or: {{ domain_name }} → {{ access_ip }}"
+          - ""
+          - "2. Wait for DNS propagation (5-30 minutes)"
+          - ""
+          - "3. Verify DNS:"
+          - "   dig {{ domain_name }}"
+          - "   bash /tmp/verify-{{ domain_name }}.sh"
+          - ""
+          - "4. Monitor certificate issuance:"
+          - "   watch kubectl get certificate -n ajasta"
+          - "   kubectl describe certificate -n ajasta ajasta-tls"
+          - ""
+          - "5. Once certificate is ready:"
+          - "   curl -I https://{{ domain_name }}/"
+          - "   Open https://{{ domain_name }} in browser"
+          - ""
+          - "TROUBLESHOOTING:"
+          - ""
+          - "If certificate fails to issue:"
+          - "  - Check DNS: dig {{ domain_name }}"
+          - "  - Check HTTP: curl -I http://{{ domain_name }}/"
+          - "  - Check cert-manager: kubectl logs -n cert-manager deployment/cert-manager"
+          - "  - Check certificate: kubectl describe certificate -n {{ ajasta_namespace }} ajasta-tls"
+          - ""
+          - "COMMON ISSUES:"
+          - "  - DNS not propagated: Wait longer (up to 48 hours)"
+          - "  - Port 80 blocked: Open port 80 in firewall"
+          - "  - Wrong IP: Verify A record points to {{ access_ip }}"
+          - ""
+          - "USEFUL COMMANDS:"
+          - "  kubectl get ingress -n {{ ajasta_namespace }}"
+          - "  kubectl get certificate -n {{ ajasta_namespace }}"
+          - "  kubectl get certificaterequest -n {{ ajasta_namespace }}"
+          - "  kubectl describe certificate -n {{ ajasta_namespace }} ajasta-tls"
+          - "  kubectl logs -n cert-manager deployment/cert-manager -f"
+          - ""
+          - "VERIFICATION:"
+          - "  Run: bash /tmp/verify-{{ domain_name }}.sh"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DOMAIN {{ domain_name | upper }} BOUND SUCCESSFULLY"
+          - "================================================================"
+          - ""
+          - "Your domain {{ domain_name }} is now configured!"
+          - ""
+          - "IMPORTANT: Complete these steps:"
+          - ""
+          - "1. Configure DNS A record at your DNS provider (porkbun.com)"
+          - "   - Create A record: @ → <INGRESS_IP>"
+          - "   - The ingress IP was displayed during deployment (10.10.0.26)"
+          - ""
+          - "2. Wait for DNS propagation (5-30 minutes)"
+          - ""
+          - "3. Verify DNS:"
+          - "   dig {{ domain_name }}"
+          - "   bash /tmp/verify-{{ domain_name }}.sh"
+          - ""
+          - "4. Monitor certificate issuance:"
+          - "   watch kubectl get certificate -n ajasta"
+          - "   kubectl describe certificate -n ajasta ajasta-tls"
+          - ""
+          - "5. Test HTTPS access:"
+          - "   curl -I https://{{ domain_name }}/"
+          - "   Open https://{{ domain_name }} in browser"
+          - ""
+          - "After DNS propagates and certificate issues:"
+          - "  Frontend: https://{{ domain_name }}/"
+          - "  Backend:  https://{{ domain_name }}/api"
+          - ""
+          - "Current: Using STAGING environment"
+          - "  - Certificates are INVALID (not trusted)"
+          - "  - Perfect for testing without rate limits"
+          - "  - Switch to production when ready"
+          - ""
+          - "================================================================"
