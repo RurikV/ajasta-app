@@ -196,6 +196,10 @@ cluster_workers
 [k8s:children]
 k8s_master
 k8s_workers
+
+[k8s_cluster:children]
+k8s_master
+k8s_workers
 EOF
 
     log_success "Inventory generated: ${INVENTORY_FILE}"
