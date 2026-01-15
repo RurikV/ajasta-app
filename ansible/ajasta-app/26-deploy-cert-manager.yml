@@ -163,7 +163,7 @@
       when: not cert_manager_installed
       ignore_errors: yes
 
-    - name: Alternative: Install cert-manager using manifest
+    - name: "Alternative: Install cert-manager using manifest"
       ansible.builtin.get_url:
         url: "{{ cert_manager_repo }}/{{ cert_manager_version }}/cert-manager.yaml"
         dest: /tmp/cert-manager.yaml
