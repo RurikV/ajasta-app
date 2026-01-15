@@ -95,7 +95,7 @@ get_vm_ips() {
 
     # Extract master IP (use public IP from one-to-one NAT)
     # Try both naming conventions: master-node and k8s-master
-    MASTER_IP=$(echo "${VM_LIST}" | jq -r '.[] | select(.name == "master-node" or .name == "k8s-master") | .network_interfaces[0].primary_v4_address.one_to_one_nat.address // .network_interfaces[0].primary_v4_address.address // .network_interfaces[0].primary_address_v4.address' || echo "")
+    MASTER_IP=$(echo "${VM_LIST}" | jq -r '.[] | select(.name == "master-node" or .name == "k8s-master") | .network_interfaces[0].primary_v4_address.one_to_one_nat.address // empty' | head -1)
 
     if [[ -z "${MASTER_IP}" ]] || [[ "${MASTER_IP}" == "null" ]]; then
         log_error "Could not find master-node or k8s-master VM public IP"
@@ -107,7 +107,7 @@ get_vm_ips() {
     # Extract worker IPs (use public IP from one-to-one NAT)
     # Try both naming conventions: worker-node-* and k8s-worker-*
     WORKER_LIST=()
-    WORKER_IPS=$(echo "${VM_LIST}" | jq -r '.[] | select(.name | startswith("worker-node") or startswith("k8s-worker")) | .network_interfaces[0].primary_v4_address.one_to_one_nat.address // .network_interfaces[0].primary_v4_address.address // .network_interfaces[0].primary_address_v4.address' || echo "")
+    WORKER_IPS=$(echo "${VM_LIST}" | jq -r '.[] | select(.name | startswith("worker-node") or startswith("k8s-worker")) | .network_interfaces[0].primary_v4_address.one_to_one_nat.address // empty' | sort -V)
 
     for WORKER_IP in ${WORKER_IPS}; do
         if [[ -n "${WORKER_IP}" ]] && [[ "${WORKER_IP}" != "null" ]]; then
@@ -212,45 +212,91 @@ EOF
     fi
 }
 
-# Test connectivity
+# Test connectivity with direct SSH
 test_connectivity() {
     print_header "Testing Connectivity"
 
-    if ! command -v ansible &> /dev/null; then
-        log_warning "ansible not installed, skipping connectivity tests"
-        return
-    fi
-
-    log_info "Testing SSH connectivity..."
+    log_info "Testing SSH connectivity (direct)..."
 
     SUCCESS_COUNT=0
     FAILED_COUNT=0
 
-    # Increase timeout to 60 seconds for slower connections or when testing multiple nodes
-    ANSIBLE_TIMEOUT=60
+    # SSH timeout and options
+    SSH_TIMEOUT=10
+    SSH_OPTS="-o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=${SSH_TIMEOUT} -o ServerAliveInterval=2 -o ServerAliveCountMax=1"
 
     # Test master
     echo -n "  Testing master-node (${MASTER_IP})... "
-    if timeout ${ANSIBLE_TIMEOUT} ansible master-node -i "${INVENTORY_FILE}" -m ansible.builtin.command -a "echo test" 2>&1 | grep -q "test"; then
-        echo -e "${GREEN}✓ REACHABLE${NC}"
-        SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+    MASTER_OUTPUT=""
+    if [[ -n "${SSH_KEY}" ]]; then
+        if MASTER_OUTPUT=$(ssh -i "${SSH_KEY}" ${SSH_OPTS} ${SSH_USER}@${MASTER_IP} "echo test" 2>&1); then
+            if echo "${MASTER_OUTPUT}" | grep -q "test"; then
+                echo -e "${GREEN}✓ REACHABLE${NC}"
+                SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            else
+                echo -e "${RED}✗ UNREACHABLE${NC}"
+                log_info "    Try: ssh -i ${SSH_KEY} ${SSH_USER}@${MASTER_IP}"
+                FAILED_COUNT=$((FAILED_COUNT + 1))
+            fi
+        else
+            echo -e "${RED}✗ UNREACHABLE${NC}"
+            log_info "    Try: ssh -i ${SSH_KEY} ${SSH_USER}@${MASTER_IP}"
+            FAILED_COUNT=$((FAILED_COUNT + 1))
+        fi
     else
-        echo -e "${RED}✗ UNREACHABLE${NC}"
-        log_info "    Try: ssh -i ${SSH_KEY} ${SSH_USER}@${MASTER_IP}"
-        FAILED_COUNT=$((FAILED_COUNT + 1))
+        if MASTER_OUTPUT=$(ssh ${SSH_OPTS} ${SSH_USER}@${MASTER_IP} "echo test" 2>&1); then
+            if echo "${MASTER_OUTPUT}" | grep -q "test"; then
+                echo -e "${GREEN}✓ REACHABLE${NC}"
+                SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            else
+                echo -e "${RED}✗ UNREACHABLE${NC}"
+                log_info "    Try: ssh ${SSH_USER}@${MASTER_IP}"
+                FAILED_COUNT=$((FAILED_COUNT + 1))
+            fi
+        else
+            echo -e "${RED}✗ UNREACHABLE${NC}"
+            log_info "    Try: ssh ${SSH_USER}@${MASTER_IP}"
+            FAILED_COUNT=$((FAILED_COUNT + 1))
+        fi
     fi
 
     # Test workers
     for i in $(seq 0 $((${#WORKER_LIST[@]} - 1))); do
         WORKER_IP="${WORKER_LIST[$i]}"
-        echo -n "  Testing worker-node-${i} (${WORKER_IP})... "
-        if timeout ${ANSIBLE_TIMEOUT} ansible "worker-node-${i}" -i "${INVENTORY_FILE}" -m ansible.builtin.command -a "echo test" 2>&1 | grep -q "test"; then
-            echo -e "${GREEN}✓ REACHABLE${NC}"
-            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+        WORKER_NAME="worker-node-${i}"
+        echo -n "  Testing ${WORKER_NAME} (${WORKER_IP})... "
+
+        WORKER_OUTPUT=""
+        if [[ -n "${SSH_KEY}" ]]; then
+            if WORKER_OUTPUT=$(ssh -i "${SSH_KEY}" ${SSH_OPTS} ${SSH_USER}@${WORKER_IP} "echo test" 2>&1); then
+                if echo "${WORKER_OUTPUT}" | grep -q "test"; then
+                    echo -e "${GREEN}✓ REACHABLE${NC}"
+                    SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+                else
+                    echo -e "${RED}✗ UNREACHABLE${NC}"
+                    log_info "    Try: ssh -i ${SSH_KEY} ${SSH_USER}@${WORKER_IP}"
+                    FAILED_COUNT=$((FAILED_COUNT + 1))
+                fi
+            else
+                echo -e "${RED}✗ UNREACHABLE${NC}"
+                log_info "    Try: ssh -i ${SSH_KEY} ${SSH_USER}@${WORKER_IP}"
+                FAILED_COUNT=$((FAILED_COUNT + 1))
+            fi
         else
-            echo -e "${RED}✗ UNREACHABLE${NC}"
-            log_info "    Try: ssh -i ${SSH_KEY} ${SSH_USER}@${WORKER_IP}"
-            FAILED_COUNT=$((FAILED_COUNT + 1))
+            if WORKER_OUTPUT=$(ssh ${SSH_OPTS} ${SSH_USER}@${WORKER_IP} "echo test" 2>&1); then
+                if echo "${WORKER_OUTPUT}" | grep -q "test"; then
+                    echo -e "${GREEN}✓ REACHABLE${NC}"
+                    SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+                else
+                    echo -e "${RED}✗ UNREACHABLE${NC}"
+                    log_info "    Try: ssh ${SSH_USER}@${WORKER_IP}"
+                    FAILED_COUNT=$((FAILED_COUNT + 1))
+                fi
+            else
+                echo -e "${RED}✗ UNREACHABLE${NC}"
+                log_info "    Try: ssh ${SSH_USER}@${WORKER_IP}"
+                FAILED_COUNT=$((FAILED_COUNT + 1))
+            fi
         fi
     done
 
@@ -260,21 +306,31 @@ test_connectivity() {
     if [[ ${FAILED_COUNT} -gt 0 ]]; then
         echo "  ✗ Unreachable: ${FAILED_COUNT}"
         echo ""
-        log_info "Troubleshooting tips:"
-        echo "  1. Verify VMs are running: yc compute instance list"
-        echo "  2. Check security groups allow SSH (port 22)"
-        echo "  3. Verify SSH key permissions: chmod 600 ${SSH_KEY}"
-        echo "  4. Test SSH manually:"
+        log_info "Common issues:"
+        echo "  1. VMs still starting up (wait 2-3 minutes and retry)"
+        echo "  2. Security groups not allowing SSH (port 22)"
+        echo "  3. SSH key permissions: chmod 600 ${SSH_KEY}"
+        echo "  4. Wrong SSH user or key"
+        echo ""
+        log_info "Test SSH manually:"
         if [[ -n "${SSH_KEY}" ]]; then
-            echo "     ssh -i ${SSH_KEY} -v ${SSH_USER}@${MASTER_IP}"
+            echo "  ssh -i ${SSH_KEY} -v ${SSH_USER}@${MASTER_IP}"
         else
-            echo "     ssh -v ${SSH_USER}@${MASTER_IP}"
+            echo "  ssh -v ${SSH_USER}@${MASTER_IP}"
         fi
+        echo ""
+        log_info "Inventory was generated successfully regardless."
+        log_info "You can test connectivity later with:"
+        echo "  cd ${ANSIBLE_CI_DIR}"
+        echo "  ansible k8s -i inventory.ini -m ping"
     else
         log_success "All nodes reachable!"
     fi
 
-    return ${FAILED_COUNT}
+    echo ""
+
+    # Always return success (inventory is still valid)
+    return 0
 }
 
 # Show warning
@@ -308,19 +364,22 @@ main() {
     generate_inventory
     show_warning
 
-    if test_connectivity; then
-        echo ""
-        log_success "Inventory generated successfully!"
-        echo ""
-        echo "Test connectivity:"
-        echo "  cd ${ANSIBLE_CI_DIR}"
-        echo "  ansible k8s -i inventory.ini -m ping"
-        exit 0
-    else
-        echo ""
-        log_warning "Inventory generated but some nodes unreachable"
-        exit 1
-    fi
+    test_connectivity
+
+    echo ""
+    log_success "Inventory generated successfully!"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Review inventory: cat ${INVENTORY_FILE}"
+    echo "  2. Test connectivity:"
+    echo "     cd ${ANSIBLE_CI_DIR}"
+    echo "     ansible k8s -i inventory.ini -m ping"
+    echo ""
+    echo "  3. Run playbooks:"
+    echo "     ansible-playbook -i inventory.ini <playbook.yml>"
+    echo ""
+
+    exit 0
 }
 
 main "$@"
