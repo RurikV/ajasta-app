@@ -113,10 +113,17 @@
       register: pg_password
       changed_when: false
       failed_when: false
+      retries: 3
+      delay: 2
 
     - name: Display PostgreSQL password retrieval
       ansible.builtin.debug:
-        msg: "{{ 'PostgreSQL password retrieved' if pg_password.rc == 0 else 'PostgreSQL password not found, using default' }}"
+        msg: "{{ '✓ PostgreSQL password retrieved from secret' if pg_password.rc == 0 else '✗ PostgreSQL password not found, using default password' }}"
+
+    - name: Warn if using default password
+      ansible.builtin.debug:
+        msg: "⚠️  Warning: Using default PostgreSQL password. This may indicate the PostgreSQL cluster is not properly deployed."
+      when: pg_password.rc != 0
 
     - name: Create backend secret
       ansible.builtin.copy:

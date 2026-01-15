@@ -194,6 +194,13 @@
       register: app_password
       when: app_secret_check.rc != 0
       changed_when: false
+      retries: 3
+      delay: 1
+
+    - name: Display app password generation
+      ansible.builtin.debug:
+        msg: "Generated random password for app user"
+      when: app_secret_check.rc != 0
 
     - name: Create app secret
       ansible.builtin.shell:
@@ -206,10 +213,37 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: app_secret_create
       when: app_secret_check.rc != 0
+      retries: 3
+      delay: 2
+
+    - name: Display app secret creation result
+      ansible.builtin.debug:
+        msg: "{{ '✓ App secret created successfully' if app_secret_create.changed else '✓ App secret already exists' }}"
+      when: app_secret_check.rc != 0
 
     - name: Display app secret creation
       ansible.builtin.debug:
         msg: "{{ 'App secret created' if app_secret_check.rc != 0 else 'App secret already exists' }}"
+
+    - name: Verify app secret exists
+      ansible.builtin.command:
+        cmd: kubectl get secret -n {{ pg_namespace }} {{ pg_cluster_name }}-app
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: app_secret_verify
+      changed_when: false
+      until: app_secret_verify.rc == 0
+      retries: 5
+      delay: 2
+
+    - name: Fail if app secret doesn't exist
+      ansible.builtin.fail:
+        msg: "App secret {{ pg_cluster_name }}-app does not exist in namespace {{ pg_namespace }}. Cannot proceed with cluster creation."
+      when: app_secret_verify.rc != 0
+
+    - name: Display app secret verification
+      ansible.builtin.debug:
+        msg: "✓ App secret verified: {{ pg_cluster_name }}-app"
 
     - name: Check if PostgreSQL cluster already exists
       ansible.builtin.command:
@@ -327,6 +361,18 @@
           - "PART 4: VERIFYING POSTGRESQL CLUSTER"
           - "================================================================"
 
+    - name: Verify all required secrets exist
+      ansible.builtin.shell:
+        cmd: kubectl get secrets -n {{ pg_namespace }} | grep -E "{{ pg_cluster_name }}-(app|superuser|server)" || true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: secrets_verify
+      changed_when: false
+
+    - name: Display secrets verification
+      ansible.builtin.debug:
+        msg: "{{ secrets_verify.stdout_lines }}"
+
     - name: Wait for PostgreSQL pods to be ready
       ansible.builtin.command:
         cmd: kubectl wait --for=condition=ready pod -l cnpg.io/podRole=instance -n {{ pg_namespace }} --timeout=300s
@@ -336,6 +382,45 @@
       until: pg_wait.rc == 0
       retries: 60
       delay: 5
+
+    - name: Check for failed pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ pg_namespace }} -l cnpg.io/podRole=instance --field-selector=status.phase=Failed
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: failed_pods
+      changed_when: false
+      failed_when: false
+
+    - name: Display failed pods warning
+      ansible.builtin.debug:
+        msg: "⚠️  Warning: Failed pods detected. Check pod logs for details."
+      when: failed_pods.stdout_lines | length > 0
+
+    - name: Get pending pods details
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ pg_namespace }} -l cnpg.io/podRole=instance --field-selector=status.phase=Pending -o jsonpath='{.items[*].metadata.name}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pending_pods
+      changed_when: false
+      failed_when: false
+      when: pg_wait.rc != 0
+
+    - name: Describe pending pods
+      ansible.builtin.command:
+        cmd: kubectl describe pod {{ item }} -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pending_pod_details
+      changed_when: false
+      with_items: "{{ pending_pods.stdout.split() }}"
+      when: pg_wait.rc != 0 and pending_pods.stdout != ""
+
+    - name: Display pending pod details
+      ansible.builtin.debug:
+        msg: "{{ pending_pod_details.results | selectattr('item', 'defined') | map(attribute='stdout_lines') | list }}"
+      when: pg_wait.rc != 0 and pending_pods.stdout != ""
 
     - name: Get PostgreSQL cluster status
       ansible.builtin.command:
