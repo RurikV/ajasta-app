@@ -291,7 +291,7 @@
         cmd: |
           kubectl create secret generic {{ pg_cluster_name }}-app \
             --from-literal=username=app \
-            --from-literal-password=$(openssl rand -base64 32) \
+            --from-literal=password=$(openssl rand -base64 32) \
             -n {{ pg_namespace }}
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf

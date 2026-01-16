@@ -116,9 +116,6 @@
               - http01:
                   ingress:
                     class: nginx
-                  selector:
-                    matchLabels:
-                      app: ajasta
         mode: '0644'
 
     - name: Display staging issuer manifest created
@@ -176,9 +173,6 @@
               - http01:
                   ingress:
                     class: nginx
-                  selector:
-                    matchLabels:
-                      app: ajasta
         mode: '0644'
 
     - name: Display production issuer manifest created

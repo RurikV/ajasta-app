@@ -1,0 +1,240 @@
+---
+# Bind Static IP to Ingress Controller and Verify DNS
+# This playbook binds the static IP 89.169.188.248 to the ingress-nginx controller
+# and verifies that ajasta.top is accessible
+# Usage:
+#   ansible-playbook -i ../k8s/inventory.ini 29-bind-static-ip-ingress.yml
+
+- name: Bind Static IP to Ingress Controller
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    ingress_namespace: ingress-nginx
+    ingress_service: ingress-nginx-controller
+    static_ip: "89.169.188.248"
+    domain: "ajasta.top"
+
+  tasks:
+    - name: Display static IP binding information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "BINDING STATIC IP TO INGRESS CONTROLLER"
+          - "================================================================"
+          - ""
+          - "Configuration:"
+          - "  - Ingress Service: {{ ingress_service }}"
+          - "  - Namespace: {{ ingress_namespace }}"
+          - "  - Static IP: {{ static_ip }}"
+          - "  - Domain: {{ domain }}"
+          - ""
+          - "This playbook will:"
+          - "  1. Patch the ingress service to use static IP"
+          - "  2. Verify the service has the external IP"
+          - "  3. Test DNS resolution"
+          - "  4. Test HTTP access"
+          - ""
+          - "================================================================"
+
+    - name: Display current ingress service
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 1: CHECKING CURRENT INGRESS SERVICE"
+          - "================================================================"
+
+    - name: Get current ingress service
+      ansible.builtin.command:
+        cmd: kubectl get svc {{ ingress_service }} -n {{ ingress_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: current_service
+      changed_when: false
+
+    - name: Display current service
+      ansible.builtin.debug:
+        msg: "{{ current_service.stdout_lines }}"
+
+    - name: Display service binding message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 2: BINDING STATIC IP"
+          - "================================================================"
+
+    - name: Patch ingress service with static IP (LoadBalancer)
+      ansible.builtin.shell:
+        cmd: |
+          kubectl patch svc {{ ingress_service }} -n {{ ingress_namespace }} -p '{"spec":{"type":"LoadBalancer","loadBalancerIP":"{{ static_ip }}"}}}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: patch_service
+      ignore_errors: yes
+
+    - name: Display patch result
+      ansible.builtin.debug:
+        msg: "{{ patch_service.stdout_lines if patch_service.rc == 0 else ['Service already patched or patch not needed'] }}"
+
+    - name: Pause for service update
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Display verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 3: VERIFYING STATIC IP BINDING"
+          - "================================================================"
+
+    - name: Get updated service
+      ansible.builtin.command:
+        cmd: kubectl get svc {{ ingress_service }} -n {{ ingress_namespace }} -o wide
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: updated_service
+      changed_when: false
+
+    - name: Display updated service
+      ansible.builtin.debug:
+        msg: "{{ updated_service.stdout_lines }}"
+
+    - name: Get service external IP
+      ansible.builtin.shell:
+        cmd: |
+          kubectl get svc {{ ingress_service }} -n {{ ingress_namespace }} -o jsonpath='{.spec.loadBalancerIP}' || \
+          kubectl get svc {{ ingress_service }} -n {{ ingress_namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: external_ip
+      changed_when: false
+
+    - name: Display external IP
+      ansible.builtin.debug:
+        msg: "{{ 'External IP: ' + external_ip.stdout if external_ip.rc == 0 else 'External IP not assigned yet' }}"
+
+    - name: Display DNS verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 4: VERIFYING DNS RESOLUTION"
+          - "================================================================"
+
+    - name: Check if DNS points to static IP
+      ansible.builtin.shell:
+        cmd: |
+          dig +short {{ domain }} | grep -q {{ static_ip }} && echo "DNS_CORRECT" || echo "DNS_INCORRECT"
+      register: dns_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display DNS status
+      ansible.builtin.debug:
+        msg: "{{ 'DNS correctly points to ' + static_ip if dns_check.stdout == 'DNS_CORRECT' else 'DNS does NOT point to ' + static_ip + ' - please configure DNS!' }}"
+
+    - name: Get actual DNS resolution
+      ansible.builtin.shell:
+        cmd: dig +short {{ domain }}
+      register: dns_resolution
+      changed_when: false
+      failed_when: false
+
+    - name: Display DNS resolution
+      ansible.builtin.debug:
+        msg: "{{ domain + ' resolves to: ' + dns_resolution.stdout if dns_resolution.rc == 0 else 'DNS resolution failed' }}"
+
+    - name: Display connectivity test message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 5: TESTING CONNECTIVITY"
+          - "================================================================"
+
+    - name: Test HTTP access to domain
+      ansible.builtin.shell:
+        cmd: |
+          curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 http://{{ domain }}/ || echo "FAILED"
+      register: http_test
+      changed_when: false
+      failed_when: false
+
+    - name: Display HTTP test result
+      ansible.builtin.debug:
+        msg: "{{ 'HTTP access: SUCCESS (code: ' + http_test.stdout + ')' if http_test.stdout != 'FAILED' else 'HTTP access: FAILED - ' + domain + ' not reachable' }}"
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "STATIC IP BINDING COMPLETE"
+          - "================================================================"
+          - ""
+          - "Configuration Summary:"
+          - "  - Static IP: {{ static_ip }}"
+          - "  - Domain: {{ domain }}"
+          - "  - Ingress Service: {{ ingress_service }}"
+          - "  - Namespace: {{ ingress_namespace }}"
+          - ""
+          - "Next Steps:"
+          - "  1. Verify DNS points to {{ static_ip }}"
+          - "     Current: {{ dns_resolution.stdout if dns_resolution.rc == 0 else 'DNS check failed' }}"
+          - ""
+          - "  2. Test HTTP access:"
+          - "     curl http://{{ domain }}/"
+          - ""
+          - "  3. Deploy TLS ingress:"
+          - "     ansible-playbook -i ../k8s/inventory.ini 28-deploy-ingress-tls.yml"
+          - ""
+          - "  4. Test HTTPS access:"
+          - "     curl -I https://{{ domain }}/"
+          - ""
+          - "Troubleshooting:"
+          - "  - If DNS doesn't point to {{ static_ip }}:"
+          - "    Update DNS A record for {{ domain }}"
+          - ""
+          - "  - If HTTP fails:"
+          - "    Check ingress controller is running"
+          - "    kubectl get pods -n {{ ingress_namespace }}"
+          - ""
+          - "  - If HTTPS fails after TLS deployment:"
+          - "    Check certificate issuance"
+          - "    kubectl get certificate -n ajasta"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  vars:
+    static_ip: "89.169.188.248"
+    domain: "ajasta.top"
+
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "INGRESS CONTROLLER READY"
+          - "================================================================"
+          - ""
+          - "Your ingress controller is configured with static IP!"
+          - ""
+          - "Configuration:"
+          - "  - Static IP: {{ static_ip }}"
+          - "  - Domain: {{ domain }}"
+          - ""
+          - "IMPORTANT:"
+          - "  1. Ensure DNS A record exists:"
+          - "     {{ domain }} → {{ static_ip }}"
+          - ""
+          - "  2. Test HTTP access:"
+          - "     curl http://{{ domain }}/"
+          - ""
+          - "  3. Deploy TLS for HTTPS:"
+          - "     ansible-playbook 28-deploy-ingress-tls.yml"
+          - ""
+          - "  4. Test HTTPS access:"
+          - "     curl -I https://{{ domain }}/"
+          - ""
+          - "================================================================"

@@ -25,7 +25,7 @@
     # IMPORTANT: Set your PUBLIC domain name here
     # This must be a real domain name that you own and control
     # Local domains like "ajasta.local" will NOT work with Let's Encrypt!
-    tls_host: "ajasta.example.com"  # CHANGE THIS!
+    tls_host: "ajasta.top"  # CHANGE THIS to your domain!
 
   tasks:
     - name: Display TLS ingress deployment information
@@ -405,6 +405,8 @@
 - name: Final summary
   hosts: localhost
   gather_facts: no
+  vars:
+    tls_host: "ajasta.top"
   tasks:
     - name: Display completion message
       ansible.builtin.debug:
