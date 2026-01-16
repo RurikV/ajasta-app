@@ -272,6 +272,38 @@
         seconds: 10
       when: pg_cluster_check.rc == 0
 
+    # ============== RE-VERIFY SECRET AFTER CLUSTER DELETION ==============
+    - name: Re-verify app secret exists after cluster deletion
+      ansible.builtin.command:
+        cmd: kubectl get secret -n {{ pg_namespace }} {{ pg_cluster_name }}-app
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: app_secret_reverify
+      changed_when: false
+      failed_when: false
+
+    - name: Display secret re-verification
+      ansible.builtin.debug:
+        msg: "{{ '✓ App secret still exists' if app_secret_reverify.rc == 0 else '✗ App secret missing, will recreate' }}"
+
+    - name: Recreate app secret if missing
+      ansible.builtin.shell:
+        cmd: |
+          kubectl create secret generic {{ pg_cluster_name }}-app \
+            --from-literal=username=app \
+            --from-literal-password=$(openssl rand -base64 32) \
+            -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: app_secret_recreate
+      when: app_secret_reverify.rc != 0
+
+    - name: Display app secret recreation
+      ansible.builtin.debug:
+        msg: "✓ App secret recreated"
+      when: app_secret_reverify.rc != 0 and app_secret_recreate.changed
+
+    # ============== CREATE CLUSTER MANIFEST ==============
     - name: Create PostgreSQL Cluster manifest
       ansible.builtin.copy:
         dest: /tmp/ajasta-postgres-cluster.yaml
@@ -373,19 +405,43 @@
       ansible.builtin.debug:
         msg: "{{ secrets_verify.stdout_lines }}"
 
-    - name: Wait for PostgreSQL pods to be ready
+    - name: Wait for PostgreSQL cluster to be ready
       ansible.builtin.command:
-        cmd: kubectl wait --for=condition=ready pod -l cnpg.io/podRole=instance -n {{ pg_namespace }} --timeout=300s
+        cmd: kubectl wait --for=condition=ready cluster/{{ pg_cluster_name }} -n {{ pg_namespace }} --timeout=600s
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: pg_wait
       until: pg_wait.rc == 0
-      retries: 60
+      retries: 120
       delay: 5
+
+    - name: Get PostgreSQL cluster status
+      ansible.builtin.command:
+        cmd: kubectl get cluster -n {{ pg_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_cluster_status
+      changed_when: false
+
+    - name: Display cluster status
+      ansible.builtin.debug:
+        msg: "{{ pg_cluster_status.stdout_lines }}"
+
+    - name: Get PostgreSQL pods
+      ansible.builtin.command:
+        cmd: kubectl get pods -n {{ pg_namespace }} -l cnpg.io/cluster={{ pg_cluster_name }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pg_pods
+      changed_when: false
+
+    - name: Display PostgreSQL pods
+      ansible.builtin.debug:
+        msg: "{{ pg_pods.stdout_lines }}"
 
     - name: Check for failed pods
       ansible.builtin.command:
-        cmd: kubectl get pods -n {{ pg_namespace }} -l cnpg.io/podRole=instance --field-selector=status.phase=Failed
+        cmd: kubectl get pods -n {{ pg_namespace }} -l cnpg.io/cluster={{ pg_cluster_name }} --field-selector=status.phase=Failed
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: failed_pods
@@ -399,7 +455,7 @@
 
     - name: Get pending pods details
       ansible.builtin.command:
-        cmd: kubectl get pods -n {{ pg_namespace }} -l cnpg.io/podRole=instance --field-selector=status.phase=Pending -o jsonpath='{.items[*].metadata.name}'
+        cmd: kubectl get pods -n {{ pg_namespace }} -l cnpg.io/cluster={{ pg_cluster_name }} --field-selector=status.phase=Pending -o jsonpath='{.items[*].metadata.name}'
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: pending_pods

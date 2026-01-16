@@ -132,6 +132,9 @@
     - name: Add jetstack Helm repository
       ansible.builtin.shell:
         cmd: helm repo add jetstack https://charts.jetstack.io || true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
       register: helm_repo_add
       changed_when: false
       when: not cert_manager_installed
@@ -139,6 +142,9 @@
     - name: Update Helm repository
       ansible.builtin.shell:
         cmd: helm repo update
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
       register: helm_repo_update
       when: not cert_manager_installed
 
@@ -159,6 +165,7 @@
             --set global.leaderElection.namespace={{ cert_manager_namespace }}
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: /usr/local/bin:/usr/bin:/bin
       register: helm_install
       when: not cert_manager_installed
       ignore_errors: yes
