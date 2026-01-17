@@ -191,6 +191,83 @@
       ansible.builtin.debug:
         msg: "✓ API server manifest updated"
 
+    - name: Display local kubeconfig update message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 3.5: UPDATING LOCAL KUBECONFIG"
+          - "================================================================"
+
+    - name: Check if local kubeconfig exists
+      ansible.builtin.stat:
+        path: "{{ lookup('env', 'HOME') }}/.kube/config"
+      register: local_kubeconfig
+      delegate_to: localhost
+      become: no
+
+    - name: Display local kubeconfig status
+      ansible.builtin.debug:
+        msg: "{{ 'Local kubeconfig found: ' + local_kubeconfig.stat.path if local_kubeconfig.stat.exists else 'No local kubeconfig found - skipping local update' }}"
+
+    - name: Backup local kubeconfig
+      ansible.builtin.shell:
+        cmd: cp ~/.kube/config ~/.kube/config.bak.{{ ansible_date_time.epoch }}
+      when: local_kubeconfig.stat.exists
+      delegate_to: localhost
+      become: no
+      register: kubeconfig_backup
+
+    - name: Display backup status
+      ansible.builtin.debug:
+        msg: "✓ Local kubeconfig backed up"
+      when: local_kubeconfig.stat.exists and kubeconfig_backup.rc == 0
+
+    - name: Get current server address from local kubeconfig
+      ansible.builtin.shell:
+        cmd: grep "server:" ~/.kube/config | head -1 || echo "none"
+      register: current_server
+      changed_when: false
+      delegate_to: localhost
+      become: no
+
+    - name: Display current server address
+      ansible.builtin.debug:
+        msg: "Current server address: {{ current_server.stdout }}"
+
+    - name: Update local kubeconfig with new IP
+      ansible.builtin.shell:
+        cmd: sed -i.bak 's/[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*/{{ static_ip }}/g' ~/.kube/config
+      when: local_kubeconfig.stat.exists
+      delegate_to: localhost
+      become: no
+      register: local_kubeconfig_update
+      ignore_errors: yes
+
+    - name: Verify local kubeconfig update
+      ansible.builtin.shell:
+        cmd: grep "server:" ~/.kube/config | head -1 || echo "none"
+      register: updated_server
+      changed_when: false
+      delegate_to: localhost
+      become: no
+
+    - name: Display local kubeconfig update status
+      ansible.builtin.debug:
+        msg: "{{ '✓ Local kubeconfig updated to: ' + updated_server.stdout if updated_server.stdout == 'server: https://' + static_ip + ':6443' else '⚠ Local kubeconfig update may have failed. Current: ' + updated_server.stdout }}"
+
+    - name: Test local kubectl connectivity
+      ansible.builtin.shell:
+        cmd: kubectl get nodes --request-timeout=5
+      register: local_kubectl_test
+      delegate_to: localhost
+      become: no
+      failed_when: false
+      when: local_kubeconfig.stat.exists
+
+    - name: Display local kubectl test result
+      ansible.builtin.debug:
+        msg: "{{ '✓ Local kubectl works!' if local_kubectl_test.rc == 0 else '⚠ Local kubectl test failed (this is OK if running from different machine) - Error: ' + local_kubectl_test.stderr | default('No error') }}"
+
     - name: Wait for API server to restart
       ansible.builtin.pause:
         seconds: 20
@@ -231,22 +308,36 @@
 
     - name: Create HTTP socat systemd service
       ansible.builtin.shell:
-        cmd: |
-          ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo tee /etc/systemd/system/socat-http.service <<EOF
-    [Unit]
-    Description=Socat HTTP Port Forward
-    After=network.target
-
-    [Service]
-    Type=simple
-    ExecStart=/usr/bin/socat TCP-LISTEN:80,fork,reuseaddr TCP:localhost:{{ http_nodeport }}
-    Restart=always
-
-    [Install]
-    WantedBy=multi-user.target
-    EOF
-    '
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} "sudo tee /etc/systemd/system/socat-http.service"
       register: http_service_create
+
+    - name: Configure HTTP socat service content
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Socat HTTP Port Forward
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/socat TCP-LISTEN:80,fork,reuseaddr TCP:localhost:{{ http_nodeport }}
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /tmp/socat-http.service
+      delegate_to: localhost
+      become: no
+
+    - name: Upload HTTP socat service file
+      ansible.builtin.shell:
+        cmd: scp /tmp/socat-http.service {{ master_ssh_user }}@{{ static_ip }}:/tmp/socat-http.service
+      delegate_to: localhost
+      become: no
+
+    - name: Install HTTP socat service file
+      ansible.builtin.shell:
+        cmd: sudo mv /tmp/socat-http.service /etc/systemd/system/socat-http.service
 
     - name: Display HTTP service creation status
       ansible.builtin.debug:
@@ -254,22 +345,36 @@
 
     - name: Create HTTPS socat systemd service
       ansible.builtin.shell:
-        cmd: |
-          ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo tee /etc/systemd/system/socat-https.service <<EOF
-    [Unit]
-    Description=Socat HTTPS Port Forward
-    After=network.target
-
-    [Service]
-    Type=simple
-    ExecStart=/usr/bin/socat TCP-LISTEN:443,fork,reuseaddr TCP:localhost:{{ https_nodeport }}
-    Restart=always
-
-    [Install]
-    WantedBy=multi-user.target
-    EOF
-    '
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} "sudo tee /etc/systemd/system/socat-https.service"
       register: https_service_create
+
+    - name: Configure HTTPS socat service content
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Socat HTTPS Port Forward
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/socat TCP-LISTEN:443,fork,reuseaddr TCP:localhost:{{ https_nodeport }}
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /tmp/socat-https.service
+      delegate_to: localhost
+      become: no
+
+    - name: Upload HTTPS socat service file
+      ansible.builtin.shell:
+        cmd: scp /tmp/socat-https.service {{ master_ssh_user }}@{{ static_ip }}:/tmp/socat-https.service
+      delegate_to: localhost
+      become: no
+
+    - name: Install HTTPS socat service file
+      ansible.builtin.shell:
+        cmd: sudo mv /tmp/socat-https.service /etc/systemd/system/socat-https.service
 
     - name: Display HTTPS service creation status
       ansible.builtin.debug:
