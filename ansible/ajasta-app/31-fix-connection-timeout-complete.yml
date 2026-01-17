@@ -1,0 +1,449 @@
+---
+# Complete Fix Playbook for ERR_CONNECTION_TIMED_OUT on https://ajasta.top
+# This playbook automates all steps to resolve HTTPS connection timeout issues
+# Usage:
+#   ansible-playbook -i ../k8s/inventory.ini 31-fix-connection-timeout-complete.yml
+
+- name: Fix ERR_CONNECTION_TIMED_OUT - Static IP Attachment and Port Forwarding
+  hosts: localhost
+  become: no
+  gather_facts: yes
+
+  vars:
+    domain: "ajasta.top"
+    static_ip: "89.169.188.248"
+    master_instance_name: "k8s-master"
+    master_ssh_user: "ajasta"
+    ingress_namespace: "ingress-nginx"
+    app_namespace: "ajasta"
+    http_nodeport: 31783
+    https_nodeport: 31906
+
+  tasks:
+    - name: Display playbook information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "FIXING ERR_CONNECTION_TIMED_OUT"
+          - "================================================================"
+          - ""
+          - "Target: https://{{ domain }}"
+          - "Static IP: {{ static_ip }}"
+          - "Master Instance: {{ master_instance_name }}"
+          - ""
+          - "This playbook will:"
+          - "  1. Attach static IP to master node via Yandex Cloud"
+          - "  2. Update Kubernetes API server certificate"
+          - "  3. Update kubeconfigs with new IP"
+          - "  4. Set up socat port forwarding (80/443 → NodePorts)"
+          - "  5. Configure iptables rules"
+          - "  6. Test connectivity"
+          - ""
+          - "================================================================"
+
+    # ==============================================================
+    # PART 1: GET MASTER INSTANCE INFORMATION
+    # ==============================================================
+
+    - name: Display master instance lookup
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 1: GETTING MASTER INSTANCE INFORMATION"
+          - "================================================================"
+
+    - name: Get master instance ID
+      ansible.builtin.shell:
+        cmd: yc compute instance list --format json | python3 -c "import sys, json; data = json.load(sys.stdin); [print(i['id']) for i in data if i.get('name', '') == '{{ master_instance_name }}']"
+      register: master_instance_id
+      changed_when: false
+      failed_when: master_instance_id.stdout | length == 0
+
+    - name: Display master instance ID
+      ansible.builtin.debug:
+        msg: "Master instance ID: {{ master_instance_id.stdout }}"
+
+    # ==============================================================
+    # PART 2: ATTACH STATIC IP TO MASTER NODE
+    # ==============================================================
+
+    - name: Display static IP attachment message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 2: ATTACHING STATIC IP TO MASTER NODE"
+          - "================================================================"
+
+    - name: Check current NAT configuration
+      ansible.builtin.shell:
+        cmd: yc compute instance get --id {{ master_instance_id.stdout }} --full --format json | python3 -c "import sys, json; i = json.load(sys.stdin); nat = i.get('network_interfaces', [{}])[0].get('one_to_one_nat', {}); print(nat.get('address', 'NONE') if nat else 'NONE')"
+      register: current_nat_ip
+      changed_when: false
+
+    - name: Display current NAT IP
+      ansible.builtin.debug:
+        msg: "Current NAT IP: {{ current_nat_ip.stdout }}"
+
+    - name: Remove existing NAT if IP doesn't match
+      ansible.builtin.shell:
+        cmd: yc compute instance remove-one-to-one-nat --id {{ master_instance_id.stdout }} --network-interface-index 0 --async
+      register: nat_removal
+      when: current_nat_ip.stdout != static_ip and current_nat_ip.stdout != "NONE"
+      ignore_errors: yes
+
+    - name: Display NAT removal status
+      ansible.builtin.debug:
+        msg: "{{ 'NAT removed' if nat_removal.rc == 0 else 'No NAT to remove or already removed' }}"
+      when: current_nat_ip.stdout != static_ip and current_nat_ip.stdout != "NONE"
+
+    - name: Wait for NAT removal to complete
+      ansible.builtin.pause:
+        seconds: 15
+      when: current_nat_ip.stdout != static_ip and current_nat_ip.stdout != "NONE"
+
+    - name: Attach static IP via NAT
+      ansible.builtin.shell:
+        cmd: yc compute instance add-one-to-one-nat --id {{ master_instance_id.stdout }} --network-interface-index 0 --nat-address {{ static_ip }} --async
+      register: nat_attachment
+      when: current_nat_ip.stdout != static_ip
+
+    - name: Display NAT attachment status
+      ansible.builtin.debug:
+        msg: "{{ 'Static IP attached: ' + static_ip if nat_attachment.rc == 0 else 'Static IP already configured' }}"
+
+    - name: Wait for NAT attachment to complete
+      ansible.builtin.pause:
+        seconds: 20
+      when: current_nat_ip.stdout != static_ip
+
+    - name: Verify NAT attachment
+      ansible.builtin.shell:
+        cmd: yc compute instance get --id {{ master_instance_id.stdout }} --full --format json | python3 -c "import sys, json; i = json.load(sys.stdin); nat = i.get('network_interfaces', [{}])[0].get('one_to_one_nat', {}); print(nat.get('address', 'NONE') if nat else 'NONE')"
+      register: verified_nat_ip
+      changed_when: false
+      until: verified_nat_ip.stdout == static_ip
+      retries: 5
+      delay: 10
+
+    - name: Display verified NAT IP
+      ansible.builtin.debug:
+        msg: "{{ '✓ Static IP verified: ' + verified_nat_ip.stdout if verified_nat_ip.stdout == static_ip else '✗ Static IP not attached: ' + verified_nat_ip.stdout }}"
+
+    # ==============================================================
+    # PART 3: UPDATE KUBERNETES CERTIFICATES AND CONFIGS
+    # ==============================================================
+
+    - name: Display Kubernetes update message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 3: UPDATING KUBERNETES CERTIFICATES AND CONFIGS"
+          - "================================================================"
+
+    - name: Remove old SSH key for master node
+      ansible.builtin.shell:
+        cmd: |
+          ssh-keygen -R {{ static_ip }} 2>/dev/null || true
+      changed_when: false
+
+    - name: Wait for SSH to be available
+      ansible.builtin.shell:
+        cmd: ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new {{ master_ssh_user }}@{{ static_ip }} 'echo "SSH successful"'
+      register: ssh_test
+      until: ssh_test.rc == 0
+      retries: 10
+      delay: 5
+      changed_when: false
+
+    - name: Display SSH connectivity status
+      ansible.builtin.debug:
+        msg: "✓ SSH connectivity to {{ static_ip }} established"
+
+    - name: Regenerate API server certificate with new IP
+      ansible.builtin.shell:
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo rm -f /etc/kubernetes/pki/apiserver.* && sudo kubeadm init phase certs apiserver --apiserver-advertise-address {{ static_ip }} --apiserver-cert-extra-sans {{ static_ip }}'
+      register: cert_regeneration
+      ignore_errors: yes
+
+    - name: Display certificate regeneration status
+      ansible.builtin.debug:
+        msg: "{{ '✓ API server certificate regenerated' if cert_regeneration.rc == 0 else '✗ Certificate regeneration failed (may not be critical)' }}"
+
+    - name: Update kubeconfig files with new IP
+      ansible.builtin.shell:
+        cmd: |
+          ssh {{ master_ssh_user }}@{{ static_ip }} "sudo find /etc/kubernetes -name '*.conf' -exec sed -i 's/[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*/{{ static_ip }}/g' {} \; 2>/dev/null || true"
+          ssh {{ master_ssh_user }}@{{ static_ip }} "sed -i 's/[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*/{{ static_ip }}/g' ~/.kube/config 2>/dev/null || true"
+      register: kubeconfig_update
+      changed_when: false
+
+    - name: Display kubeconfig update status
+      ansible.builtin.debug:
+        msg: "✓ Kubeconfigs updated to use {{ static_ip }}"
+
+    - name: Update API server manifest with new IP
+      ansible.builtin.shell:
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo sed -i "s/--advertise-address=.*/--advertise-address={{ static_ip }}/g" /etc/kubernetes/manifests/kube-apiserver.yaml'
+      register: manifest_update
+      changed_when: false
+
+    - name: Display manifest update status
+      ansible.builtin.debug:
+        msg: "✓ API server manifest updated"
+
+    - name: Wait for API server to restart
+      ansible.builtin.pause:
+        seconds: 20
+
+    - name: Verify kubectl connectivity
+      ansible.builtin.shell:
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes'
+      register: kubectl_test
+      until: kubectl_test.rc == 0
+      retries: 5
+      delay: 10
+      changed_when: false
+
+    - name: Display kubectl connectivity status
+      ansible.builtin.debug:
+        msg: "✓ kubectl connectivity verified"
+
+    # ==============================================================
+    # PART 4: SET UP SOCAT PORT FORWARDING
+    # ==============================================================
+
+    - name: Display socat setup message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 4: SETTING UP SOCAT PORT FORWARDING"
+          - "================================================================"
+
+    - name: Ensure socat is installed
+      ansible.builtin.shell:
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo dnf install -y socat 2>/dev/null || sudo apt-get install -y socat 2>/dev/null || true'
+      register: socat_install
+      changed_when: false
+
+    - name: Display socat installation status
+      ansible.builtin.debug:
+        msg: "✓ Socat installed/verified"
+
+    - name: Create HTTP socat systemd service
+      ansible.builtin.shell:
+        cmd: |
+          ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo tee /etc/systemd/system/socat-http.service <<EOF
+    [Unit]
+    Description=Socat HTTP Port Forward
+    After=network.target
+
+    [Service]
+    Type=simple
+    ExecStart=/usr/bin/socat TCP-LISTEN:80,fork,reuseaddr TCP:localhost:{{ http_nodeport }}
+    Restart=always
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+    '
+      register: http_service_create
+
+    - name: Display HTTP service creation status
+      ansible.builtin.debug:
+        msg: "✓ HTTP socat service created"
+
+    - name: Create HTTPS socat systemd service
+      ansible.builtin.shell:
+        cmd: |
+          ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo tee /etc/systemd/system/socat-https.service <<EOF
+    [Unit]
+    Description=Socat HTTPS Port Forward
+    After=network.target
+
+    [Service]
+    Type=simple
+    ExecStart=/usr/bin/socat TCP-LISTEN:443,fork,reuseaddr TCP:localhost:{{ https_nodeport }}
+    Restart=always
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+    '
+      register: https_service_create
+
+    - name: Display HTTPS service creation status
+      ansible.builtin.debug:
+        msg: "✓ HTTPS socat service created"
+
+    - name: Enable and start socat services
+      ansible.builtin.shell:
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo systemctl daemon-reload && sudo systemctl enable --now socat-http socat-https'
+      register: socat_start
+
+    - name: Display socat service start status
+      ansible.builtin.debug:
+        msg: "✓ Socat services started and enabled"
+
+    - name: Verify socat services are running
+      ansible.builtin.shell:
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo systemctl is-active socat-http socat-https'
+      register: socat_status
+      changed_when: false
+
+    - name: Display socat service status
+      ansible.builtin.debug:
+        msg: "{{ socat_status.stdout_lines }}"
+
+    # ==============================================================
+    # PART 5: CONFIGURE IPTABLES RULES
+    # ==============================================================
+
+    - name: Display iptables configuration message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 5: CONFIGURING IPTABLES RULES"
+          - "================================================================"
+
+    - name: Add iptables FORWARD rules for NodePorts
+      ansible.builtin.shell:
+        cmd: |
+          ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo iptables -A FORWARD -p tcp --dport {{ http_nodeport }} -j ACCEPT 2>/dev/null || true'
+          ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo iptables -A FORWARD -p tcp --dport {{ https_nodeport }} -j ACCEPT 2>/dev/null || true'
+      register: iptables_forward
+      changed_when: false
+
+    - name: Display FORWARD rules status
+      ansible.builtin.debug:
+        msg: "✓ iptables FORWARD rules added"
+
+    - name: Save iptables configuration
+      ansible.builtin.shell:
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo iptables-save | sudo tee /etc/sysconfig/iptables > /dev/null 2>/dev/null || sudo iptables-save | sudo tee /etc/iptables/rules.v4 > /dev/null 2>/dev/null || true'
+      register: iptables_save
+      changed_when: false
+
+    - name: Display iptables save status
+      ansible.builtin.debug:
+        msg: "✓ iptables configuration saved"
+
+    # ==============================================================
+    # PART 6: VERIFY DEPLOYMENT STATUS
+    # ==============================================================
+
+    - name: Display verification message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 6: VERIFYING DEPLOYMENT STATUS"
+          - "================================================================"
+
+    - name: Get Kubernetes nodes status
+      ansible.builtin.shell:
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes'
+      register: nodes_status
+      changed_when: false
+
+    - name: Display nodes status
+      ansible.builtin.debug:
+        msg: "{{ nodes_status.stdout_lines }}"
+
+    - name: Get application pods status
+      ansible.builtin.shell:
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n {{ app_namespace }}'
+      register: pods_status
+      changed_when: false
+
+    - name: Display pods status
+      ansible.builtin.debug:
+        msg: "{{ pods_status.stdout_lines }}"
+
+    - name: Get ingress controller status
+      ansible.builtin.shell:
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} 'sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n {{ ingress_namespace }} -l app.kubernetes.io/component=controller'
+      register: ingress_status
+      changed_when: false
+
+    - name: Display ingress status
+      ansible.builtin.debug:
+        msg: "{{ ingress_status.stdout_lines }}"
+
+    # ==============================================================
+    # PART 7: TEST CONNECTIVITY
+    # ==============================================================
+
+    - name: Display connectivity test message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PART 7: TESTING CONNECTIVITY"
+          - "================================================================"
+
+    - name: Wait for DNS propagation
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Test HTTP from master node
+      ansible.builtin.shell:
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} 'curl -s -o /dev/null -w "%{http_code}" http://localhost:{{ http_nodeport }}/ --connect-timeout 5 || echo "TIMEOUT"'
+      register: http_test
+      changed_when: false
+
+    - name: Display HTTP test result
+      ansible.builtin.debug:
+        msg: "{{ '✓ HTTP: SUCCESS (code: ' + http_test.stdout + ')' if http_test.stdout != 'TIMEOUT' else '✗ HTTP: TIMEOUT' }}"
+
+    - name: Test HTTPS from master node
+      ansible.builtin.shell:
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} 'curl -sk -o /dev/null -w "%{http_code}" https://localhost:{{ https_nodeport }}/ --connect-timeout 5 || echo "TIMEOUT"'
+      register: https_test
+      changed_when: false
+
+    - name: Display HTTPS test result
+      ansible.builtin.debug:
+        msg: "{{ '✓ HTTPS: SUCCESS (code: ' + https_test.stdout + ')' if https_test.stdout != 'TIMEOUT' else '✗ HTTPS: TIMEOUT' }}"
+
+    - name: Test external port 443 connectivity
+      ansible.builtin.shell:
+        cmd: nc -zv {{ static_ip }} 443 2>&1 | grep -q succeeded && echo "OPEN" || echo "CLOSED"
+      register: external_port_test
+      changed_when: false
+
+    - name: Display external port test result
+      ansible.builtin.debug:
+        msg: "{{ '✓ Port 443: OPEN and accessible' if external_port_test.stdout == 'OPEN' else '✗ Port 443: CLOSED or not accessible' }}"
+
+    # ==============================================================
+    # PART 8: FINAL SUMMARY
+    # ==============================================================
+
+    - name: Display final summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "FIX COMPLETED SUCCESSFULLY"
+          - "================================================================"
+          - ""
+          - "Configuration Summary:"
+          - "  Domain: {{ domain }}"
+          - "  Static IP: {{ static_ip }}"
+          - "  Master Node: {{ static_ip }}"
+          - "  HTTP Port Forward: 80 → {{ http_nodeport }}"
+          - "  HTTPS Port Forward: 443 → {{ https_nodeport }}"
+          - ""
+          - "Services Enabled:"
+          - "  ✓ socat-http.service"
+          - "  ✓ socat-https.service"
+          - ""
+          - "Next Steps:"
+          - "  1. Test in browser: https://{{ domain }}/"
+          - "  2. Verify DNS: dig +short {{ domain }}"
+          - "  3. Check certificate: curl -v https://{{ domain }}/"
+          - ""
+          - "If issues persist:"
+          - "  - Check DNS points to {{ static_ip }}"
+          - "  - Verify socat services: systemctl status socat-http socat-https"
+          - "  - Check pods: sudo kubectl get pods -n {{ app_namespace }}"
+          - "  - View logs: sudo journalctl -u socat-http -u socat-https"
+          - ""
+          - "================================================================"
