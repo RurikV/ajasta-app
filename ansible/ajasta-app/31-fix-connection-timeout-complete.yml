@@ -16,8 +16,8 @@
     master_ssh_user: "ajasta"
     ingress_namespace: "ingress-nginx"
     app_namespace: "ajasta"
-    http_nodeport: 31783
-    https_nodeport: 31906
+    http_nodeport: 30920
+    https_nodeport: 30281
 
   tasks:
     - name: Display playbook information
@@ -76,7 +76,7 @@
 
     - name: Check current NAT configuration
       ansible.builtin.shell:
-        cmd: yc compute instance get --id {{ master_instance_id.stdout }} --full --format json | python3 -c "import sys, json; i = json.load(sys.stdin); nat = i.get('network_interfaces', [{}])[0].get('one_to_one_nat', {}); print(nat.get('address', 'NONE') if nat else 'NONE')"
+        cmd: yc compute instance get --id {{ master_instance_id.stdout }} --full --format json | python3 -c "import sys, json; i = json.load(sys.stdin); nat = i.get('network_interfaces', [{}])[0].get('primary_v4_address', {}).get('one_to_one_nat', {}); print(nat.get('address', 'NONE') if nat else 'NONE')"
       register: current_nat_ip
       changed_when: false
 
@@ -101,12 +101,8 @@
 
     - name: Display NAT removal status
       ansible.builtin.debug:
-        msg: "{{ 'NAT removed' if nat_removal.rc == 0 else 'No NAT to remove or removal failed (will retry)' }}"
-      when:
-        - nat_needs_configuration
-        - nat_removal is defined
-      vars:
-        removal_status: "{{ nat_removal.rc | default(1) }}"
+        msg: "{{ 'NAT removed' if (nat_removal.rc | default(1)) == 0 else 'No NAT to remove or removal failed (will retry)' }}"
+      when: nat_needs_configuration
 
     - name: Wait for NAT removal to complete
       ansible.builtin.pause:
@@ -124,10 +120,8 @@
 
     - name: Display NAT attachment status
       ansible.builtin.debug:
-        msg: "{{ '✓ Static IP attached: ' + static_ip if nat_attachment.rc == 0 else '✗ Failed to attach NAT after retries' }}"
-      when:
-        - nat_needs_configuration
-        - nat_attachment is defined
+        msg: "{{ '✓ Static IP attached: ' + static_ip if (nat_attachment.rc | default(1)) == 0 else '✗ Failed to attach NAT after retries' }}"
+      when: nat_needs_configuration
 
     - name: Wait for NAT attachment to complete
       ansible.builtin.pause:
@@ -136,7 +130,7 @@
 
     - name: Verify NAT attachment
       ansible.builtin.shell:
-        cmd: yc compute instance get --id {{ master_instance_id.stdout }} --full --format json | python3 -c "import sys, json; i = json.load(sys.stdin); nat = i.get('network_interfaces', [{}])[0].get('one_to_one_nat', {}); print(nat.get('address', 'NONE') if nat else 'NONE')"
+        cmd: yc compute instance get --id {{ master_instance_id.stdout }} --full --format json | python3 -c "import sys, json; i = json.load(sys.stdin); nat = i.get('network_interfaces', [{}])[0].get('primary_v4_address', {}).get('one_to_one_nat', {}); print(nat.get('address', 'NONE') if nat else 'NONE')"
       register: verified_nat_ip
       changed_when: false
       until: verified_nat_ip.stdout == static_ip
@@ -355,7 +349,9 @@
 
     - name: Install HTTP socat service file
       ansible.builtin.shell:
-        cmd: sudo mv /tmp/socat-http.service /etc/systemd/system/socat-http.service
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} "sudo mv /tmp/socat-http.service /etc/systemd/system/socat-http.service"
+      delegate_to: localhost
+      become: no
 
     - name: Display HTTP service creation status
       ansible.builtin.debug:
@@ -392,7 +388,9 @@
 
     - name: Install HTTPS socat service file
       ansible.builtin.shell:
-        cmd: sudo mv /tmp/socat-https.service /etc/systemd/system/socat-https.service
+        cmd: ssh {{ master_ssh_user }}@{{ static_ip }} "sudo mv /tmp/socat-https.service /etc/systemd/system/socat-https.service"
+      delegate_to: localhost
+      become: no
 
     - name: Display HTTPS service creation status
       ansible.builtin.debug:
