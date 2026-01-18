@@ -119,7 +119,9 @@
         cmd: kubectl get pods -n {{ ingress_namespace }} -l app.kubernetes.io/name=ingress-nginx --no-headers | grep Running
       register: controller_pod_check
       changed_when: false
-      failed_when: controller_pod_check.rc != 0
+      until: controller_pod_check.rc == 0
+      retries: 30
+      delay: 5
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
 

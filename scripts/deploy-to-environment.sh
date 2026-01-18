@@ -291,7 +291,7 @@ if [ "$DRY_RUN" = true ]; then
     echo "  Command: ${ANSIBLE_APP_DIR}/deploy-ajasta.sh ${START_STEP} ${VERBOSITY}"
     echo ""
     print_step 5 "Fix connection timeout issues"
-    echo "  Command: ansible-playbook -i inventory.ini 31-fix-connection-timeout-complete.yml ${VERBOSITY}"
+    echo "  Command: cd ${ANSIBLE_APP_DIR} && ansible-playbook -i ../k8s/inventory.ini 31-fix-connection-timeout-complete.yml ${VERBOSITY}"
     echo ""
     print_success "Dry run complete"
     exit 0
@@ -406,9 +406,9 @@ if [ "$START_STEP" -le 5 ]; then
     print_step 5 "Fix connection timeout issues"
 
     print_info "Running connection timeout fix playbook..."
-    cd "${ANSIBLE_K8S_DIR}"
+    cd "${ANSIBLE_APP_DIR}"
 
-    if ansible-playbook -i inventory.ini 31-fix-connection-timeout-complete.yml ${VERBOSITY}; then
+    if ansible-playbook -i ../k8s/inventory.ini 31-fix-connection-timeout-complete.yml ${VERBOSITY}; then
         print_success "Connection timeout issues resolved"
     else
         print_warning "Connection timeout fix completed with warnings"

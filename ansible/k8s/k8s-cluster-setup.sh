@@ -167,17 +167,11 @@ else
 fi
 echo ""
 
-# Ask for confirmation (skip if not starting from step 1)
+# Auto-proceed (confirmation disabled for automation)
 if [ "$START_STEP" -eq 1 ]; then
-    read -p "Do you want to proceed? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Setup cancelled."
-        exit 0
-    fi
+    echo -e "${GREEN}Auto-proceeding with setup...${NC}"
 else
     echo -e "${YELLOW}Resuming from step ${START_STEP}...${NC}"
-    sleep 2
 fi
 
 echo ""
@@ -292,35 +286,33 @@ fi
 # =================================================================
 # OPTIONAL: Additional Components
 # =================================================================
-# Ask if user wants to install additional components
+# Auto-install additional components (enabled for automation)
 if [ $START_STEP -le 6 ]; then
     echo ""
-    read -p "Do you want to install additional components (Dashboard, Ingress, Longhorn)? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        # Kubernetes Dashboard
-        print_step 7 "Deploying Kubernetes Dashboard"
-        if ansible-playbook -i inventory.ini 10-deploy-kubernetes-dashboard.yml $VERBOSITY; then
-            print_success "Kubernetes Dashboard deployed"
-        else
-            print_error "Failed to deploy Dashboard"
-        fi
+    echo -e "${GREEN}Installing additional components (Dashboard, Ingress, Longhorn)...${NC}"
 
-        # Ingress NGINX
-        print_step 8 "Deploying Ingress NGINX Controller"
-        if ansible-playbook -i inventory.ini 13-deploy-ingress-nginx-controller.yml $VERBOSITY; then
-            print_success "Ingress NGINX Controller deployed"
-        else
-            print_error "Failed to deploy Ingress"
-        fi
+    # Kubernetes Dashboard
+    print_step 7 "Deploying Kubernetes Dashboard"
+    if ansible-playbook -i inventory.ini 10-deploy-kubernetes-dashboard.yml $VERBOSITY; then
+        print_success "Kubernetes Dashboard deployed"
+    else
+        print_error "Failed to deploy Dashboard"
+    fi
 
-        # Longhorn Storage
-        print_step 9 "Deploying Longhorn Storage"
-        if ansible-playbook -i inventory.ini 14-deploy-longhorn-storage.yml $VERBOSITY; then
-            print_success "Longhorn Storage deployed"
-        else
-            print_error "Failed to deploy Longhorn"
-        fi
+    # Ingress NGINX
+    print_step 8 "Deploying Ingress NGINX Controller"
+    if ansible-playbook -i inventory.ini 13-deploy-ingress-nginx-controller.yml $VERBOSITY; then
+        print_success "Ingress NGINX Controller deployed"
+    else
+        print_error "Failed to deploy Ingress"
+    fi
+
+    # Longhorn Storage
+    print_step 9 "Deploying Longhorn Storage"
+    if ansible-playbook -i inventory.ini 14-deploy-longhorn-storage.yml $VERBOSITY; then
+        print_success "Longhorn Storage deployed"
+    else
+        print_error "Failed to deploy Longhorn"
     fi
 fi
 
