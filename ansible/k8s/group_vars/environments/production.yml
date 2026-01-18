@@ -1,0 +1,74 @@
+---
+# Production Environment Ansible Variables
+# These variables are used when deploying to production environment
+
+# Environment identification
+environment: production
+deployment_environment: production
+
+# Kubernetes cluster configuration
+cluster_name: ajasta-production-cluster
+kubeconfig_context: ajasta-production
+
+# Application namespace
+app_namespace: ajasta
+app_namespace_label: ajasta
+
+# PostgreSQL configuration (CloudNativePG)
+pg_cluster_name: cluster-postgresql-production
+pg_namespace: postgresql-cluster
+pg_database: ajastadb
+pg_instances: 2  # HA with 1 replica
+pg_storage_size: 20Gi
+
+# Backend configuration
+backend_enabled: true
+backend_image: vladimirryrik/ajasta-backend
+backend_tag: alpine
+backend_replicas: 2
+backend_port: 8090
+backend_cpu_request: 500m
+backend_cpu_limit: 1000m
+backend_memory_request: 512Mi
+backend_memory_limit: 1Gi
+
+# Frontend configuration
+frontend_enabled: true
+frontend_image: vladimirryrik/ajasta-frontend
+frontend_tag: alpine
+frontend_replicas: 2
+frontend_cpu_request: 100m
+frontend_cpu_limit: 200m
+frontend_memory_request: 64Mi
+frontend_memory_limit: 128Mi
+
+# Ingress configuration
+ingress_enabled: true
+ingress_class_name: nginx
+ingress_host: ajasta.top
+ingress_tls_enabled: true
+ingress_tls_secret: ajasta-production-tls
+
+# Certificate Manager (cert-manager)
+cert_manager_enabled: true
+letsencrypt_issuer: letsencrypt-production
+letsencrypt_email: admin@ajasta.top
+
+# Application secrets (MUST BE CHANGED IN PRODUCTION!)
+jwt_secret: CHANGE-ME-PRODUCTION-SECRET-KEY-GENERATE-STRONG-ONE
+
+# Resource configuration
+storage_class: longhorn
+
+# Feature flags
+enable_monitoring: true
+enable_backups: true
+enable_autoscaling: true
+
+# Safety checks
+require_confirmation: true
+skip_preflight_checks: false
+
+# Production-specific checks
+require_ssl_verification: true
+require_health_checks: true

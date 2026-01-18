@@ -1,0 +1,70 @@
+---
+# Staging Environment Ansible Variables
+# These variables are used when deploying to staging environment
+
+# Environment identification
+environment: staging
+deployment_environment: staging
+
+# Kubernetes cluster configuration
+cluster_name: ajasta-staging-cluster
+kubeconfig_context: ajasta-staging
+
+# Application namespace
+app_namespace: ajasta-staging
+app_namespace_label: ajasta-staging
+
+# PostgreSQL configuration (CloudNativePG)
+pg_cluster_name: cluster-postgresql-staging
+pg_namespace: postgresql-cluster
+pg_database: ajastadb
+pg_instances: 1
+pg_storage_size: 5Gi
+
+# Backend configuration
+backend_enabled: true
+backend_image: vladimirryrik/ajasta-backend
+backend_tag: alpine
+backend_replicas: 1
+backend_port: 8090
+backend_cpu_request: 250m
+backend_cpu_limit: 500m
+backend_memory_request: 256Mi
+backend_memory_limit: 512Mi
+
+# Frontend configuration
+frontend_enabled: true
+frontend_image: vladimirryrik/ajasta-frontend
+frontend_tag: alpine
+frontend_replicas: 1
+frontend_cpu_request: 100m
+frontend_cpu_limit: 200m
+frontend_memory_request: 64Mi
+frontend_memory_limit: 128Mi
+
+# Ingress configuration
+ingress_enabled: true
+ingress_class_name: nginx
+ingress_host: staging.ajasta.top
+ingress_tls_enabled: true
+ingress_tls_secret: ajasta-staging-tls
+
+# Certificate Manager (cert-manager)
+cert_manager_enabled: true
+letsencrypt_issuer: letsencrypt-staging
+letsencrypt_email: admin@ajasta.top
+
+# Application secrets (UPDATE FOR PRODUCTION!)
+jwt_secret: staging-jwt-secret-change-me-2024
+
+# Resource configuration
+storage_class: longhorn
+
+# Feature flags
+enable_monitoring: false
+enable_backups: false
+enable_autoscaling: false
+
+# Safety checks
+require_confirmation: false
+skip_preflight_checks: false
