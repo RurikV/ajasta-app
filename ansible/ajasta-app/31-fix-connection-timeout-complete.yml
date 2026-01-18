@@ -84,37 +84,55 @@
       ansible.builtin.debug:
         msg: "Current NAT IP: {{ current_nat_ip.stdout }}"
 
-    - name: Remove existing NAT if IP doesn't match
+    - name: Set fact for whether NAT needs to be configured
+      ansible.builtin.set_fact:
+        nat_needs_configuration: "{{ current_nat_ip.stdout != static_ip }}"
+
+    - name: Display whether NAT will be configured
+      ansible.builtin.debug:
+        msg: "NAT configuration {{ 'needed' if nat_needs_configuration else 'already correct, skipping' }}"
+
+    - name: Remove existing NAT if present and IP doesn't match
       ansible.builtin.shell:
-        cmd: yc compute instance remove-one-to-one-nat --id {{ master_instance_id.stdout }} --network-interface-index 0 --async
+        cmd: yc compute instance remove-one-to-one-nat --id {{ master_instance_id.stdout }} --network-interface-index 0
       register: nat_removal
-      when: current_nat_ip.stdout != static_ip and current_nat_ip.stdout != "NONE"
+      when: nat_needs_configuration and current_nat_ip.stdout != "NONE"
       ignore_errors: yes
 
     - name: Display NAT removal status
       ansible.builtin.debug:
-        msg: "{{ 'NAT removed' if nat_removal.rc == 0 else 'No NAT to remove or already removed' }}"
-      when: current_nat_ip.stdout != static_ip and current_nat_ip.stdout != "NONE"
+        msg: "{{ 'NAT removed' if nat_removal.rc == 0 else 'No NAT to remove or removal failed (will retry)' }}"
+      when:
+        - nat_needs_configuration
+        - nat_removal is defined
+      vars:
+        removal_status: "{{ nat_removal.rc | default(1) }}"
 
     - name: Wait for NAT removal to complete
       ansible.builtin.pause:
-        seconds: 15
-      when: current_nat_ip.stdout != static_ip and current_nat_ip.stdout != "NONE"
+        seconds: 3
+      when: nat_needs_configuration and current_nat_ip.stdout != "NONE"
 
     - name: Attach static IP via NAT
       ansible.builtin.shell:
-        cmd: yc compute instance add-one-to-one-nat --id {{ master_instance_id.stdout }} --network-interface-index 0 --nat-address {{ static_ip }} --async
+        cmd: yc compute instance add-one-to-one-nat --id {{ master_instance_id.stdout }} --network-interface-index 0 --nat-address {{ static_ip }}
       register: nat_attachment
-      when: current_nat_ip.stdout != static_ip
+      when: nat_needs_configuration
+      retries: 3
+      delay: 5
+      until: nat_attachment.rc == 0
 
     - name: Display NAT attachment status
       ansible.builtin.debug:
-        msg: "{{ 'Static IP attached: ' + static_ip if nat_attachment.rc == 0 else 'Static IP already configured' }}"
+        msg: "{{ '✓ Static IP attached: ' + static_ip if nat_attachment.rc == 0 else '✗ Failed to attach NAT after retries' }}"
+      when:
+        - nat_needs_configuration
+        - nat_attachment is defined
 
     - name: Wait for NAT attachment to complete
       ansible.builtin.pause:
-        seconds: 20
-      when: current_nat_ip.stdout != static_ip
+        seconds: 3
+      when: nat_needs_configuration
 
     - name: Verify NAT attachment
       ansible.builtin.shell:
