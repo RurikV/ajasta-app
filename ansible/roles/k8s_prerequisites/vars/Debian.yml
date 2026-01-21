@@ -1,0 +1,18 @@
+---
+# Debian/Ubuntu specific variables for k8s_prerequisites role
+
+k8s_required_packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+
+k8s_firewall_service: ufw
+
+k8s_package_manager: apt
+
+k8s_package_manager_update_cmd: apt-get update
+
+# Additional Ubuntu-specific modules
+k8s_kernel_modules_extra: []

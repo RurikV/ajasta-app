@@ -1,0 +1,88 @@
+---
+- name: Include OS-specific variables
+  ansible.builtin.include_vars: "{{ ansible_os_family }}.yml"
+
+# Disable swap to prevent kubelet issues
+- name: Check if swap is enabled
+  ansible.builtin.command: swapon --show
+  register: swap_status
+  changed_when: false
+  failed_when: false
+
+- name: Disable all swap
+  ansible.builtin.command: swapoff -a
+  when: swap_status.stdout != ""
+  notify:
+    - Update module dependencies
+
+- name: Remove swap entries from /etc/fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^.*swap.*$'
+    state: absent
+    backup: true
+  when: k8s_disable_swap | bool
+
+# Load required kernel modules for Kubernetes
+- name: Load required kernel modules
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ k8s_kernel_modules }}"
+  notify:
+    - Update module dependencies
+
+# Configure transparent masquerading for pods
+- name: Configure kernel modules for Kubernetes
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      {% for module in k8s_kernel_modules %}
+      {{ module }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - Update module dependencies
+
+# Configure sysctl settings for Kubernetes networking
+- name: Configure sysctl settings for Kubernetes
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+  loop: "{{ k8s_sysctl_settings | dict2items }}"
+  loop_control:
+    label: "{{ item.key }} = {{ item.value }}"
+  notify:
+    - Reload sysctl
+
+- name: Ensure required packages are installed
+  ansible.builtin.package:
+    name: "{{ k8s_required_packages }}"
+    state: present
+
+# Disable firewall (configurable via k8s_disable_firewall)
+- name: Disable ufw firewall
+  ansible.builtin.ufw:
+    state: disabled
+  when:
+    - ansible_os_family == "Debian"
+    - k8s_disable_firewall | bool
+  ignore_errors: true
+  notify:
+    - Restart ufw
+
+- name: Disable firewalld
+  ansible.builtin.service:
+    name: firewalld
+    state: stopped
+    enabled: false
+  when:
+    - ansible_os_family == "RedHat"
+    - k8s_disable_firewall | bool
+  ignore_errors: true
+  notify:
+    - Restart firewalld

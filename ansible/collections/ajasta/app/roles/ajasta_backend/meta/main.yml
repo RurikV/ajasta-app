@@ -1,0 +1,28 @@
+---
+galaxy_info:
+  role_name: ajasta_backend
+  author: Ajasta DevOps Team
+  description: Deploy Ajasta Spring Boot backend to Kubernetes
+  company: Ajasta
+  license: MIT
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Kubernetes
+      versions:
+        - "1.29"
+
+  galaxy_tags:
+    - spring-boot
+    - backend
+    - api
+    - java
+    - kubernetes
+    - application
+    - deployment
+
+dependencies:
+  - role: postgresql_cluster
+
+namespace: ajasta
+allow_duplicates: true

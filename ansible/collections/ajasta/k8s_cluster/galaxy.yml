@@ -1,0 +1,50 @@
+---
+namespace: ajasta
+name: k8s_cluster
+version: 1.0.0
+authors:
+  - Ajasta DevOps Team
+description: Kubernetes cluster deployment and management collection
+license: MIT
+license_file: LICENSE
+
+readme: README.md
+
+tags:
+  - kubernetes
+  - k8s
+  - cluster
+  - cloud
+  - infrastructure
+  - deployment
+  - automation
+  - containerd
+  - kubeadm
+
+repository: https://github.com/RurikV/ajasta-ansible-automation/k8s-cluster
+documentation: https://github.com/RurikV/ajasta-ansible-automation/k8s-cluster/docs
+homepage: https://github.com/RurikV/ajasta-ansible-automation/k8s-cluster
+issues: https://github.com/RurikV/ajasta-ansible-automation/k8s-cluster/issues
+
+build_ignore:
+  - .git
+  - .gitignore
+  - .cache
+  - "*.tar.gz"
+  - molecule
+  - .molecule
+  - tests
+  - .pytest_cache
+  - dist
+  - build
+
+dependencies:
+  community.general: ">=6.0.0"
+  ansible.posix: ">=1.5.0"
+
+# Collection requirements
+requirements:
+  # Python packages required by this collection
+  python:
+    - kubernetes>=25.0.0
+    - pyyaml>=6.0

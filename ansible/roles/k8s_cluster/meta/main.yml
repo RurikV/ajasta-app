@@ -1,0 +1,34 @@
+---
+galaxy_info:
+  role_name: k8s_cluster
+  author: Ajasta DevOps Team
+  description: Bootstrap Kubernetes cluster using kubeadm
+  company: Ajasta
+  license: MIT
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+    - name: CentOS
+      versions:
+        - 8
+        - 9
+
+  galaxy_tags:
+    - kubernetes
+    - k8s
+    - cluster
+    - kubeadm
+    - kubelet
+    - kubectl
+    - bootstrap
+
+dependencies:
+  - role: k8s_prerequisites
+  - role: containerd
+
+namespace: ajasta
+allow_duplicates: true

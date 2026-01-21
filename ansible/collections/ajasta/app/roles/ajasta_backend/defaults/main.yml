@@ -1,0 +1,162 @@
+---
+# Default variables for ajasta_backend role
+
+# Kubernetes configuration
+kubernetes_namespace: "ajasta"
+kubernetes_context: "{{ kube_config_context | default(lookup('env', 'K8S_AUTH_CONTEXT')) }}"
+
+# Application configuration
+app_name: "ajasta-backend"
+app_image: "vladimirryrik/ajasta-backend:alpine"
+app_image_pull_policy: "IfNotPresent"
+
+# Replicas
+app_replicas: 2
+
+# Resources
+app_resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+# Service configuration
+service_type: "ClusterIP"
+service_port: 8090
+target_port: 8090
+
+# Environment variables (from Kubernetes secrets or configmaps)
+app_env_from:
+  - type: secret
+    name: ajasta-backend-secrets
+  - type: configmap
+    name: ajasta-backend-config
+
+# Additional environment variables
+app_env_vars:
+  - name: SPRING_PROFILES_ACTIVE
+    value: "production"
+  - name: SERVER_SHUTDOWN
+    value: "graceful"
+
+# Database configuration (will be set via secrets)
+db_host: "ajasta-postgresql"
+db_port: 5432
+db_name: "ajasta"
+db_user: "ajasta"
+
+# Health checks
+health_probe_enabled: true
+liveness_probe_path: "/actuator/health/liveness"
+readiness_probe_path: "/actuator/health/readiness"
+startup_probe_path: "/actuator/health/startup"
+
+# Probe configurations
+liveness_probe_initial_delay: 60
+liveness_probe_period: 30
+liveness_probe_timeout: 10
+liveness_probe_failure_threshold: 3
+
+readiness_probe_initial_delay: 30
+readiness_probe_period: 10
+readiness_probe_timeout: 5
+readiness_probe_failure_threshold: 3
+
+startup_probe_initial_delay: 30
+startup_probe_period: 10
+startup_probe_timeout: 5
+startup_probe_failure_threshold: 30
+
+# Ingress configuration
+ingress_enabled: true
+ingress_host: "api.ajasta.top"
+ingress_path: "/"
+ingress_path_type: "Prefix"
+ingress_class_name: "nginx"
+ingress_tls_enabled: true
+ingress_tls_secret: "ajasta-backend-tls"
+
+# Deployment strategy
+deployment_strategy_type: "RollingUpdate"
+max_surge: 1
+max_unavailable: 0
+
+# Pod disruption budget
+pod_disruption_budget_enabled: true
+pod_disruption_budget_min_available: 1
+
+# HPA (Horizontal Pod Autoscaler)
+hpa_enabled: true
+hpa_min_replicas: 2
+hpa_max_replicas: 5
+hpa_target_cpu_utilization: 80
+hpa_target_memory_utilization: 80
+
+# ConfigMap
+configmap_enabled: true
+configmap_data:
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://ajasta-postgresql:5432/ajasta"
+  SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
+  SPRING_JPA_SHOW_SQL: "false"
+
+# Secrets (use Kubernetes secrets or external secret managers)
+secrets_enabled: true
+# Note: Actual secret values should be stored securely
+# Use external secret management like:
+# - HashiCorp Vault
+# - AWS Secrets Manager
+# - Azure Key Vault
+# - External Secrets Operator
+required_secrets:
+  - name: SPRING_DATASOURCE_PASSWORD
+    required: true
+  - name: JWT_SECRET
+    required: true
+
+# Service account
+service_account_enabled: true
+service_account_name: "{{ app_name }}"
+
+# Security context
+pod_security_context:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+container_security_context:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Persistent volumes (for file uploads)
+persistence_enabled: true
+persistence_size: "10Gi"
+persistence_storage_class: "longhorn"
+persistence_access_mode: "ReadWriteOnce"
+persistence_mount_path: "/app/uploads"
+
+# Graceful shutdown
+termination_grace_period: 30
+pre_stop_hook_enabled: true
+
+# Logging
+log_level: "INFO"
+spring_jpa_show_sql: "false"
+
+# Monitoring
+monitoring_enabled: true
+prometheus_scraping_enabled: true
+service_monitor_enabled: false
+
+# JVM options
+jvm_memory_opts: "-Xms512m -Xmx768m"
+jvm_gc_opts: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+
+# Feature flags
+feature_s3_enabled: false
+feature_stripe_enabled: false
+feature_email_enabled: false

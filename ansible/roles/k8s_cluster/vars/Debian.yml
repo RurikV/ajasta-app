@@ -1,0 +1,18 @@
+---
+# Debian/Ubuntu specific variables for k8s_cluster role
+
+# Kubernetes repository
+kubernetes_apt_repo_url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version_prefix }}/deb/"
+kubernetes_apt_gpg_key: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version_prefix }}/deb/Release.key"
+
+# Kubernetes packages
+kubernetes_packages:
+  - kubelet
+  - kubeadm
+  - kubectl
+
+# Package manager
+kubernetes_package_manager: apt
+
+# Hold packages
+kubernetes_hold_packages: true

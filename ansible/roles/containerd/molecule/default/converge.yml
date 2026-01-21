@@ -1,0 +1,29 @@
+---
+# Molecule converge playbook for containerd role
+
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Update package cache (Debian)
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+      changed_when: false
+
+    - name: Install dependencies for testing
+      ansible.builtin.package:
+        name:
+          - curl
+          - ca-certificates
+        state: present
+
+  roles:
+    - role: containerd
+      vars:
+        containerd_version: "1.7.13"
+        cni_plugins_version: "1.4.0"
+        nerdctl_install: false

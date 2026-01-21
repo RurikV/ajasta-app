@@ -1,0 +1,58 @@
+---
+# Default variables for containerd role
+
+# containerd version
+containerd_version: "1.7.13"
+containerd_package: "containerd.io"
+
+# Download URLs
+containerd_download_url: "https://github.com/containerd/containerd/releases/download/v{{ containerd_version }}/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
+nerdctl_download_url: "https://github.com/containerd/nerdctl/releases/download/v1.7.6/nerdctl-1.7.6-linux-amd64.tar.gz"
+
+# CNI plugins
+cni_plugins_version: "1.4.0"
+cni_plugins_download_url: "https://github.com/containernetworking/plugins/releases/download/v{{ cni_plugins_version }}/cni-plugins-linux-amd64-v{{ cni_plugins_version }}.tgz"
+
+# Installation directories
+containerd_binary_dir: "/usr/local/bin"
+containerd_config_dir: "/etc/containerd"
+cni_bin_dir: "/opt/cni/bin"
+
+# System configuration
+containerd_systemd_dir: "/etc/systemd/system"
+containerd_service_dir: "{{ containerd_systemd_dir }}/containerd.service.d"
+
+# Configuration options
+containerd_snapshotter: "overlayfs"
+containerd_cgroup_driver: "systemd"
+
+# Registry mirrors (optional)
+containerd_registry_mirrors: []
+#  - "https://registry-1.docker.io"
+
+# Systemd cgroup driver
+containerd_use_systemd_cgroup: true
+
+# Restart containerd after configuration
+containerd_restart_after_config: true
+
+# Enable containerd service
+containerd_service_enabled: true
+containerd_service_state: started
+
+# Install nerdctl (optional)
+nerdctl_install: true
+
+# Configure containerd with default config
+containerd_generate_default_config: true
+
+# Log level
+containerd_log_level: "info"
+
+# Metrics
+containerd_metrics_address: ""
+
+# Container runtime interface (CRI) configuration
+containerd cri:
+  enabled: true
+  socket: "/run/containerd/containerd.sock"

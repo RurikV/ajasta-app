@@ -1,0 +1,51 @@
+---
+namespace: ajasta
+name: app
+version: 1.0.0
+authors:
+  - Ajasta DevOps Team
+description: Ajasta application deployment collection for Kubernetes
+license: MIT
+license_file: LICENSE
+
+readme: README.md
+
+tags:
+  - ajasta
+  - spring-boot
+  - react
+  - postgresql
+  - application
+  - fullstack
+  - kubernetes
+  - deployment
+
+repository: https://github.com/RurikV/ajasta-ansible-automation/ajasta-app
+documentation: https://github.com/RurikV/ajasta-ansible-automation/ajasta-app/docs
+homepage: https://github.com/RurikV/ajasta-ansible-automation/ajasta-app
+issues: https://github.com/RurikV/ajasta-ansible-automation/ajasta-app/issues
+
+build_ignore:
+  - .git
+  - .gitignore
+  - .cache
+  - "*.tar.gz"
+  - molecule
+  - .molecule
+  - tests
+  - .pytest_cache
+  - dist
+  - build
+
+dependencies:
+  ajasta.k8s_cluster: ">=1.0.0"
+  kubernetes.core: ">=2.0.0"
+  cloudnativepg.cloudnativepg: ">=0.0.1"
+
+# Collection requirements
+requirements:
+  # Python packages required by this collection
+  python:
+    - kubernetes>=25.0.0
+    - pyyaml>=6.0
+    - jinja2>=3.0.0

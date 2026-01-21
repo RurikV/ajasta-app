@@ -1,0 +1,190 @@
+---
+- name: Include OS-specific variables
+  ansible.builtin.include_vars: "{{ ansible_os_family }}.yml"
+
+- name: Create containerd configuration directory
+  ansible.builtin.file:
+    path: "{{ containerd_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Create CNI binary directory
+  ansible.builtin.file:
+    path: "{{ cni_bin_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+    recurse: true
+
+- name: Check if containerd is already installed
+  ansible.builtin.command: which containerd
+  register: containerd_check
+  changed_when: false
+  failed_when: false
+
+# Download and install containerd
+- name: Download containerd binary
+  ansible.builtin.get_url:
+    url: "{{ containerd_download_url }}"
+    dest: /tmp/containerd.tar.gz
+    mode: '0644'
+  when: containerd_check.rc != 0
+
+- name: Extract containerd binary
+  ansible.builtin.unarchive:
+    src: /tmp/containerd.tar.gz
+    dest: "{{ containerd_binary_dir }}"
+    remote_src: true
+  when: containerd_check.rc != 0
+  notify:
+    - Reload systemd
+
+- name: Download CNI plugins
+  ansible.builtin.get_url:
+    url: "{{ cni_plugins_download_url }}"
+    dest: /tmp/cni-plugins.tgz
+    mode: '0644'
+  when: containerd_check.rc != 0
+
+- name: Extract CNI plugins
+  ansible.builtin.unarchive:
+    src: /tmp/cni-plugins.tgz
+    dest: "{{ cni_bin_dir }}"
+    remote_src: true
+  when: containerd_check.rc != 0
+
+# Install nerdctl (optional)
+- name: Check if nerdctl is already installed
+  ansible.builtin.command: which nerdctl
+  register: nerdctl_check
+  changed_when: false
+  failed_when: false
+
+- name: Download nerdctl
+  ansible.builtin.get_url:
+    url: "{{ nerdctl_download_url }}"
+    dest: /tmp/nerdctl.tar.gz
+    mode: '0644'
+  when:
+    - nerdctl_install | bool
+    - nerdctl_check.rc != 0
+
+- name: Extract nerdctl
+  ansible.builtin.unarchive:
+    src: /tmp/nerdctl.tar.gz
+    dest: "{{ containerd_binary_dir }}"
+    remote_src: true
+  when:
+    - nerdctl_install | bool
+    - nerdctl_check.rc != 0
+
+# Generate containerd configuration
+- name: Generate default containerd configuration
+  ansible.builtin.command: >
+    containerd config default >
+    {{ containerd_config_dir }}/config.toml
+  args:
+    creates: "{{ containerd_config_dir }}/config.toml"
+  when: containerd_generate_default_config | bool
+  notify:
+    - Restart containerd
+
+# Configure containerd with Kubernetes-specific settings
+- name: Configure containerd for Kubernetes
+  ansible.builtin.lineinfile:
+    path: "{{ containerd_config_dir }}/config.toml"
+    regexp: '^(\s*)SystemdCgroup\s*='
+    line: '\1SystemdCgroup = {{ containerd_use_systemd_cgroup | lower }}'
+    backrefs: true
+    state: present
+  notify:
+    - Restart containerd
+
+- name: Create containerd systemd service override directory
+  ansible.builtin.file:
+    path: "{{ containerd_service_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  notify:
+    - Reload systemd
+
+# Create containerd systemd service
+- name: Create containerd systemd service file
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=containerd container runtime
+      Documentation=https://containerd.io
+      After=network.target local-fs.target
+
+      [Service]
+      Type=notify
+      # the default is not to use systemd for cgroups as the two concepts clash.
+      ExecStart=/usr/local/bin/containerd
+      KillMode=process
+      Delegate=yes
+      LimitNPROC=infinity
+      LimitCORE=infinity
+      # Having non-zero Limit*s causes performance problems due to accounting overhead
+      # in Linux. We recommend using cgroups to do container-local accounting.
+      TasksMax=infinity
+      OOMScoreAdjust=-999
+      RuntimeDirectory=containerd
+      RuntimeDirectoryMode=755
+      # Set timeout to 15min to avoid long-running container processes from timing out
+      TimeoutStartSec=900
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: "{{ containerd_systemd_dir }}/containerd.service"
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - Reload systemd
+
+- name: Enable and start containerd service
+  ansible.builtin.systemd:
+    name: containerd
+    daemon_reload: true
+    enabled: "{{ containerd_service_enabled }}"
+    state: "{{ containerd_service_state }}"
+
+# Verify installation
+- name: Verify containerd is running
+  ansible.builtin.command: containerd --version
+  register: containerd_version_check
+  changed_when: false
+
+- name: Display containerd version
+  ansible.builtin.debug:
+    msg: "{{ containerd_version_check.stdout }}"
+
+- name: Verify containerd service is active
+  ansible.builtin.systemd:
+    name: containerd
+    state: started
+  register: containerd_service_status
+
+- name: Check containerd service status
+  ansible.builtin.shell: |
+    systemctl is-active containerd
+  register: containerd_active
+  changed_when: false
+  failed_when: containerd_active.stdout != "active"
+
+# Cleanup
+- name: Cleanup temporary files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /tmp/containerd.tar.gz
+    - /tmp/cni-plugins.tgz
+    - /tmp/nerdctl.tar.gz
+  ignore_errors: true

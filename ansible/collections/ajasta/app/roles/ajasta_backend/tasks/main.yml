@@ -1,0 +1,355 @@
+---
+- name: Verify Kubernetes connection
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ kubernetes_namespace }}"
+  register: namespace_check
+
+- name: Create Kubernetes namespace if it doesn't exist
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ kubernetes_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+          environment: "{{ lookup('env', 'ENVIRONMENT') | default('production') }}"
+
+- name: Create ConfigMap for application configuration
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ app_name }}-config"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+          component: backend
+      data: "{{ configmap_data }}"
+  when: configmap_enabled | bool
+
+- name: Create secrets placeholder
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ app_name }}-secrets"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+          component: backend
+      type: Opaque
+      stringData:
+        # WARNING: These are placeholder values!
+        # Use external secret management in production
+        SPRING_DATASOURCE_PASSWORD: "change-me-in-production"
+        JWT_SECRET: "change-me-in-production"
+        AWS_ACCESS_KEY_ID: ""
+        AWS_SECRET_ACCESS_KEY: ""
+        STRIPE_API_KEY: ""
+        MAIL_USERNAME: ""
+        MAIL_PASSWORD: ""
+  when: secrets_enabled | bool
+
+- name: Create ServiceAccount
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: "{{ service_account_name }}"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+          component: backend
+  when: service_account_enabled | bool
+
+# Create Deployment
+- name: Deploy Spring Boot backend
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: "{{ app_name }}"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+          component: backend
+      spec:
+        replicas: "{{ app_replicas }}"
+        strategy:
+          type: "{{ deployment_strategy_type }}"
+          rollingUpdate:
+            maxSurge: "{{ max_surge }}"
+            maxUnavailable: "{{ max_unavailable }}"
+        selector:
+          matchLabels:
+            app: "{{ app_name }}"
+            component: backend
+        template:
+          metadata:
+            labels:
+              app: "{{ app_name }}"
+              component: backend
+              version: "1.0.0"
+          spec:
+            serviceAccountName: "{{ service_account_name }}"
+            securityContext: "{{ pod_security_context }}"
+            terminationGracePeriodSeconds: "{{ termination_grace_period }}"
+            containers:
+              - name: "{{ app_name }}"
+                image: "{{ app_image }}"
+                imagePullPolicy: "{{ app_image_pull_policy }}"
+                ports:
+                  - containerPort: "{{ target_port }}"
+                    name: http
+                    protocol: TCP
+                env:
+                  - name: POD_NAME
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.name
+                  - name: POD_NAMESPACE
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.namespace
+                envFrom: "{{ app_env_from }}"
+                env: "{{ app_env_vars + jvm_env_vars }}"
+                resources: "{{ app_resources }}"
+                securityContext: "{{ container_security_context }}"
+                volumeMounts: "{{ volume_mounts }}"
+                {{- if health_probe_enabled }}
+                livenessProbe:
+                  httpGet:
+                    path: "{{ liveness_probe_path }}"
+                    port: http
+                    scheme: HTTP
+                  initialDelaySeconds: {{ liveness_probe_initial_delay }}
+                  periodSeconds: {{ liveness_probe_period }}
+                  timeoutSeconds: {{ liveness_probe_timeout }}
+                  failureThreshold: {{ liveness_probe_failure_threshold }}
+                readinessProbe:
+                  httpGet:
+                    path: "{{ readiness_probe_path }}"
+                    port: http
+                    scheme: HTTP
+                  initialDelaySeconds: {{ readiness_probe_initial_delay }}
+                  periodSeconds: {{ readiness_probe_period }}
+                  timeoutSeconds: {{ readiness_probe_timeout }}
+                  failureThreshold: {{ readiness_probe_failure_threshold }}
+                startupProbe:
+                  httpGet:
+                    path: "{{ startup_probe_path }}"
+                    port: http
+                    scheme: HTTP
+                  initialDelaySeconds: {{ startup_probe_initial_delay }}
+                  periodSeconds: {{ startup_probe_period }}
+                  timeoutSeconds: {{ startup_probe_timeout }}
+                  failureThreshold: {{ startup_probe_failure_threshold }}
+                {{- end }}
+            volumes: "{{ volumes }}"
+  vars:
+    jvm_env_vars:
+      - name: JAVA_OPTS
+        value: "{{ jvm_memory_opts }} {{ jvm_gc_opts }}"
+    volume_mounts: "{{ persistence_mounts if persistence_enabled | bool else [] }}"
+    volumes: "{{ persistence_volumes if persistence_enabled | bool else [] }}"
+    persistence_mounts:
+      - name: uploads
+        mountPath: "{{ persistence_mount_path }}"
+    persistence_volumes:
+      - name: uploads
+        persistentVolumeClaim:
+          claimName: "{{ app_name }}-pvc"
+  register: deployment_result
+
+- name: Create PVC for file uploads
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: "{{ app_name }}-pvc"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+          component: backend
+      spec:
+        accessModes:
+          - "{{ persistence_access_mode }}"
+        resources:
+          requests:
+            storage: "{{ persistence_size }}"
+        storageClassName: "{{ persistence_storage_class }}"
+  when: persistence_enabled | bool
+
+- name: Create Service
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: "{{ app_name }}"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+          component: backend
+      spec:
+        type: "{{ service_type }}"
+        ports:
+          - port: {{ service_port }}
+            targetPort: http
+            protocol: TCP
+            name: http
+        selector:
+          app: "{{ app_name }}"
+          component: backend
+
+- name: Create Ingress
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: "{{ app_name }}"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+          component: backend
+        annotations:
+          nginx.ingress.kubernetes.io/ssl-redirect: "{{ 'true' if ingress_tls_enabled | bool else 'false' }}"
+          nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+          nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+          nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+      spec:
+        ingressClassName: "{{ ingress_class_name }}"
+        rules:
+          - host: "{{ ingress_host }}"
+            http:
+              paths:
+                - path: "{{ ingress_path }}"
+                  pathType: "{{ ingress_path_type }}"
+                  backend:
+                    service:
+                      name: "{{ app_name }}"
+                      port:
+                        number: {{ service_port }}
+        {{- if ingress_tls_enabled | bool }}
+        tls:
+          - hosts:
+              - "{{ ingress_host }}"
+            secretName: "{{ ingress_tls_secret }}"
+        {{- end }}
+  when: ingress_enabled | bool
+
+- name: Create PodDisruptionBudget
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: "{{ app_name }}"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+          component: backend
+      spec:
+        minAvailable: "{{ pod_disruption_budget_min_available }}"
+        selector:
+          matchLabels:
+            app: "{{ app_name }}"
+            component: backend
+  when: pod_disruption_budget_enabled | bool
+
+- name: Create HorizontalPodAutoscaler
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: "{{ app_name }}"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: "{{ app_name }}"
+          component: backend
+      spec:
+        scaleTargetRef:
+          apiVersion: apps/v1
+          kind: Deployment
+          name: "{{ app_name }}"
+        minReplicas: "{{ hpa_min_replicas }}"
+        maxReplicas: "{{ hpa_max_replicas }}"
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: {{ hpa_target_cpu_utilization }}
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: {{ hpa_target_memory_utilization }}
+  when: hpa_enabled | bool
+
+- name: Wait for deployment to be ready
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ app_name }}"
+    namespace: "{{ kubernetes_namespace }}"
+  register: deployment_status
+  until:
+    - deployment_status.resources[0].status.availableReplicas is defined
+    - deployment_status.resources[0].status.availableReplicas >= app_replicas | int
+  retries: 30
+  delay: 10
+  ignore_errors: true
+
+- name: Display deployment status
+  ansible.builtin.debug:
+    msg:
+      - "Deployment: {{ app_name }}"
+      - "Namespace: {{ kubernetes_namespace }}"
+      - "Replicas: {{ deployment_status.resources[0].spec.replicas | default('N/A') }}"
+      - "Available: {{ deployment_status.resources[0].status.availableReplicas | default('N/A') }}"
+      - "Image: {{ app_image }}"
+      - "Service: {{ app_name }}.{{ kubernetes_namespace }}.svc.cluster.local:{{ service_port }}"
+      {% if ingress_enabled | bool %}
+      - "Ingress: https://{{ ingress_host }}"
+      {% endif %}
+
+- name: Verify deployment health
+  ansible.builtin.uri:
+    url: "http://{{ app_name }}.{{ kubernetes_namespace }}.svc.cluster.local:{{ service_port }}/actuator/health"
+    method: GET
+    status_code: 200
+    timeout: 5
+  register: health_check
+  until: health_check.status == 200
+  retries: 30
+  delay: 10
+  ignore_errors: true
+  when: health_probe_enabled | bool
+
+- name: Display health check result
+  ansible.builtin.debug:
+    msg: "Backend is healthy: {{ health_check.status == 200 }}"
+  when: health_probe_enabled | bool

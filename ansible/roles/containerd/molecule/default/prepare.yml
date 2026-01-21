@@ -1,0 +1,26 @@
+---
+# Molecule prepare playbook for containerd role
+
+- name: Prepare
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Ensure prerequisite packages are installed
+      ansible.builtin.package:
+        name:
+          - systemd
+          - curl
+          - ca-certificates
+        state: present
+
+    - name: Ensure necessary directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /usr/local/bin
+        - /etc/containerd
+        - /opt/cni/bin

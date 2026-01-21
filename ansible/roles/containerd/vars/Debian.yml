@@ -1,0 +1,21 @@
+---
+# Debian/Ubuntu specific variables for containerd role
+
+# Dependencies to install before containerd
+containerd_dependencies:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+
+# Package manager
+containerd_package_manager: apt
+
+# Binary package names (alternative installation method)
+containerd_binary_packages:
+  - containerd.io
+  - cri-tools
+
+# Systemd service location
+systemd_service_dir: /lib/systemd/system

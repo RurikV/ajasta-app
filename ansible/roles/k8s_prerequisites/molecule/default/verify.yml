@@ -1,0 +1,71 @@
+---
+# Molecule verify playbook for k8s_prerequisites role
+
+- name: Verify
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Check if swap is disabled
+      ansible.builtin.command: swapon --show
+      register: swap_check
+      changed_when: false
+      failed_when: swap_check.stdout != ""
+
+    - name: Check if required kernel modules are loaded
+      ansible.builtin.command: lsmod
+      register: lsmod_output
+      changed_when: false
+
+    - name: Verify overlay module is loaded
+      ansible.builtin.assert:
+        that:
+          - "'overlay' in lsmod_output.stdout"
+        fail_msg: "overlay kernel module is not loaded"
+        success_msg: "overlay kernel module is loaded"
+
+    - name: Verify br_netfilter module is loaded
+      ansible.builtin.assert:
+        that:
+          - "'br_netfilter' in lsmod_output.stdout"
+        fail_msg: "br_netfilter kernel module is not loaded"
+        success_msg: "br_netfilter kernel module is loaded"
+
+    - name: Check if sysctl settings are applied
+      ansible.builtin.command: sysctl net.bridge.bridge-nf-call-iptables
+      register: sysctl_check
+      changed_when: false
+
+    - name: Verify sysctl settings
+      ansible.builtin.assert:
+        that:
+          - "'1' in sysctl_check.stdout"
+        fail_msg: "sysctl settings not applied correctly"
+        success_msg: "sysctl settings are applied"
+
+    - name: Check if required packages are installed
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Verify required packages
+      ansible.builtin.assert:
+        that:
+          - item in ansible_facts.packages
+        fail_msg: "{{ item }} is not installed"
+        success_msg: "{{ item }} is installed"
+      loop:
+        - curl
+        - ca-certificates
+
+    - name: Check if /etc/modules-load.d/k8s.conf exists
+      ansible.builtin.stat:
+        path: /etc/modules-load.d/k8s.conf
+      register: k8s_conf
+
+    - name: Verify k8s.conf exists
+      ansible.builtin.assert:
+        that:
+          - k8s_conf.stat.exists
+        fail_msg: "/etc/modules-load.d/k8s.conf does not exist"
+        success_msg: "/etc/modules-load.d/k8s.conf exists"

@@ -1,0 +1,9 @@
+---
+# Requirements for k8s_prerequisites role Molecule testing
+
+roles: []
+collections:
+  - name: ansible.posix
+    version: ">=1.5.0"
+  - name: community.general
+    version: ">=6.0.0"

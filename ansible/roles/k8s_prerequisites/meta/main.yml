@@ -1,0 +1,31 @@
+---
+galaxy_info:
+  role_name: k8s_prerequisites
+  author: Ajasta DevOps Team
+  description: Prepare Linux nodes for Kubernetes cluster deployment
+  company: Ajasta
+  license: MIT
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+    - name: CentOS
+      versions:
+        - 8
+        - 9
+
+  galaxy_tags:
+    - kubernetes
+    - k8s
+    - cluster
+    - prerequisites
+    - system
+    - infrastructure
+
+  dependencies: []
+
+namespace: null
+allow_duplicates: true

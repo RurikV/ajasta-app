@@ -1,0 +1,22 @@
+---
+# RedHat/CentOS specific variables for containerd role
+
+# Dependencies to install before containerd
+containerd_dependencies:
+  - yum-utils
+  - device-mapper-persistent-data
+  - lvm2
+  - conntrack-tools
+
+# Package manager
+containerd_package_manager: yum
+
+# Binary package names (alternative installation method)
+containerd_binary_packages:
+  - containerd.io
+
+# Systemd service location
+systemd_service_dir: /usr/lib/systemd/system
+
+# Additional repositories for containerd
+containerd_enable_docker_ce_repo: false

@@ -1,0 +1,226 @@
+---
+- name: Include OS-specific variables
+  ansible.builtin.include_vars: "{{ ansible_os_family }}.yml"
+
+# Install Kubernetes packages
+- name: Add Kubernetes apt repository (Debian)
+  ansible.builtin.apt_repository:
+    repo: "deb https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version_prefix }}/deb/ /"
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Add Kubernetes yum repository (RedHat)
+  ansible.builtin.yum_repository:
+    name: Kubernetes
+    description: Kubernetes Repository
+    baseurl: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version_prefix }}/rpm/"
+    enabled: true
+    gpgcheck: true
+    gpgkey:
+      - "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version_prefix }}/rpm/repodata/repomd.xml.key"
+  when: ansible_os_family == "RedHat"
+
+- name: Install Kubernetes packages
+  ansible.builtin.package:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+    update_cache: true
+  notify:
+    - Restart kubelet
+
+- name: Hold Kubernetes packages at current version
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+  when: ansible_os_family == "Debian"
+  ignore_errors: true
+
+# Configure kubelet
+- name: Create kubelet systemd service directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/kubelet.service.d
+    state: directory
+    mode: '0755'
+
+- name: Configure kubelet service
+  ansible.builtin.template:
+    src: kubelet.service.j2
+    dest: /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Restart kubelet
+
+- name: Enable and start kubelet
+  ansible.builtin.systemd:
+    name: kubelet
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# Initialize control plane
+- name: Check if Kubernetes is already initialized
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: k8s_init_check
+
+- name: Initialize Kubernetes control plane
+  ansible.builtin.command: >
+    kubeadm init
+    --apiserver-advertise-address={{ kubernetes_apiserver_advertise_address }}
+    --pod-network-cidr={{ kubernetes_pod_network_cidr }}
+    --service-cidr={{ kubernetes_service_subnet_cidr }}
+    --kubernetes-version={{ kubernetes_version_prefix }}.0
+    --cri-socket={{ kubernetes_cri_socket }}
+  when:
+    - kubernetes_init_control_plane | bool
+    - not k8s_init_check.stat.exists
+  register: kubeadm_init_result
+  failed_when: false
+  notify:
+    - Restart kubelet
+
+- name: Wait for control plane to be ready
+  ansible.builtin.wait_for:
+    timeout: 60
+  when:
+    - kubernetes_init_control_plane | bool
+    - kubeadm_init_result.changed
+
+- name: Check kubeadm init status
+  ansible.builtin.shell: |
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes
+  register: k8s_nodes_check
+  changed_when: false
+  failed_when: false
+  when:
+    - kubernetes_init_control_plane | bool
+    - k8s_init_check.stat.exists
+
+- name: Create .kube directory for root user
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    mode: '0755'
+  when:
+    - kubernetes_init_control_plane | bool
+    - k8s_init_check.stat.exists
+
+- name: Copy kubeconfig to root user
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /root/.kube/config
+    remote_src: true
+    mode: '0600'
+  when:
+    - kubernetes_init_control_plane | bool
+    - k8s_init_check.stat.exists
+
+# Remove master taint (for single-node clusters or when you want to run pods on master)
+- name: Remove master taint
+  ansible.builtin.command: >
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf taint nodes
+    --all node-role.kubernetes.io/control-plane-
+  changed_when: false
+  failed_when: false
+  when:
+    - kubernetes_init_control_plane | bool
+    - k8s_init_check.stat.exists
+    - kubernetes_control_plane_replicas == 1
+
+# Generate join command for worker nodes
+- name: Generate join token
+  ansible.builtin.command: >
+    kubeadm token create
+    --print-join-command
+  register: kubeadm_join_command
+  changed_when: false
+  when:
+    - kubernetes_init_control_plane | bool
+    - k8s_init_check.stat.exists
+
+- name: Decode join command
+  ansible.builtin.set_fact:
+    kubernetes_join_token_full: "{{ kubeadm_join_command.stdout }}"
+  when:
+    - kubernetes_init_control_plane | bool
+    - k8s_init_check.stat.exists
+
+- name: Save join command to local file
+  ansible.builtin.copy:
+    content: "{{ kubeadm_join_command.stdout }}"
+    dest: /tmp/kubernetes-join-command.sh
+    mode: '0755'
+  delegate_to: localhost
+  become: false
+  when:
+    - kubernetes_init_control_plane | bool
+    - k8s_init_check.stat.exists
+
+# Join worker nodes
+- name: Copy join command to worker nodes
+  ansible.builtin.copy:
+    src: /tmp/kubernetes-join-command.sh
+    dest: /tmp/kubernetes-join-command.sh
+    mode: '0755'
+  when:
+    - kubernetes_join_cluster | bool
+
+- name: Join worker node to cluster
+  ansible.builtin.shell: /tmp/kubernetes-join-command.sh
+  register: join_result
+  until: join_result.rc == 0
+  retries: "{{ kubernetes_join_retries }}"
+  delay: "{{ kubernetes_join_delay }}"
+  when:
+    - kubernetes_join_cluster | bool
+  notify:
+    - Restart kubelet
+
+- name: Wait for node to be ready
+  ansible.builtin.pause:
+    seconds: 30
+  when:
+    - kubernetes_join_cluster | bool
+    - join_result.changed
+
+# Verify cluster status
+- name: Get cluster status
+  ansible.builtin.shell: |
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes -o wide
+  register: cluster_status
+  changed_when: false
+  failed_when: false
+  when:
+    - kubernetes_init_control_plane | bool
+    - k8s_init_check.stat.exists
+
+- name: Display cluster status
+  ansible.builtin.debug:
+    msg: "{{ cluster_status.stdout_lines }}"
+  when:
+    - kubernetes_init_control_plane | bool
+    - k8s_init_check.stat.exists
+
+- name: Get cluster info
+  ansible.builtin.command: kubectl cluster-info --kubeconfig=/etc/kubernetes/admin.conf
+  register: cluster_info
+  changed_when: false
+  when:
+    - kubernetes_init_control_plane | bool
+    - k8s_init_check.stat.exists
+
+- name: Display cluster info
+  ansible.builtin.debug:
+    msg: "{{ cluster_info.stdout_lines }}"
+  when:
+    - kubernetes_init_control_plane | bool
+    - k8s_init_check.stat.exists

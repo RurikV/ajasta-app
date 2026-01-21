@@ -1,0 +1,24 @@
+---
+# Molecule converge playbook for k8s_prerequisites role
+
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Update package cache (Debian)
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+      changed_when: false
+
+    - name: Update package cache (RedHat)
+      ansible.builtin.yum:
+        update_cache: true
+      when: ansible_os_family == "RedHat"
+      changed_when: false
+
+  roles:
+    - role: k8s_prerequisites

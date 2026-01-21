@@ -1,0 +1,30 @@
+---
+# Ansible-lint configuration for k8s_prerequisites role
+
+profile: production
+
+exclude_paths:
+  - .cache/
+  - .git/
+  - molecule/
+
+skip_list:
+  - experimental  # Allow experimental rules
+  - role-name  # Role name may contain underscores
+
+warn_list:
+  - ignore-errors  # Using ignore_errors for firewall tasks
+  - no-handler  # Handlers are used appropriately
+
+# Enable rules
+enable_list:
+  - args
+  - empty-string-compare
+  - no-log-password
+  - no-same-owner
+
+# Use default rules for specific versions
+use_default_rules: true
+
+# Offline mode - no internet access required
+offline: true

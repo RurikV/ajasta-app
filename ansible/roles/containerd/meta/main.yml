@@ -1,0 +1,36 @@
+---
+galaxy_info:
+  role_name: containerd
+  author: Ajasta DevOps Team
+  description: Install and configure containerd container runtime for Kubernetes
+  company: Ajasta
+  license: MIT
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+    - name: CentOS
+      versions:
+        - 8
+        - 9
+    - name: RedHat
+      versions:
+        - 8
+        - 9
+
+  galaxy_tags:
+    - kubernetes
+    - k8s
+    - containerd
+    - container-runtime
+    - containers
+    - cni
+    - nerdctl
+
+dependencies: []
+
+namespace: ajasta
+allow_duplicates: true

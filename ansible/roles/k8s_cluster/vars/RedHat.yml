@@ -1,0 +1,21 @@
+---
+# RedHat/CentOS specific variables for k8s_cluster role
+
+# Kubernetes repository
+kubernetes_yum_repo_url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version_prefix }}/rpm/"
+kubernetes_yum_gpg_key: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version_prefix }}/rpm/repodata/repomd.xml.key"
+
+# Kubernetes packages
+kubernetes_packages:
+  - kubelet
+  - kubeadm
+  - kubectl
+
+# Package manager
+kubernetes_package_manager: yum
+
+# Hold packages (not applicable on RedHat)
+kubernetes_hold_packages: false
+
+# SELinux configuration
+kubernetes_configure_selinux: false

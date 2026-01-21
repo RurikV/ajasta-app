@@ -1,0 +1,23 @@
+---
+# Molecule prepare playbook for k8s_prerequisites role
+
+- name: Prepare
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Install systemd for testing (Debian)
+      ansible.builtin.apt:
+        name:
+          - systemd
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Install systemd for testing (RedHat)
+      ansible.builtin.yum:
+        name:
+          - systemd
+        state: present
+      when: ansible_os_family == "RedHat"

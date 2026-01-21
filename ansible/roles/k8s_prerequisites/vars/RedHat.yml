@@ -1,0 +1,18 @@
+---
+# RedHat/CentOS specific variables for k8s_prerequisites role
+
+k8s_required_packages:
+  - yum-utils
+  - device-mapper-persistent-data
+  - lvm2
+  - curl
+  - ca-certificates
+
+k8s_firewall_service: firewalld
+
+k8s_package_manager: yum
+
+k8s_package_manager_update_cmd: yum makecache
+
+# Additional RedHat-specific modules
+k8s_kernel_modules_extra: []
