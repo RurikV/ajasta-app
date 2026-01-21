@@ -12,16 +12,16 @@ Refactor monolithic Ansible playbooks into a modular, testable, and publishable 
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    GitLab Organization                       │
-│                   ajasta-ansible-automation                  │
+│                    GitLab Organization                          │
+│                   ajasta-ansible-automation                     │
 └─────────────────────────────────────────────────────────────────┘
                             │
-          ┌─────────────────┴──────────────────┐
-          │                                     │
+          ┌─────────────────┴────────────────┐
+          │                                  │
     ┌─────▼─────────┐              ┌─────────▼────────┐
-    │ k8s-cluster   │              │  ajasta-app     │
-    │ Ansible Role  │              │  Ansible Role   │
-    │ Repository    │              │  Repository     │
+    │ k8s-cluster   │              │  ajasta-app      │
+    │ Ansible Role  │              │  Ansible Role    │
+    │ Repository    │              │  Repository      │
     └───────────────┘              └──────────────────┘
 ```
 
