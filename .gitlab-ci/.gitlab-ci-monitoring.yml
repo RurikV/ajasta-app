@@ -36,9 +36,17 @@ terraform:plan:monitoring:
       -var="yc_folder_id=${YC_FOLDER_ID}"
       -var="yc_token=${YC_TOKEN}"
       -var="cluster_name=ajasta-monitoring"
+    - |
+      if [ -f tfplan ]; then
+        echo "✅ Monitoring plan created successfully: $(ls -lh tfplan)"
+        echo "📍 Full path: $(pwd)/tfplan"
+      else
+        echo "❌ Monitoring plan file not created"
+        exit 1
+      fi
   artifacts:
     paths:
-      - ${TF_ROOT}/tfplan
+      - terraform/monitoring/tfplan
     expire_in: 1 week
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
