@@ -156,6 +156,7 @@ terraform:plan:staging:
     - |
       if [ -f plan.tfplan ]; then
         echo "✅ Plan file exists: $(ls -lh plan.tfplan)"
+        echo "📍 Full path: $(pwd)/plan.tfplan"
       else
         echo "❌ Plan file not created - checking current directory..."
         echo "Current directory: $(pwd)"
@@ -172,12 +173,19 @@ terraform:plan:staging:
         exit 1
       fi
       echo "✅ Plan summary generated: $(ls -lh plan.txt)"
+      echo "📍 Full path: $(pwd)/plan.txt"
 
     - |
-      echo "🔍 Verifying files from CI_PROJECT_DIR: ${CI_PROJECT_DIR}"
-      cd "${CI_PROJECT_DIR}"
-      echo "Looking for terraform/plan.tfplan and terraform/plan.txt"
-      ls -la terraform/plan.tfplan terraform/plan.txt || echo "Files not found from project root!"
+      echo "🔍 Final verification before artifact upload"
+      echo "Current directory: $(pwd)"
+      echo "CI_PROJECT_DIR: ${CI_PROJECT_DIR}"
+      echo "TF_ROOT: ${TF_ROOT}"
+      echo ""
+      echo "Files in current directory:"
+      ls -lh plan.tfplan plan.txt 2>&1 || echo "No plan files in current directory"
+      echo ""
+      echo "Files from project root (terraform/):"
+      ls -lh "${CI_PROJECT_DIR}/terraform/plan.tfplan" "${CI_PROJECT_DIR}/terraform/plan.txt" 2>&1 || echo "No plan files in terraform/ from project root"
 
   artifacts:
     paths:
@@ -257,6 +265,7 @@ terraform:plan:production:
     - |
       if [ -f plan.tfplan ]; then
         echo "✅ Plan file exists: $(ls -lh plan.tfplan)"
+        echo "📍 Full path: $(pwd)/plan.tfplan"
       else
         echo "❌ Plan file not created - checking current directory..."
         echo "Current directory: $(pwd)"
@@ -273,15 +282,22 @@ terraform:plan:production:
         exit 1
       fi
       echo "✅ Plan summary generated: $(ls -lh plan.txt)"
+      echo "📍 Full path: $(pwd)/plan.txt"
 
     # Display plan in job output
     - cat plan.txt
 
     - |
-      echo "🔍 Verifying files from CI_PROJECT_DIR: ${CI_PROJECT_DIR}"
-      cd "${CI_PROJECT_DIR}"
-      echo "Looking for terraform/plan.tfplan and terraform/plan.txt"
-      ls -la terraform/plan.tfplan terraform/plan.txt || echo "Files not found from project root!"
+      echo "🔍 Final verification before artifact upload"
+      echo "Current directory: $(pwd)"
+      echo "CI_PROJECT_DIR: ${CI_PROJECT_DIR}"
+      echo "TF_ROOT: ${TF_ROOT}"
+      echo ""
+      echo "Files in current directory:"
+      ls -lh plan.tfplan plan.txt 2>&1 || echo "No plan files in current directory"
+      echo ""
+      echo "Files from project root (terraform/):"
+      ls -lh "${CI_PROJECT_DIR}/terraform/plan.tfplan" "${CI_PROJECT_DIR}/terraform/plan.txt" 2>&1 || echo "No plan files in terraform/ from project root"
   artifacts:
     paths:
       - terraform/plan.tfplan
