@@ -116,6 +116,8 @@ terraform:plan:staging:
         echo "⚠️  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"
       fi
     - |
+      echo "🔍 Current working directory: $(pwd)"
+      echo "🔍 TF_ROOT: ${TF_ROOT}"
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
         -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
@@ -126,8 +128,6 @@ terraform:plan:staging:
         -backend-config="unlock_method=POST" \
         -backend-config="retry_wait_min=5" \
         -backend-config="retry_wait_max=30"
-
-    - |
       if [ $? -ne 0 ]; then
         echo "❌ Terraform init failed"
         exit 1
@@ -144,31 +144,40 @@ terraform:plan:staging:
       fi
 
     # Create plan with locking disabled to prevent lock acquisition failures
-    - terraform plan -out=plan.tfplan -input=false -lock=false
-
     - |
-      if [ $? -ne 0 ]; then
-        echo "❌ Terraform plan failed"
+      terraform plan -out=plan.tfplan -input=false -lock=false
+      PLAN_EXIT_CODE=$?
+      if [ ${PLAN_EXIT_CODE} -ne 0 ]; then
+        echo "❌ Terraform plan failed with exit code ${PLAN_EXIT_CODE}"
         exit 1
       fi
+      echo "✅ Terraform plan command succeeded"
 
     - |
       if [ -f plan.tfplan ]; then
-        echo "✅ Plan created successfully"
+        echo "✅ Plan file exists: $(ls -lh plan.tfplan)"
       else
-        echo "❌ Plan file not created - actual failure"
+        echo "❌ Plan file not created - checking current directory..."
+        echo "Current directory: $(pwd)"
+        echo "Directory contents:"
+        ls -la
         exit 1
       fi
 
     # Show plan summary
-    - terraform show -no-color plan.tfplan > plan.txt
-
     - |
+      terraform show -no-color plan.tfplan > plan.txt
       if [ $? -ne 0 ]; then
         echo "❌ Terraform show (plan.txt generation) failed"
         exit 1
       fi
-      echo "✅ Plan summary generated"
+      echo "✅ Plan summary generated: $(ls -lh plan.txt)"
+
+    - |
+      echo "🔍 Verifying files from CI_PROJECT_DIR: ${CI_PROJECT_DIR}"
+      cd "${CI_PROJECT_DIR}"
+      echo "Looking for terraform/plan.tfplan and terraform/plan.txt"
+      ls -la terraform/plan.tfplan terraform/plan.txt || echo "Files not found from project root!"
 
   artifacts:
     paths:
@@ -208,6 +217,8 @@ terraform:plan:production:
         echo "⚠️  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"
       fi
     - |
+      echo "🔍 Current working directory: $(pwd)"
+      echo "🔍 TF_ROOT: ${TF_ROOT}"
       terraform init -backend=true \
         -backend-config="address=${TF_HTTP_ADDRESS}" \
         -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
@@ -218,8 +229,6 @@ terraform:plan:production:
         -backend-config="unlock_method=POST" \
         -backend-config="retry_wait_min=5" \
         -backend-config="retry_wait_max=30"
-
-    - |
       if [ $? -ne 0 ]; then
         echo "❌ Terraform init failed"
         exit 1
@@ -236,34 +245,43 @@ terraform:plan:production:
       fi
 
     # Create plan with locking disabled to prevent lock acquisition failures
-    - terraform plan -out=plan.tfplan -input=false -lock=false
-
     - |
-      if [ $? -ne 0 ]; then
-        echo "❌ Terraform plan failed"
+      terraform plan -out=plan.tfplan -input=false -lock=false
+      PLAN_EXIT_CODE=$?
+      if [ ${PLAN_EXIT_CODE} -ne 0 ]; then
+        echo "❌ Terraform plan failed with exit code ${PLAN_EXIT_CODE}"
         exit 1
       fi
+      echo "✅ Terraform plan command succeeded"
 
     - |
       if [ -f plan.tfplan ]; then
-        echo "✅ Plan created successfully"
+        echo "✅ Plan file exists: $(ls -lh plan.tfplan)"
       else
-        echo "❌ Plan file not created - actual failure"
+        echo "❌ Plan file not created - checking current directory..."
+        echo "Current directory: $(pwd)"
+        echo "Directory contents:"
+        ls -la
         exit 1
       fi
 
     # Show plan summary
-    - terraform show -no-color plan.tfplan > plan.txt
-
     - |
+      terraform show -no-color plan.tfplan > plan.txt
       if [ $? -ne 0 ]; then
         echo "❌ Terraform show (plan.txt generation) failed"
         exit 1
       fi
-      echo "✅ Plan summary generated"
+      echo "✅ Plan summary generated: $(ls -lh plan.txt)"
 
     # Display plan in job output
     - cat plan.txt
+
+    - |
+      echo "🔍 Verifying files from CI_PROJECT_DIR: ${CI_PROJECT_DIR}"
+      cd "${CI_PROJECT_DIR}"
+      echo "Looking for terraform/plan.tfplan and terraform/plan.txt"
+      ls -la terraform/plan.tfplan terraform/plan.txt || echo "Files not found from project root!"
   artifacts:
     paths:
       - terraform/plan.tfplan
