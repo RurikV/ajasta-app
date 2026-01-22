@@ -37,6 +37,9 @@ include:
   # Deployment jobs (Yandex Cloud VM, Kubernetes with Helm)
   - local: '.gitlab-ci/.gitlab-ci-deploy.yml'
 
+  # Monitoring jobs (Prometheus, Grafana, exporters)
+  - local: '.gitlab-ci/.gitlab-ci-monitoring.yml'
+
 # Pipeline stages
 stages:
   - validate
@@ -45,3 +48,8 @@ stages:
   - test
   - package
   - deploy
+  - terraform-plan
+  - terraform-apply
+  - deploy-monitoring
+  - verify
+  - notify
