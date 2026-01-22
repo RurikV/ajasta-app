@@ -1,0 +1,203 @@
+---
+# Complete Monitoring Stack Deployment Playbook
+# Deploys Prometheus, Grafana, and Exporters
+
+- name: Deploy complete monitoring stack
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Kubernetes configuration
+    kubernetes_namespace: monitoring
+
+    # Prometheus configuration
+    prometheus_enabled: true
+    prometheus_storage_enabled: true
+    prometheus_storage_size: "50Gi"
+    prometheus_storage_class: "longhorn"
+    prometheus_retention: "15d"
+    prometheus_replicas: 1
+    prometheus_ingress_enabled: true
+    prometheus_ingress_host: "prometheus.ajasta.top"
+    prometheus_ingress_tls_secret: "prometheus-tls"
+
+    # Alertmanager configuration
+    alertmanager_enabled: true
+    alertmanager_storage_enabled: true
+    alertmanager_storage_size: "2Gi"
+    alertmanager_storage_class: "longhorn"
+    alertmanager_replicas: 1
+    alertmanager_ingress_enabled: true
+    alertmanager_ingress_host: "alertmanager.ajasta.top"
+    alertmanager_ingress_tls_secret: "alertmanager-tls"
+
+    # Grafana configuration
+    grafana_enabled: true
+    grafana_storage_enabled: true
+    grafana_storage_size: "10Gi"
+    grafana_storage_class: "longhorn"
+    grafana_replicas: 1
+    grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | default('admin', true) }}"
+    grafana_ingress_enabled: true
+    grafana_ingress_host: "grafana.ajasta.top"
+    grafana_ingress_tls_secret: "grafana-tls"
+
+    # Application monitoring
+    app_monitoring_enabled: true
+    app_namespace: ajasta
+    app_scrape_path: /actuator/prometheus
+    app_scrape_port: 8090
+
+    # Alerting
+    slack_webhook_url: "{{ lookup('env', 'SLACK_WEBHOOK_URL') | default('', true) }}"
+    alert_email: "{{ lookup('env', 'ALERT_EMAIL') | default('devops@ajasta.top', true) }}"
+
+  pre_tasks:
+    - name: Display deployment configuration
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "  Monitoring Stack Deployment"
+          - "=========================================="
+          - "Namespace: {{ kubernetes_namespace }}"
+          - ""
+          - "Prometheus:"
+          - "  - URL: https://{{ prometheus_ingress_host }}"
+          - "  - Storage: {{ prometheus_storage_size }}"
+          - "  - Retention: {{ prometheus_retention }}"
+          - ""
+          - "Grafana:"
+          - "  - URL: https://{{ grafana_ingress_host }}"
+          - "  - Storage: {{ grafana_storage_size }}"
+          - "  - Admin Password: {{ grafana_admin_password }}"
+          - ""
+          - "Alertmanager:"
+          - "  - URL: https://{{ alertmanager_ingress_host }}"
+          - "  - Storage: {{ alertmanager_storage_size }}"
+          - ""
+          - "Monitoring:"
+          - "  - Application: {{ app_namespace }}"
+          - "  - Path: {{ app_scrape_path }}"
+          - "  - Port: {{ app_scrape_port }}"
+          - "=========================================="
+
+  roles:
+    # Deploy Prometheus Operator
+    - role: prometheus_operator
+      vars:
+        prometheus_operator_enabled: true
+        prometheus_operator_version: "0.68.0"
+
+    # Deploy Grafana
+    - role: grafana
+      vars:
+        grafana_helm_version: "7.0.17"
+        custom_dashboards_enabled: true
+        ajasta_dashboard_enabled: true
+        jvm_dashboard_enabled: true
+        postgres_dashboard_enabled: true
+
+  post_tasks:
+    - name: Wait for all monitoring components to be ready
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: Verify monitoring deployment
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ kubernetes_namespace }}"
+      register: monitoring_pods
+
+    - name: Display monitoring pods
+      ansible.builtin.debug:
+        msg: "{{ monitoring_pods.resources | map(attribute='metadata') | map(attribute='name') | list }}"
+
+    - name: Get Prometheus service endpoint
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Service
+        name: prometheus-operated
+        namespace: "{{ kubernetes_namespace }}"
+      register: prometheus_service
+
+    - name: Get Grafana service endpoint
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Service
+        name: grafana
+        namespace: "{{ kubernetes_namespace }}"
+      register: grafana_service
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "  Monitoring Stack Deployed Successfully!"
+          - "=========================================="
+          - ""
+          - "Access Points:"
+          - "  Prometheus:  https://{{ prometheus_ingress_host }}"
+          - "  Grafana:      https://{{ grafana_ingress_host }}"
+          - "  Alertmanager: https://{{ alertmanager_ingress_host }}"
+          - ""
+          - "Grafana Credentials:"
+          - "  Username: admin"
+          - "  Password: {{ grafana_admin_password }}"
+          - ""
+          - "Dashboards Available:"
+          - "  - Kubernetes Cluster Overview"
+          - "  - Node Exporter Full"
+          - "  - Ajasta Backend Metrics"
+          - "  - JVM Micrometer"
+          - "  - PostgreSQL Database"
+          - ""
+          - "Next Steps:"
+          - "  1. Login to Grafana"
+          - "  2. Explore dashboards"
+          - "  3. Configure alerting"
+          - "  4. Review Prometheus targets"
+          - "=========================================="
+
+    - name: Save deployment info to file
+      ansible.builtin.copy:
+        content: |
+          Monitoring Stack Deployment Summary
+          ======================================
+          Date: {{ ansible_date_time.iso8601 }}
+          Namespace: {{ kubernetes_namespace }}
+
+          Prometheus:
+            URL: https://{{ prometheus_ingress_host }}
+            Storage: {{ prometheus_storage_size }}
+            Retention: {{ prometheus_retention }}
+
+          Grafana:
+            URL: https://{{ grafana_ingress_host }}
+            Username: admin
+            Password: {{ grafana_admin_password }}
+            Storage: {{ grafana_storage_size }}
+
+          Alertmanager:
+            URL: https://{{ alertmanager_ingress_host }}
+            Storage: {{ alertmanager_storage_size }}
+
+          Dashboards:
+            - Kubernetes Cluster Overview
+            - Node Exporter Full
+            - Ajasta Backend Metrics
+            - JVM Micrometer
+            - PostgreSQL Database
+
+          Next Steps:
+          1. Login to Grafana
+          2. Explore dashboards
+          3. Configure alerting
+          4. Review Prometheus targets
+        dest: /tmp/monitoring-deployment-info.txt
+        mode: '0644'
+      delegate_to: localhost
+      become: false
+
+    - name: Display deployment info location
+      ansible.builtin.debug:
+        msg: "Deployment info saved to: /tmp/monitoring-deployment-info.txt"

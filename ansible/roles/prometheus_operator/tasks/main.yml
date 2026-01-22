@@ -1,0 +1,367 @@
+---
+- name: Ensure monitoring namespace exists
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ kubernetes_namespace }}"
+        labels:
+          name: monitoring
+          prometheus: enabled
+
+- name: Add Prometheus Community Helm repository
+  kubernetes.core.helm_repository:
+    name: prometheus-community
+    repo_url: "{{ prometheus_operator_repo }}"
+
+- name: Deploy Prometheus Operator with Helm
+  kubernetes.core.helm:
+    name: "{{ helm_release_name }}"
+    chart_ref: prometheus-community/kube-prometheus-stack
+    chart_version: "{{ prometheus_operator_version }}"
+    release_namespace: "{{ kubernetes_namespace }}"
+    create_namespace: true
+    values: "{{ prometheus_helm_values }}"
+    timeout: "{{ helm_timeout }}"
+  register: prometheus_deploy_result
+
+- name: Create Prometheus persistent volume claim
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: "{{ prometheus_name }}-retention"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: prometheus
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: "{{ prometheus_storage_size }}"
+        storageClassName: "{{ prometheus_storage_class }}"
+  when: prometheus_storage_enabled | bool
+
+- name: Create Alertmanager persistent volume claim
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: "{{ alertmanager_name }}-storage"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: alertmanager
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: "{{ alertmanager_storage_size }}"
+        storageClassName: "{{ alertmanager_storage_class }}"
+  when: alertmanager_storage_enabled | bool
+
+# Node Exporter ServiceMonitor
+- name: Create Node Exporter ServiceMonitor
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: monitoring.coreos.com/v1
+      kind: ServiceMonitor
+      metadata:
+        name: node-exporter
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: node-exporter
+      spec:
+        selector:
+          matchLabels:
+            app: node-exporter
+        endpoints:
+          - port: metrics
+            interval: "{{ node_exporter_scrape_interval }}"
+  when: node_exporter_enabled | bool
+
+# Kube-State-Metrics ServiceMonitor
+- name: Create Kube-State-Metrics ServiceMonitor
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: monitoring.coreos.com/v1
+      kind: ServiceMonitor
+      metadata:
+        name: kube-state-metrics
+        namespace: "{{ kube_state_metrics_namespace }}"
+        labels:
+          app: kube-state-metrics
+      spec:
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: kube-state-metrics
+        endpoints:
+          - port: http
+            interval: "{{ prometheus_scrape_interval }}"
+  when: kube_state_metrics_enabled | bool
+
+# cAdvisor ServiceMonitor
+- name: Create cAdvisor ServiceMonitor
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: monitoring.coreos.com/v1
+      kind: ServiceMonitor
+      metadata:
+        name: cadvisor
+        namespace: "{{ cadvisor_namespace }}"
+        labels:
+          app: cadvisor
+      spec:
+        selector:
+          matchLabels:
+            app: cadvisor
+        endpoints:
+          - port: http
+            interval: "{{ prometheus_scrape_interval }}"
+            scheme: https
+            tlsConfig:
+              insecureSkipVerify: true
+  when: cadvisor_enabled | bool
+
+# Application ServiceMonitor
+- name: Create Ajasta Backend ServiceMonitor
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: monitoring.coreos.com/v1
+      kind: ServiceMonitor
+      metadata:
+        name: ajasta-backend
+        namespace: "{{ app_namespace }}"
+        labels:
+          app: ajasta-backend
+      spec:
+        selector:
+          matchLabels:
+            app: ajasta-backend
+        endpoints:
+          - port: http
+            path: "{{ app_scrape_path }}"
+            interval: "{{ app_scrape_interval }}"
+        namespaceSelector:
+          matchNames:
+            - "{{ app_namespace }}"
+  when: app_monitoring_enabled | bool
+
+# Prometheus Rules
+- name: Create Prometheus alerting rules
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: monitoring.coreos.com/v1
+      kind: PrometheusRule
+      metadata:
+        name: alerting-rules
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          prometheus: enabled
+          role: alert-rules
+      spec:
+        groups:
+          - name: kubernetes-cluster
+            rules:
+              # Cluster critical alerts
+              - alert: KubernetesClusterNotReady
+                expr: max(kubernetes_state_conditions{name="Ready",condition="true"}) == 0
+                for: 10m
+                labels:
+                  severity: critical
+                annotations:
+                  summary: "Kubernetes cluster not ready"
+                  description: "Kubernetes cluster has been not ready for more than 10 minutes."
+
+              - alert: KubernetesNodeDown
+                expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+                for: 5m
+                labels:
+                  severity: critical
+                annotations:
+                  summary: "Kubernetes node down"
+                  description: "Node {{ $labels.node }} has been down for more than 5 minutes."
+
+              - alert: KubernetesPodCrashLooping
+                expr: rate(kube_pod_container_status_restarts_total[15m]) > 0
+                for: 5m
+                labels:
+                  severity: critical
+                annotations:
+                  summary: "Kubernetes pod crash looping"
+                  description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash looping."
+
+              # Resource warnings
+              - alert: KubernetesNodeCPUUsageHigh
+                expr: sum(rate(container_cpu_usage_seconds_total{node!=""}[5m])) by (node) / sum(kube_node_status_capacity{resource="cpu"}) by (node) > 0.8
+                for: 5m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: "Kubernetes node CPU usage high"
+                  description: "Node {{ $labels.node }} CPU usage is above 80%."
+
+              - alert: KubernetesNodeMemoryUsageHigh
+                expr: sum(container_memory_working_set_bytes{node!=""}) by (node) / sum(kube_node_status_capacity{resource="memory"}) by (node) > 0.85
+                for: 5m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: "Kubernetes node memory usage high"
+                  description: "Node {{ $labels.node }} memory usage is above 85%."
+
+              - alert: KubernetesDiskSpaceLow
+                expr: kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes < 0.15
+                for: 10m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: "Kubernetes disk space low"
+                  description: "Disk space on {{ $labels.persistentvolumeclaim }} is less than 15%."
+
+              # Application alerts
+              - alert: AjastaBackendHighErrorRate
+                expr: rate(ajasta_http_server_requests_seconds_count{status=~"5.."}[5m]) / rate(ajasta_http_server_requests_seconds_count[5m]) > 0.05
+                for: 5m
+                labels:
+                  severity: critical
+                annotations:
+                  summary: "Ajasta backend high error rate"
+                  description: "Backend error rate is above 5% for 5 minutes."
+
+              - alert: AjastaBackendHighLatency
+                expr: histogram_quantile(0.95, rate(ajasta_http_server_requests_seconds_bucket[5m])) > 1
+                for: 10m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: "Ajasta backend high latency"
+                  description: "Backend P95 latency is above 1s for 10 minutes."
+
+              - alert: AjastaDatabaseConnectionsHigh
+                expr: ajasta_hikari_connections_active / ajasta_hikari_connections_max > 0.8
+                for: 5m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: "Ajasta database connections high"
+                  description: "Database connection pool usage is above 80%."
+
+  when: prometheus_rules_enabled | bool
+
+# Ingress for Prometheus
+- name: Create Prometheus Ingress
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: prometheus-ingress
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: prometheus
+        annotations:
+          nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+      spec:
+        ingressClassName: "{{ prometheus_ingress_class_name }}"
+        rules:
+          - host: "{{ prometheus_ingress_host }}"
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: prometheus-operated
+                      port:
+                        number: 9090
+        tls:
+          - hosts:
+              - "{{ prometheus_ingress_host }}"
+            secretName: "{{ prometheus_ingress_tls_secret }}"
+  when: prometheus_ingress_enabled | bool
+
+# Ingress for Alertmanager
+- name: Create Alertmanager Ingress
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: alertmanager-ingress
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: alertmanager
+        annotations:
+          nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+      spec:
+        ingressClassName: "{{ alertmanager_ingress_class_name }}"
+        rules:
+          - host: "{{ alertmanager_ingress_host }}"
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: alertmanager-operated
+                      port:
+                        number: 9093
+        tls:
+          - hosts:
+              - "{{ alertmanager_ingress_host }}"
+            secretName: "{{ alertmanager_ingress_tls_secret }}"
+  when: alertmanager_ingress_enabled | bool
+
+- name: Wait for Prometheus deployment to be ready
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: prometheus
+    namespace: "{{ kubernetes_namespace }}"
+  register: prometheus_status
+  until:
+    - prometheus_status.resources[0].status.availableReplicas is defined
+    - prometheus_status.resources[0].status.availableReplicas >= 1
+  retries: 30
+  delay: 10
+  ignore_errors: true
+
+- name: Display deployment status
+  ansible.builtin.debug:
+    msg:
+      - "Prometheus Operator deployed successfully"
+      - "Prometheus URL: https://{{ prometheus_ingress_host }}"
+      - "Alertmanager URL: https://{{ alertmanager_ingress_host }}"
+      - "Namespace: {{ kubernetes_namespace }}"
+      - "Storage: {{ prometheus_storage_size }}"
+      - "Retention: {{ prometheus_retention }}"
+
+- name: Get Prometheus service endpoints
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Service
+    name: prometheus-operated
+    namespace: "{{ kubernetes_namespace }}"
+  register: prometheus_service
+
+- name: Display Prometheus service info
+  ansible.builtin.debug:
+    msg: "{{ prometheus_service.resources[0].spec }}"
+  when: prometheus_service.resources | length > 0

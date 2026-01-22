@@ -1,0 +1,26 @@
+---
+galaxy_info:
+  role_name: grafana
+  author: Ajasta DevOps Team
+  description: Deploy Grafana with pre-configured dashboards for monitoring
+  company: Ajasta
+  license: MIT
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Kubernetes
+      versions:
+        - "1.29"
+
+  galaxy_tags:
+    - grafana
+    - monitoring
+    - visualization
+    - dashboards
+    - metrics
+    - observability
+
+dependencies: []
+
+namespace: ajasta
+allow_duplicates: true

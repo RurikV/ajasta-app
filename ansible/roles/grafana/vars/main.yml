@@ -1,0 +1,183 @@
+---
+# Grafana Helm values
+grafana_helm_values:
+  # Replicas
+  replicas: "{{ grafana_replicas }}"
+
+  # Deployment strategy
+  strategy:
+    type: RollingUpdate
+
+  # Image configuration
+  image:
+    repository: grafana/grafana
+    tag: "10.2.2"
+    pullPolicy: IfNotPresent
+
+  # Admin credentials
+  admin:
+    existingSecret: "{{ grafana_name }}-admin"
+    userKey: admin-user
+    passwordKey: admin-password
+
+  # Security context
+  securityContext:
+    fsGroup: 472
+    runAsNonRoot: true
+    runAsUser: 472
+
+  # Container security context
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false
+
+  # Service configuration
+  service:
+    enabled: true
+    type: "{{ grafana_service_type }}"
+    port: "{{ grafana_service_port }}"
+    targetPort: 3000
+
+  # Resources
+  resources: "{{ grafana_resources }}"
+
+  # Persistence
+  persistence:
+    enabled: "{{ grafana_storage_enabled | bool }}"
+    type: pvc
+    storageClassName: "{{ grafana_storage_class }}"
+    accessModes:
+      - ReadWriteOnce
+    size: "{{ grafana_storage_size }}"
+
+  # Init containers
+  initChownData:
+    enabled: true
+    image:
+      repository: busybox
+      tag: "1.36"
+    securityContext:
+      runAsNonRoot: false
+      runAsUser: 0
+
+  # Grafana configuration
+  grafana.ini:
+    server:
+      root_url: "https://{{ grafana_ingress_host }}"
+    database:
+      type: sqlite3
+      path: /var/lib/grafana/grafana.db
+    session:
+      provider: memory
+      provider_config: ""
+    analytics:
+      check_for_updates: false
+    security:
+      disable_initial_admin_creation: false
+    users:
+      viewers_can_edit: false
+      default_theme: dark
+    dashboards:
+      default_home_dashboard_path: /var/lib/grafana/dashboards/home.json
+    log:
+      level: info
+    metrics:
+      enabled: true
+
+  # Environment variables
+  env:
+    GF_SECURITY_ADMIN_USER: "{{ grafana_admin_user }}"
+    GF_INSTALL_PLUGINS: "{{ grafana_plugins | join(',') }}"
+    GF_SERVER_ROOT_URL: "https://{{ grafana_ingress_host }}"
+
+  # Plugins
+  plugins: "{{ grafana_plugins }}"
+
+  # Datasources
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources: "{{ grafana_datasources }}"
+
+  # Dashboard providers
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers: "{{ grafana_dashboard_providers }}"
+
+  # Dashboards from Grafana.com
+  dashboards:
+    {{ grafana_dashboards | default({}) | to_nice_yaml | indent(4) }}
+
+  # Sidecar configuration
+  sidecar:
+    dashboards:
+      enabled: "{{ grafana_sidecar.dashboards.enabled }}"
+      label: "{{ grafana_sidecar.dashboards.label }}"
+      folder: ""
+      searchNamespace: "{{ kubernetes_namespace }}"
+      provider:
+        allowUiUpdates: true
+        folder: ""
+    datasources:
+      enabled: "{{ grafana_sidecar.datasources.enabled }}"
+      label: "{{ grafana_sidecar.datasources.label }}"
+      searchNamespace: "{{ kubernetes_namespace }}"
+
+  # Service account
+  serviceAccount:
+    create: "{{ grafana_service_account_enabled }}"
+    name: "{{ grafana_service_account_name }}"
+    automountToken: true
+
+  # RBAC
+  rbac:
+    create: true
+    useExistingRole: false
+
+  # Pod annotations
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3000"
+    prometheus.io/path: "/metrics"
+
+  # Ingress
+  ingress:
+    enabled: false  # We create it separately
+
+  # Test containers
+  testFramework:
+    enabled: false
+
+  # Network policies
+  networkPolicy:
+    enabled: false
+
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: false
+
+  # Readiness probe
+  readinessProbe:
+    httpGet:
+      path: /api/health
+      port: 3000
+    initialDelaySeconds: 10
+    timeoutSeconds: 5
+    periodSeconds: 10
+    successThreshold: 1
+    failureThreshold: 3
+
+  # Liveness probe
+  livenessProbe:
+    httpGet:
+      path: /api/health
+      port: 3000
+    initialDelaySeconds: 30
+    timeoutSeconds: 5
+    periodSeconds: 30
+    successThreshold: 1
+    failureThreshold: 10

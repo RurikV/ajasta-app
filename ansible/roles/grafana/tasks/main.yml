@@ -1,0 +1,483 @@
+---
+- name: Ensure monitoring namespace exists
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ kubernetes_namespace }}"
+        labels:
+          name: monitoring
+
+- name: Add Grafana Helm repository
+  kubernetes.core.helm_repository:
+    name: grafana
+    repo_url: "{{ grafana_helm_repo }}"
+
+- name: Create Grafana admin password secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ grafana_name }}-admin"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: grafana
+      type: Opaque
+      stringData:
+        admin-user: "{{ grafana_admin_user }}"
+        admin-password: "{{ grafana_admin_password }}"
+
+- name: Deploy Grafana with Helm
+  kubernetes.core.helm:
+    name: "{{ helm_release_name }}"
+    chart_ref: grafana/grafana
+    chart_version: "{{ grafana_helm_version }}"
+    release_namespace: "{{ kubernetes_namespace }}"
+    create_namespace: true
+    values: "{{ grafana_helm_values }}"
+    timeout: "{{ helm_timeout }}"
+  register: grafana_deploy_result
+
+- name: Create Grafana persistent volume claim
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: "{{ grafana_name }}-storage"
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: grafana
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: "{{ grafana_storage_size }}"
+        storageClassName: "{{ grafana_storage_class }}"
+  when: grafana_storage_enabled | bool
+
+- name: Create ConfigMap for custom dashboards
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: custom-dashboards
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          grafana_dashboard: "1"
+      data:
+        ajasta-backend.json: |
+          {{ lookup('template', 'dashboards/ajasta-backend.json.j2') | string }}
+
+  when: custom_dashboards_enabled | bool
+  ignore_errors: true
+
+# Ajasta Backend Dashboard
+- name: Create Ajasta Backend dashboard ConfigMap
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: ajasta-backend-dashboard
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          grafana_dashboard: "1"
+      data:
+        ajasta-backend-dashboard.json: |
+          {
+            "annotations": {
+              "list": [{}]
+            },
+            "editable": true,
+            "gnetId": null,
+            "graphTooltip": 0,
+            "id": null,
+            "links": [],
+            "panels": [
+              {
+                "datasource": "Prometheus",
+                "fieldConfig": {
+                  "defaults": {
+                    "color": {"mode": "palette-classic"},
+                    "custom": {
+                      "axisLabel": "",
+                      "axisPlacement": "auto",
+                      "barAlignment": 0,
+                      "drawStyle": "line",
+                      "fillOpacity": 10,
+                      "gradientMode": "none",
+                      "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+                      "lineInterpolation": "linear",
+                      "lineWidth": 1,
+                      "pointSize": 5,
+                      "scaleDistribution": {"type": "linear"},
+                      "showPoints": "never",
+                      "spanNulls": false
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [{"color": "green", "value": null}, {"color": "red", "value": 80}]
+                    },
+                    "unit": "reqps"
+                  },
+                  "overrides": []
+                },
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+                "id": 1,
+                "options": {
+                  "legend": {"calcs": [], "displayMode": "list", "placement": "bottom"},
+                  "tooltip": {"mode": "single"}
+                },
+                "pluginVersion": "8.0.0",
+                "targets": [
+                  {
+                    "expr": "rate(ajasta_http_server_requests_seconds_count[5m])",
+                    "legendFormat": "{{method}} {{uri}}",
+                    "refId": "A"
+                  }
+                ],
+                "title": "Request Rate",
+                "type": "timeseries"
+              },
+              {
+                "datasource": "Prometheus",
+                "fieldConfig": {
+                  "defaults": {
+                    "color": {"mode": "thresholds"},
+                    "mappings": [],
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "red", "value": 1}]
+                    },
+                    "unit": "s"
+                  }
+                },
+                "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+                "id": 2,
+                "options": {
+                  "orientation": "auto",
+                  "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
+                  "showThresholdLabels": false,
+                  "showThresholdMarkers": true
+                },
+                "pluginVersion": "8.0.0",
+                "targets": [
+                  {
+                    "expr": "histogram_quantile(0.95, rate(ajasta_http_server_requests_seconds_bucket[5m]))",
+                    "legendFormat": "P95 Latency",
+                    "refId": "A"
+                  }
+                ],
+                "title": "Request Latency (P95)",
+                "type": "gauge"
+              },
+              {
+                "datasource": "Prometheus",
+                "fieldConfig": {
+                  "defaults": {
+                    "color": {"mode": "palette-classic"},
+                    "custom": {
+                      "axisLabel": "",
+                      "axisPlacement": "auto",
+                      "barAlignment": 0,
+                      "drawStyle": "line",
+                      "fillOpacity": 10,
+                      "gradientMode": "none",
+                      "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+                      "lineInterpolation": "linear",
+                      "lineWidth": 1,
+                      "pointSize": 5,
+                      "scaleDistribution": {"type": "linear"},
+                      "showPoints": "never",
+                      "spanNulls": false
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [{"color": "green", "value": null}, {"color": "red", "value": 5}]
+                    },
+                    "unit": "percent"
+                  }
+                },
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+                "id": 3,
+                "options": {
+                  "legend": {"calcs": ["mean"], "displayMode": "list", "placement": "bottom"},
+                  "tooltip": {"mode": "single"}
+                },
+                "targets": [
+                  {
+                    "expr": "rate(ajasta_http_server_requests_seconds_count{status=~\"5..\"}[5m]) / rate(ajasta_http_server_requests_seconds_count[5m]) * 100",
+                    "legendFormat": "Error Rate",
+                    "refId": "A"
+                  }
+                ],
+                "title": "Error Rate",
+                "type": "timeseries"
+              },
+              {
+                "datasource": "Prometheus",
+                "fieldConfig": {
+                  "defaults": {
+                    "color": {"mode": "palette-classic"},
+                    "custom": {
+                      "axisLabel": "",
+                      "axisPlacement": "auto",
+                      "barAlignment": 0,
+                      "drawStyle": "line",
+                      "fillOpacity": 10,
+                      "gradientMode": "none",
+                      "hideFrom": {"tooltip": false, "viz": false, "legend": false},
+                      "lineInterpolation": "linear",
+                      "lineWidth": 1,
+                      "pointSize": 5,
+                      "scaleDistribution": {"type": "linear"},
+                      "showPoints": "never",
+                      "spanNulls": false
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                      "mode": "absolute",
+                      "steps": [{"color": "green", "value": null}]
+                    },
+                    "unit": "short"
+                  }
+                },
+                "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+                "id": 4,
+                "options": {
+                  "legend": {"calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom"},
+                  "tooltip": {"mode": "single"}
+                },
+                "targets": [
+                  {
+                    "expr": "ajasta_hikari_connections_active",
+                    "legendFormat": "Active Connections",
+                    "refId": "A"
+                  },
+                  {
+                    "expr": "ajasta_hikari_connections_idle",
+                    "legendFormat": "Idle Connections",
+                    "refId": "B"
+                  },
+                  {
+                    "expr": "ajasta_hikari_connections_max",
+                    "legendFormat": "Max Connections",
+                    "refId": "C"
+                  }
+                ],
+                "title": "Database Connection Pool",
+                "type": "timeseries"
+              }
+            ],
+            "refresh": "5s",
+            "schemaVersion": 27,
+            "style": "dark",
+            "tags": ["ajasta", "backend", "spring-boot"],
+            "templating": {"list": []},
+            "time": {"from": "now-1h", "to": "now"},
+            "timepicker": {},
+            "timezone": "",
+            "title": "{{ ajasta_dashboard_name }}",
+            "uid": "ajasta-backend",
+            "version": 1
+          }
+  when: ajasta_dashboard_enabled | bool
+
+# JVM Dashboard
+- name: Create JVM dashboard ConfigMap
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: jvm-dashboard
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          grafana_dashboard: "1"
+      data:
+        jvm-dashboard.json: |
+          {
+            "annotations": {"list": [{}]},
+            "editable": true,
+            "gnetId": 4701,
+            "graphTooltip": 0,
+            "id": null,
+            "links": [],
+            "panels": [
+              {
+                "datasource": "Prometheus",
+                "fieldConfig": {
+                  "defaults": {
+                    "color": {"mode": "palette-classic"},
+                    "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false},
+                    "mappings": [],
+                    "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+                    "unit": "bytes"
+                  }
+                },
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+                "id": 1,
+                "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+                "targets": [{"expr": "jvm_memory_used_bytes", "legendFormat": "{{area}}", "refId": "A"}],
+                "title": "JVM Memory Usage",
+                "type": "timeseries"
+              },
+              {
+                "datasource": "Prometheus",
+                "fieldConfig": {
+                  "defaults": {
+                    "color": {"mode": "palette-classic"},
+                    "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false},
+                    "mappings": [],
+                    "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+                    "unit": "short"
+                  }
+                },
+                "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+                "id": 2,
+                "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+                "targets": [{"expr": "jvm_threads_live_threads", "legendFormat": "Live Threads", "refId": "A"}],
+                "title": "JVM Threads",
+                "type": "timeseries"
+              }
+            ],
+            "refresh": "5s",
+            "schemaVersion": 27,
+            "style": "dark",
+            "tags": ["jvm", "micrometer"],
+            "templating": {"list": []},
+            "time": {"from": "now-1h", "to": "now"},
+            "timepicker": {},
+            "timezone": "",
+            "title": "{{ jvm_dashboard_name }}",
+            "uid": "jvm-micrometer",
+            "version": 0
+          }
+  when: jvm_dashboard_enabled | bool
+
+# PostgreSQL Dashboard
+- name: Create PostgreSQL dashboard ConfigMap
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: postgres-dashboard
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          grafana_dashboard: "1"
+      data:
+        postgres-dashboard.json: |
+          {
+            "annotations": {"list": [{}]},
+            "editable": true,
+            "gnetId": 9628,
+            "graphTooltip": 0,
+            "id": null,
+            "links": [],
+            "panels": [
+              {
+                "datasource": "Prometheus",
+                "fieldConfig": {
+                  "defaults": {
+                    "color": {"mode": "palette-classic"},
+                    "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": false},
+                    "mappings": [],
+                    "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+                    "unit": "short"
+                  }
+                },
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+                "id": 1,
+                "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+                "targets": [{"expr": "pg_stat_database_numbackends", "legendFormat": "{{datname}}", "refId": "A"}],
+                "title": "Database Connections",
+                "type": "timeseries"
+              }
+            ],
+            "refresh": "5s",
+            "schemaVersion": 27,
+            "style": "dark",
+            "tags": ["postgresql", "database"],
+            "templating": {"list": []},
+            "time": {"from": "now-1h", "to": "now"},
+            "timepicker": {},
+            "timezone": "",
+            "title": "{{ postgres_dashboard_name }}",
+            "uid": "postgresql",
+            "version": 0
+          }
+  when: postgres_dashboard_enabled | bool
+
+# Create Ingress for Grafana
+- name: Create Grafana Ingress
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: grafana-ingress
+        namespace: "{{ kubernetes_namespace }}"
+        labels:
+          app: grafana
+        annotations:
+          nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+      spec:
+        ingressClassName: "{{ grafana_ingress_class_name }}"
+        rules:
+          - host: "{{ grafana_ingress_host }}"
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: "{{ grafana_name }}"
+                      port:
+                        number: {{ grafana_service_port }}
+        tls:
+          - hosts:
+              - "{{ grafana_ingress_host }}"
+            secretName: "{{ grafana_ingress_tls_secret }}"
+  when: grafana_ingress_enabled | bool
+
+# Wait for Grafana deployment to be ready
+- name: Wait for Grafana deployment to be ready
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ grafana_name }}"
+    namespace: "{{ kubernetes_namespace }}"
+  register: grafana_status
+  until:
+    - grafana_status.resources[0].status.availableReplicas is defined
+    - grafana_status.resources[0].status.availableReplicas >= 1
+  retries: 30
+  delay: 10
+  ignore_errors: true
+
+- name: Display deployment status
+  ansible.builtin.debug:
+    msg:
+      - "Grafana deployed successfully"
+      - "URL: https://{{ grafana_ingress_host }}"
+      - "Username: {{ grafana_admin_user }}"
+      - "Password: {{ grafana_admin_password }}"
+      - "Namespace: {{ kubernetes_namespace }}"
+      - "Dashboards: {{ grafana_dashboards | length }} pre-configured"

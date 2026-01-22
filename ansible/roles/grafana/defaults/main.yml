@@ -1,0 +1,201 @@
+---
+# Default variables for grafana role
+
+# Kubernetes configuration
+kubernetes_namespace: monitoring
+grafana_namespace: monitoring
+
+# Grafana deployment
+grafana_enabled: true
+grafana_name: grafana
+grafana_replicas: 1
+
+# Grafana Helm chart
+grafana_helm_repo: "https://grafana.github.io/helm-charts"
+grafana_helm_chart: "grafana"
+grafana_helm_version: "7.0.17"
+helm_release_name: grafana
+
+# Grafana storage
+grafana_storage_enabled: true
+grafana_storage_size: "10Gi"
+grafana_storage_class: "longhorn"
+
+# Grafana resources
+grafana_resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "200m"
+
+# Grafana admin credentials
+grafana_admin_user: "admin"
+grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | default('admin', true) }}"
+
+# Grafana configuration
+grafana_config:
+  server:
+    root_url: "https://grafana.ajasta.top"
+  database:
+    type: sqlite3
+  session:
+    provider: memory
+  analytics:
+    check_for_updates: false
+  security:
+    disable_initial_admin_creation: false
+  users:
+    viewers_can_edit: false
+  dashboards:
+    default_home_dashboard_path: /var/lib/grafana/dashboards/home.json
+
+# Grafana plugins
+grafana_plugins:
+  - grafana-piechart-panel
+  - grafana-worldmap-panel
+  - natel-discrete-panel
+  - vonage-status-panel
+
+# Grafana datasources
+grafana_datasources:
+  - name: Prometheus
+    type: prometheus
+    url: "http://prometheus-operated.monitoring.svc.cluster.local:9090"
+    access: proxy
+    isDefault: true
+    editable: true
+  - name: Alertmanager
+    type: alertmanager
+    url: "http://alertmanager-operated.monitoring.svc.cluster.local:9093"
+    access: proxy
+    editable: true
+
+# Grafana dashboard providers
+grafana_dashboard_providers:
+  - name: 'default'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
+
+# Grafana dashboards
+grafana_dashboards_enabled: true
+grafana_dashboards:
+  # Kubernetes cluster overview
+  - dashboard_id: 7249
+    revision: 1
+    datasource: Prometheus
+    folder: Kubernetes
+    name: Kubernetes Cluster Overview
+
+  # Node exporter
+  - dashboard_id: 1860
+    revision: 25
+    datasource: Prometheus
+    folder: Nodes
+    name: Node Exporter Full
+
+  # Kubelet
+  - dashboard_id: 13257
+    revision: 1
+    datasource: Prometheus
+    folder: Kubernetes
+    name: Kubelet
+
+  # Nginx Ingress
+  - dashboard_id: 9614
+    revision: 1
+    datasource: Prometheus
+    folder: Kubernetes
+    name: Nginx Ingress
+
+  # Pods
+  - dashboard_id: 6391
+    revision: 1
+    datasource: Prometheus
+    folder: Kubernetes
+    name: Kubernetes Pod Metrics
+
+# Ingress configuration
+grafana_ingress_enabled: true
+grafana_ingress_host: "grafana.ajasta.top"
+grafana_ingress_class_name: "nginx"
+grafana_ingress_tls_secret: "grafana-tls"
+
+# Service configuration
+grafana_service_type: "ClusterIP"
+grafana_service_port: 3000
+
+# Sidecar configuration
+grafana_sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+  datasources:
+    enabled: true
+    label: grafana_datasource
+
+# Custom dashboards
+custom_dashboards_enabled: true
+
+# Ajasta application dashboard
+ajasta_dashboard_enabled: true
+ajasta_dashboard_name: "Ajasta Backend Metrics"
+ajasta_dashboard_folder: "Applications"
+
+# JVM dashboard
+jvm_dashboard_enabled: true
+jvm_dashboard_name: "JVM Micrometer"
+jvm_dashboard_folder: "Applications"
+
+# PostgreSQL dashboard
+postgres_dashboard_enabled: true
+postgres_dashboard_name: "PostgreSQL Database"
+postgres_dashboard_folder: "Databases"
+
+# Security context
+grafana_security_context:
+  fsGroup: 472
+  runAsNonRoot: true
+  runAsUser: 472
+
+container_security_context:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+
+# Service account
+grafana_service_account_enabled: true
+grafana_service_account_name: grafana
+
+# User configuration
+grafana_users_enabled: true
+grafana_viewers: []
+grafana_editors: []
+grafana_admins: []
+
+# Anonymous access
+grafana_anonymous_enabled: false
+grafana_anonymous_role: Viewer
+
+# SMTP configuration (optional)
+grafana_smtp_enabled: false
+grafana_smtp_host: ""
+grafana_smtp_port: 587
+grafana_smtp_user: ""
+grafana_smtp_password: ""
+grafana_smtp_from_address: ""
+
+# LDAP configuration (optional)
+grafana_ldap_enabled: false
+grafana_ldap_config: {}
+
+# Helm timeout
+helm_timeout: 10m
+
+# Values override
+grafana_values_override: {}

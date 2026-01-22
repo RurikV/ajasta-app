@@ -1,0 +1,144 @@
+---
+# Prometheus Helm values configuration
+prometheus_helm_values:
+  # Default installation configuration
+  defaultRules:
+    create: true
+    rules:
+      alertmanager: true
+      etcd: true
+      configReloaders: true
+      general: true
+      k8s: true
+      kubeApiserver: true
+      kubeControllerManager: true
+      kubeScheduler: true
+      kubeProxy: false
+      kubelet: true
+      network: true
+      node: true
+      nodeExporter: true
+      prometheus: true
+      prometheusOperator: true
+      windows: false
+
+  # Prometheus Operator
+  prometheusOperator:
+    enabled: true
+    admissionWebhooks:
+      enabled: false
+
+  # Prometheus configuration
+  prometheus:
+    enabled: true
+    prometheusSpec:
+      replicas: "{{ prometheus_replicas }}"
+      retention: "{{ prometheus_retention }}"
+      retentionSize: "{{ prometheus_retention_size }}"
+      resources: "{{ prometheus_resources }}"
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: "{{ prometheus_storage_class }}"
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: "{{ prometheus_storage_size }}"
+      serviceMonitorSelectorNilUsesHelmValues: false
+      serviceMonitorNamespaceSelector:
+        matchLabels:
+          prometheus: enabled
+      serviceMonitorSelector: {}
+      podMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelector: {}
+      ruleSelectorNilUsesHelmValues: false
+      ruleSelector:
+        matchLabels:
+          prometheus: enabled
+      externalLabels:
+        cluster: "ajasta-production"
+      walCompression: true
+      enableAdminAPI: false
+      evaluationInterval: "{{ prometheus_evaluation_interval }}"
+      scrapeInterval: "{{ prometheus_scrape_interval }}"
+      scrapeTimeout: "{{ prometheus_scrape_timeout }}"
+      securityContext:
+        fsGroup: 2000
+        runAsNonRoot: true
+        runAsUser: 1000
+
+  # Alertmanager configuration
+  alertmanager:
+    enabled: true
+    alertmanagerSpec:
+      replicas: "{{ alertmanager_replicas }}"
+      resources: "{{ alertmanager_resources }}"
+      storage:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: "{{ alertmanager_storage_class }}"
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: "{{ alertmanager_storage_size }}"
+      config: "{{ alertmanager_config }}"
+
+  # Grafana configuration (disabled - will use separate role)
+  grafana:
+    enabled: false
+    forceDeployDashboards: false
+
+  # Node Exporter
+  nodeExporter:
+    enabled: true
+    service:
+      port: 9100
+      targetPort: 9100
+
+  # Kube-State-Metrics
+  kubeStateMetrics:
+    enabled: true
+    service:
+      port: 8080
+
+  # Kubelet
+  kubelet:
+    enabled: true
+
+  # Kube Controller Manager
+  kubeControllerManager:
+    enabled: false
+
+  # Kube Scheduler
+  kubeScheduler:
+    enabled: false
+
+  # Kube Proxy
+  kubeProxy:
+    enabled: false
+
+  # Etcd
+  etcd:
+    enabled: false
+
+  # Kube API Server
+  kubeApiServer:
+    enabled: false
+
+  # cAdvisor
+  kubelet:
+    enabled: true
+    serviceMonitor:
+      metricRelabelings:
+        - action: replace
+          sourceLabels:
+            - node
+          targetLabel: instance
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+
+  # Additional ServiceMonitors
+  additionalServiceMonitors: []
+
+  # Additional PodMonitors
+  additionalPodMonitors: []

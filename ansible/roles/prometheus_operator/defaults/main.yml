@@ -1,0 +1,163 @@
+---
+# Default variables for prometheus_operator role
+
+# Kubernetes configuration
+kubernetes_namespace: monitoring
+prometheus_operator_namespace: monitoring
+
+# Prometheus Operator
+prometheus_operator_enabled: true
+prometheus_operator_version: "0.68.0"
+prometheus_operator_repo: "https://prometheus-community.github.io/helm-charts"
+
+# Prometheus instance
+prometheus_enabled: true
+prometheus_name: prometheus
+prometheus_replicas: 1
+
+# Prometheus storage
+prometheus_storage_enabled: true
+prometheus_storage_size: "50Gi"
+prometheus_storage_class: "longhorn"
+prometheus_retention: "15d"
+prometheus_retention_size: "45GB"
+
+# Prometheus resources
+prometheus_resources:
+  requests:
+    memory: "2Gi"
+    cpu: "500m"
+  limits:
+    memory: "4Gi"
+    cpu: "1000m"
+
+# Prometheus configuration
+prometheus_external_url: "https://prometheus.ajasta.top"
+prometheus_route_prefix: "/"
+
+# Scrape intervals
+prometheus_scrape_interval: "30s"
+prometheus_evaluation_interval: "30s"
+prometheus_scrape_timeout: "10s"
+
+# ServiceMonitors
+prometheus_servicemonitor_enabled: true
+prometheus_servicemonitor_namespace_selector:
+  matchLabels:
+    prometheus: enabled
+
+# Alertmanager
+alertmanager_enabled: true
+alertmanager_name: alertmanager
+alertmanager_replicas: 1
+
+# Alertmanager storage
+alertmanager_storage_enabled: true
+alertmanager_storage_size: "2Gi"
+alertmanager_storage_class: "longhorn"
+
+# Alertmanager resources
+alertmanager_resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "256Mi"
+    cpu: "200m"
+
+# Alertmanager configuration
+alertmanager_config:
+  global:
+    resolve_timeout: 5m
+  route:
+    group_by: ['alertname', 'cluster', 'service']
+    group_wait: 10s
+    group_interval: 10s
+    repeat_interval: 12h
+    receiver: 'default'
+    routes:
+      - match:
+          severity: critical
+        receiver: 'critical'
+      - match:
+          severity: warning
+        receiver: 'warning'
+  receivers:
+    - name: 'default'
+    - name: 'critical'
+      webhook_configs:
+        - url: "{{ slack_webhook_url | default('') }}"
+          send_resolved: true
+      email_configs:
+        - to: "{{ alert_email | default('devops@ajasta.top') }}"
+          send_resolved: true
+    - name: 'warning'
+      email_configs:
+        - to: "{{ alert_email | default('devops@ajasta.top') }}"
+          send_resolved: true
+
+# Alerting rules
+prometheus_rules_enabled: true
+prometheus_rules_namespace: monitoring
+
+# Node Exporter ServiceMonitor
+node_exporter_enabled: true
+node_exporter_namespace: monitoring
+node_exporter_port: 9100
+node_exporter_scrape_interval: "30s"
+
+# Kube-State-Metrics
+kube_state_metrics_enabled: true
+kube_state_metrics_namespace: monitoring
+kube_state_metrics_port: 8080
+
+# cAdvisor
+cadvisor_enabled: true
+cadvisor_namespace: kube-system
+cadvisor_port: 10250
+
+# Application monitoring
+app_monitoring_enabled: true
+app_namespace: ajasta
+app_scrape_path: /actuator/prometheus
+app_scrape_port: 8090
+app_scrape_interval: "30s"
+
+# Additional scrape configs
+additional_scrape_configs: []
+
+# Grafana integration
+grafana_enabled: true
+grafana_namespace: monitoring
+
+# Ingress
+prometheus_ingress_enabled: true
+prometheus_ingress_host: "prometheus.ajasta.top"
+prometheus_ingress_class_name: "nginx"
+prometheus_ingress_tls_secret: "prometheus-tls"
+
+alertmanager_ingress_enabled: true
+alertmanager_ingress_host: "alertmanager.ajasta.top"
+alertmanager_ingress_class_name: "nginx"
+alertmanager_ingress_tls_secret: "alertmanager-tls"
+
+# Security
+prometheus_security_context:
+  fsGroup: 2000
+  runAsNonRoot: true
+  runAsUser: 1000
+
+container_security_context:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+
+# Service Account
+prometheus_service_account_enabled: true
+prometheus_service_account_name: prometheus
+
+# Helm chart configuration
+helm_release_name: prometheus-operator
+helm_timeout: 10m
+
+# Values override
+prometheus_values_override: {}

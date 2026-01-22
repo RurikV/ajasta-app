@@ -1,0 +1,26 @@
+---
+galaxy_info:
+  role_name: prometheus_operator
+  author: Ajasta DevOps Team
+  description: Deploy Prometheus Operator for Kubernetes monitoring
+  company: Ajasta
+  license: MIT
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: Kubernetes
+      versions:
+        - "1.29"
+
+  galaxy_tags:
+    - prometheus
+    - monitoring
+    - metrics
+    - kubernetes
+    - observability
+    - operator
+
+dependencies: []
+
+namespace: ajasta
+allow_duplicates: true

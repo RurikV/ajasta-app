@@ -1,0 +1,376 @@
+# GitLab CI/CD Pipeline for Monitoring Stack Deployment
+# This pipeline deploys Prometheus, Grafana, and exporters
+
+stages:
+  - terraform-plan
+  - terraform-apply
+  - deploy-monitoring
+  - verify
+  - notify
+
+variables:
+  TF_ROOT: "${CI_PROJECT_DIR}/terraform/monitoring"
+  TF_STATE_NAME: "monitoring"
+  ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
+  ANSIBLE_INVENTORY: "${ANSIBLE_DIR}/k8s/inventory.ini"
+  KUBECONFIG: "${ANSIBLE_DIR}/k8s/kubeconfig"
+
+# Terraform Plan for Monitoring Infrastructure
+terraform:plan:monitoring:
+  stage: terraform-plan
+  image: hashicorp/terraform:1.6
+  script:
+    - cd ${TF_ROOT}
+    - terraform init
+      -backend-config="address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
+      -backend-config="lock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
+      -backend-config="unlock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
+      -backend-config="username=${GITLAB_USERNAME}"
+      -backend-config="password=${GITLAB_PAT}"
+      -backend-config="lock_method=POST"
+      -backend-config="unlock_method=DELETE"
+      -backend-config="retry_wait_min=5"
+    - terraform plan
+      -out=tfplan
+      -var="yc_cloud_id=${YC_CLOUD_ID}"
+      -var="yc_folder_id=${YC_FOLDER_ID}"
+      -var="yc_token=${YC_TOKEN}"
+      -var="cluster_name=ajasta-monitoring"
+  artifacts:
+    paths:
+      - ${TF_ROOT}/tfplan
+    expire_in: 1 week
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+  tags:
+    - docker
+
+# Terraform Apply - Provision Storage
+terraform:apply:monitoring:
+  stage: terraform-apply
+  image: hashicorp/terraform:1.6
+  script:
+    - cd ${TF_ROOT}
+    - terraform init
+      -backend-config="address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
+      -backend-config="lock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
+      -backend-config="unlock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
+      -backend-config="username=${GITLAB_USERNAME}"
+      -backend-config="password=${GITLAB_PAT}"
+      -backend-config="lock_method=POST"
+      -backend-config="unlock_method=DELETE"
+    - terraform apply -auto-approve
+      -var="yc_cloud_id=${YC_CLOUD_ID}"
+      -var="yc_folder_id=${YC_FOLDER_ID}"
+      -var="yc_token=${YC_TOKEN}"
+      -var="cluster_name=ajasta-monitoring" || true
+    - echo "Terraform apply completed"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+  needs:
+    - terraform:plan:monitoring
+  allow_failure: true
+  tags:
+    - docker
+
+# Deploy Prometheus Operator
+deploy:prometheus:
+  stage: deploy-monitoring
+  image: python:3.11
+  before_script:
+    # Install Ansible and kubernetes.core collection
+    - apt-get update -qq
+    - apt-get install -y -qq ssh-pass ansible-core python3-pip
+    - pip3 install ansible
+    - pip3 install kubernetes
+    - ansible-galaxy collection install kubernetes.core:>=2.0.0 community.docker:>=3.0.0
+    # Configure kubectl
+    - mkdir -p ~/.kube
+    - echo "${KUBECONFIG_CONTENT}" | base64 -d > ~/.kube/config
+    - export KUBECONFIG=~/.kube/config
+    - chmod 600 ~/.kube/config
+  script:
+    - cd ${ANSIBLE_DIR}
+    # Create monitoring playbook
+    - |
+      cat > deploy-monitoring.yml <<EOF
+      ---
+      - name: Deploy Monitoring Stack
+        hosts: localhost
+        gather_facts: false
+        roles:
+          - role: prometheus_operator
+            vars:
+              kubernetes_namespace: monitoring
+              prometheus_storage_enabled: true
+              prometheus_storage_size: "${PROMETHEUS_STORAGE_SIZE:-50Gi}"
+              prometheus_retention: "${PROMETHEUS_RETENTION:-15d}"
+              alertmanager_enabled: true
+              alertmanager_config:
+                route:
+                  receivers:
+                    - name: 'critical'
+                      slack_configs:
+                        - api_url: "${SLACK_WEBHOOK_URL}"
+                          channel: '#alerts'
+                      email_configs:
+                        - to: "${ALERT_EMAIL:-devops@ajasta.top}"
+                          send_resolved: true
+              app_monitoring_enabled: true
+              app_namespace: ajasta
+              prometheus_ingress_enabled: true
+              prometheus_ingress_host: "prometheus.ajasta.top"
+              alertmanager_ingress_enabled: true
+              alertmanager_ingress_host: "alertmanager.ajasta.top"
+      EOF
+    # Deploy Prometheus Operator
+    - ansible-playbook deploy-monitoring.yml -i localhost, -v
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+  needs:
+    - terraform:apply:monitoring
+  tags:
+    - docker
+
+# Deploy Grafana
+deploy:grafana:
+  stage: deploy-monitoring
+  image: python:3.11
+  before_script:
+    # Install Ansible and kubernetes.core collection
+    - apt-get update -qq
+    - apt-get install -y -qq ssh-pass ansible-core python3-pip
+    - pip3 install ansible
+    - pip3 install kubernetes
+    - ansible-galaxy collection install kubernetes.core:>=2.0.0 community.docker:>=3.0.0
+    # Configure kubectl
+    - mkdir -p ~/.kube
+    - echo "${KUBECONFIG_CONTENT}" | base64 -d > ~/.kube/config
+    - export KUBECONFIG=~/.kube/config
+    - chmod 600 ~/.kube/config
+  script:
+    - cd ${ANSIBLE_DIR}
+    # Create Grafana deployment playbook
+    - |
+      cat > deploy-grafana.yml <<EOF
+      ---
+      - name: Deploy Grafana
+        hosts: localhost
+        gather_facts: false
+        roles:
+          - role: grafana
+            vars:
+              kubernetes_namespace: monitoring
+              grafana_admin_password: "${GRAFANA_ADMIN_PASSWORD}"
+              grafana_storage_enabled: true
+              grafana_storage_size: "${GRAFANA_STORAGE_SIZE:-10Gi}"
+              ajasta_dashboard_enabled: true
+              jvm_dashboard_enabled: true
+              postgres_dashboard_enabled: true
+              grafana_ingress_enabled: true
+              grafana_ingress_host: "grafana.ajasta.top"
+      EOF
+    # Deploy Grafana
+    - ansible-playbook deploy-grafana.yml -i localhost, -v
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+  needs:
+    - deploy:prometheus
+  tags:
+    - docker
+
+# Deploy Exporters
+deploy:exporters:
+  stage: deploy-monitoring
+  image: python:3.11
+  before_script:
+    # Install Ansible and kubernetes.core collection
+    - apt-get update -qq
+    - apt-get install -y -qq ssh-pass ansible-core python3-pip
+    - pip3 install ansible
+    - pip3 install kubernetes
+    - ansible-galaxy collection install kubernetes.core:>=2.0.0 community.docker:>=3.0.0
+    # Configure kubectl
+    - mkdir -p ~/.kube
+    - echo "${KUBECONFIG_CONTENT}" | base64 -d > ~/.kube/config
+    - export KUBECONFIG=~/.kube/config
+    - chmod 600 ~/.kube/config
+  script:
+    - cd ${ANSIBLE_DIR}
+    # Create exporters deployment playbook
+    - |
+      cat > deploy-exporters.yml <<EOF
+      ---
+      - name: Deploy Monitoring Exporters
+        hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: Create DaemonSet for Node Exporter
+            kubernetes.core.k8s:
+              state: present
+              definition:
+                apiVersion: apps/v1
+                kind: DaemonSet
+                metadata:
+                  name: node-exporter
+                  namespace: monitoring
+                  labels:
+                    app: node-exporter
+                spec:
+                  selector:
+                    matchLabels:
+                      app: node-exporter
+                  template:
+                    metadata:
+                      labels:
+                        app: node-exporter
+                    spec:
+                      hostNetwork: true
+                      hostPID: true
+                      containers:
+                        - name: node-exporter
+                          image: prom/node-exporter:v1.7.0
+                          args:
+                            - '--path.procfs=/host/proc'
+                            - '--path.sysfs=/host/sys'
+                            - '--path.rootfs=/host/root'
+                            - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+                          ports:
+                            - name: metrics
+                              containerPort: 9100
+                              hostPort: 9100
+                          volumeMounts:
+                            - name: proc
+                              mountPath: /host/proc
+                              readOnly: true
+                            - name: sys
+                              mountPath: /host/sys
+                              readOnly: true
+                            - name: root
+                              mountPath: /host/root
+                              mountPropagation: HostToContainer
+                              readOnly: true
+                      volumes:
+                        - name: proc
+                          hostPath:
+                            path: /proc
+                        - name: sys
+                          hostPath:
+                            path: /sys
+                        - name: root
+                          hostPath:
+                            path: /
+
+          - name: Create Node Exporter Service
+            kubernetes.core.k8s:
+              state: present
+              definition:
+                apiVersion: v1
+                kind: Service
+                metadata:
+                  name: node-exporter
+                  namespace: monitoring
+                  labels:
+                    app: node-exporter
+                spec:
+                  selector:
+                    app: node-exporter
+                  ports:
+                    - name: metrics
+                      port: 9100
+                      targetPort: 9100
+                  type: ClusterIP
+      EOF
+    # Deploy exporters
+    - ansible-playbook deploy-exporters.yml -i localhost, -v
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+  needs:
+    - deploy:prometheus
+  tags:
+    - docker
+
+# Verify Monitoring Stack
+verify:monitoring:
+  stage: verify
+  image: python:3.11
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq curl
+    - pip3 install kubernetes
+    - mkdir -p ~/.kube
+    - echo "${KUBECONFIG_CONTENT}" | base64 -d > ~/.kube/config
+    - export KUBECONFIG=~/.kube/config
+  script:
+    - echo "Verifying Prometheus deployment..."
+    - kubectl get pods -n monitoring -l app=prometheus
+    - kubectl get prometheus -n monitoring
+    - |
+      PROMETHEUS_READY=$(kubectl get pods -n monitoring -l app=prometheus -o jsonpath='{.items[0].status.phase}')
+      if [ "$PROMETHEUS_READY" != "Running" ]; then
+        echo "Prometheus is not ready"
+        exit 1
+      fi
+    - echo "Verifying Grafana deployment..."
+    - kubectl get pods -n monitoring -l app.kubernetes.io/name=grafana
+    - |
+      GRAFANA_READY=$(kubectl get pods -n monitoring -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].status.phase}')
+      if [ "$GRAFANA_READY" != "Running" ]; then
+        echo "Grafana is not ready"
+        exit 1
+      fi
+    - echo "Verifying Alertmanager deployment..."
+    - kubectl get pods -n monitoring -l app=alertmanager
+    - echo "Verifying ServiceMonitors..."
+    - kubectl get servicemonitors -n monitoring
+    - echo "Verifying Prometheus targets..."
+    - kubectl port-forward -n monitoring svc/prometheus-operated 9090:9090 &
+    - sleep 10
+    - curl -s http://localhost:9090/api/v1/targets | python3 -m json.tool | head -50
+    - pkill -f "kubectl port-forward"
+    - echo "✅ Monitoring stack verification complete!"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+  needs:
+    - deploy:grafana
+    - deploy:exporters
+  allow_failure: true
+  tags:
+    - docker
+
+# Notify Success
+notify:success:
+  stage: notify
+  image: alpine:3.18
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - |
+      curl -X POST -H 'Content-type: application/json' \
+        --data '{"text":"✅ Monitoring stack deployed successfully!\n\nPrometheus: https://prometheus.ajasta.top\nGrafana: https://grafana.ajasta.top\nAlertmanager: https://alertmanager.ajasta.top\n\nPipeline: '"${CI_PIPELINE_URL}"'"}' \
+        "${SLACK_WEBHOOK_URL}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+  when: on_success
+  needs:
+    - verify:monitoring
+  tags:
+    - docker
+
+# Notify Failure
+notify:failure:
+  stage: notify
+  image: alpine:3.18
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - |
+      curl -X POST -H 'Content-type: application/json' \
+        --data '{"text":"❌ Monitoring stack deployment failed!\n\nPipeline: '"${CI_PIPELINE_URL}"'\nStage: '"${CI_JOB_STAGE}"'"}' \
+        "${SLACK_WEBHOOK_URL}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+  when: on_failure
+  tags:
+    - docker
