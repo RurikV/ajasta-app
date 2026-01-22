@@ -126,6 +126,11 @@ terraform:plan:staging:
         -backend-config="unlock_method=POST" \
         -backend-config="retry_wait_min=5" \
         -backend-config="retry_wait_max=30"
+      if [ $? -ne 0 ]; then
+        echo "❌ Terraform init failed"
+        exit 1
+      fi
+      echo "✅ Terraform init successful"
 
     # Load staging variables
     - |
@@ -138,6 +143,10 @@ terraform:plan:staging:
 
     # Create plan with locking disabled to prevent lock acquisition failures
     - terraform plan -out=plan.tfplan -input=false -lock=false
+      if [ $? -ne 0 ]; then
+        echo "❌ Terraform plan failed"
+        exit 1
+      fi
     - |
       if [ -f plan.tfplan ]; then
         echo "✅ Plan created successfully"
@@ -148,6 +157,12 @@ terraform:plan:staging:
 
     # Show plan summary
     - terraform show -no-color plan.tfplan > plan.txt
+      if [ $? -ne 0 ]; then
+        echo "❌ Terraform show (plan.txt generation) failed"
+        exit 1
+      fi
+      echo "✅ Plan summary generated"
+
   artifacts:
     paths:
       - terraform/plan.tfplan
@@ -196,6 +211,11 @@ terraform:plan:production:
         -backend-config="unlock_method=POST" \
         -backend-config="retry_wait_min=5" \
         -backend-config="retry_wait_max=30"
+      if [ $? -ne 0 ]; then
+        echo "❌ Terraform init failed"
+        exit 1
+      fi
+      echo "✅ Terraform init successful"
 
     # Load production variables
     - |
@@ -208,6 +228,10 @@ terraform:plan:production:
 
     # Create plan with locking disabled to prevent lock acquisition failures
     - terraform plan -out=plan.tfplan -input=false -lock=false
+      if [ $? -ne 0 ]; then
+        echo "❌ Terraform plan failed"
+        exit 1
+      fi
     - |
       if [ -f plan.tfplan ]; then
         echo "✅ Plan created successfully"
@@ -218,6 +242,11 @@ terraform:plan:production:
 
     # Show plan summary
     - terraform show -no-color plan.tfplan > plan.txt
+      if [ $? -ne 0 ]; then
+        echo "❌ Terraform show (plan.txt generation) failed"
+        exit 1
+      fi
+      echo "✅ Plan summary generated"
 
     # Display plan in job output
     - cat plan.txt
