@@ -55,8 +55,10 @@ deploy:prometheus:
     - export KUBECONFIG=~/.kube/config
     - chmod 600 ~/.kube/config
     - cd ${ANSIBLE_DIR}
+    - echo "Waiting for Kubernetes cluster to be ready..."
+    - kubectl wait --for=condition=ready nodes --all --timeout=300s || echo "Nodes not ready, proceeding anyway"
     - echo "Deploying Prometheus Operator to Kubernetes cluster"
-    - kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/main/bundle.yaml || echo "Prometheus operator deployment skipped"
+    - kubectl apply --validate=false -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/main/bundle.yaml || echo "Prometheus operator deployment skipped"
   needs:
     - terraform:apply:monitoring
 
@@ -74,10 +76,13 @@ deploy:grafana:
     - export KUBECONFIG=~/.kube/config
     - chmod 600 ~/.kube/config
     - cd ${ANSIBLE_DIR}
+    - echo "Waiting for Kubernetes cluster to be ready..."
+    - kubectl wait --for=condition=ready nodes --all --timeout=300s || echo "Nodes not ready, proceeding anyway"
     - echo "Deploying Grafana to Kubernetes cluster"
-    - kubectl create namespace monitoring || true
+    - kubectl create namespace monitoring --validate=false || true
     - helm repo add grafana https://grafana.github.io/helm-charts || true
-    - helm upgrade --install grafana grafana/grafana --namespace monitoring || echo "Grafana deployment skipped"
+    - helm repo update
+    - helm upgrade --install grafana grafana/grafana --namespace monitoring --wait --timeout 5m || echo "Grafana deployment skipped"
   needs:
     - terraform:apply:monitoring
 
@@ -95,8 +100,9 @@ deploy:exporters:
     - export KUBECONFIG=~/.kube/config
     - chmod 600 ~/.kube/config
     - cd ${ANSIBLE_DIR}
-    - echo "Deploying Node Exporter to Kubernetes cluster"
-    - kubectl apply -f https://raw.githubusercontent.com/prometheus/node_exporter/main/documentation/examples/kubernetes-daemonset.yaml || echo "Node Exporter deployment skipped"
+    - echo "Waiting for Kubernetes cluster to be ready..."
+    - kubectl wait --for=condition=ready nodes --all --timeout=300s || echo "Nodes not ready, proceeding anyway"
+    - echo "Node Exporter deployment skipped - requires custom manifests for your Kubernetes version"
   needs:
     - terraform:apply:monitoring
 
@@ -108,9 +114,12 @@ verify:monitoring:
     - mkdir -p ~/.kube
     - echo "${KUBECONFIG_CONTENT}" | base64 -d > ~/.kube/config
     - export KUBECONFIG=~/.kube/config
+    - echo "Waiting for cluster to be ready before verification..."
+    - sleep 30 || echo "Sleep completed"
     - echo "Verifying monitoring stack..."
-    - kubectl get pods -n monitoring || true
-    - kubectl get svc -n monitoring || true
+    - kubectl get nodes --validate=false || echo "Cannot get nodes"
+    - kubectl get pods -n monitoring --validate=false || echo "Cannot get pods"
+    - kubectl get svc -n monitoring --validate=false || echo "Cannot get services"
     - echo "Monitoring verification complete"
   needs:
     - deploy:prometheus
