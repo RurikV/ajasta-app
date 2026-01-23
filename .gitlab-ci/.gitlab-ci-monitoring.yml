@@ -44,10 +44,6 @@ terraform:plan:monitoring:
     paths:
       - terraform/monitoring/tfplan
     expire_in: 1 week
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
-      when: on_success  # Run automatically on main/env-deploy
   tags:
     - docker
 
@@ -74,9 +70,6 @@ terraform:apply:monitoring:
       -var="yc_token=${YC_TOKEN}"
       -var="cluster_name=ajasta-monitoring" || true
     - echo "Terraform apply completed"
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
-      when: on_success  # Run automatically on main/env-deploy
   needs:
     - terraform:plan:monitoring
   allow_failure: false  # Don't allow failure - this is important
@@ -139,9 +132,6 @@ deploy:prometheus:
       EOF
     # Deploy Prometheus Operator
     - ansible-playbook deploy-monitoring.yml -i localhost, -v
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
-      when: on_success  # Run automatically on main/env-deploy
   needs:
     - terraform:apply:monitoring
   tags:
@@ -191,9 +181,6 @@ deploy:grafana:
       EOF
     # Deploy Grafana
     - ansible-playbook deploy-grafana.yml -i localhost, -v
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
-      when: on_success  # Run automatically on main/env-deploy
   needs:
     - deploy:prometheus
   tags:
@@ -307,9 +294,6 @@ deploy:exporters:
       EOF
     # Deploy exporters
     - ansible-playbook deploy-exporters.yml -i localhost, -v
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
-      when: on_success  # Run automatically on main/env-deploy
   needs:
     - deploy:prometheus
   tags:
@@ -354,9 +338,6 @@ verify:monitoring:
     - curl -s http://localhost:9090/api/v1/targets | python3 -m json.tool | head -50
     - pkill -f "kubectl port-forward"
     - echo "OK Monitoring stack verification complete!"
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
-      when: on_success  # Run automatically on main/env-deploy
   needs:
     - deploy:grafana
     - deploy:exporters
@@ -375,9 +356,6 @@ notify:success:
       curl -X POST -H 'Content-type: application/json' \
         --data '{"text":"OK Monitoring stack deployed successfully!\n\nPrometheus: https://prometheus.ajasta.top\nGrafana: https://grafana.ajasta.top\nAlertmanager: https://alertmanager.ajasta.top\n\nPipeline: '"${CI_PIPELINE_URL}"'"}' \
         "${SLACK_WEBHOOK_URL}"
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
-  when: on_success
   needs:
     - verify:monitoring
   tags:
@@ -394,8 +372,5 @@ notify:failure:
       curl -X POST -H 'Content-type: application/json' \
         --data '{"text":"ERROR Monitoring stack deployment failed!\n\nPipeline: '"${CI_PIPELINE_URL}"'\nStage: '"${CI_JOB_STAGE}"'"}' \
         "${SLACK_WEBHOOK_URL}"
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
-  when: on_failure
   tags:
     - docker
