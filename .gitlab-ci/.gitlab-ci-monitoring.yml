@@ -17,21 +17,8 @@ terraform:plan:monitoring:
     TF_STATE_NAME: "monitoring"
   script:
     - cd ${TF_ROOT}
-    - terraform init
-      -backend-config="address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
-      -backend-config="lock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-      -backend-config="unlock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-      -backend-config="username=${GITLAB_USERNAME}"
-      -backend-config="password=${GITLAB_PAT}"
-      -backend-config="lock_method=POST"
-      -backend-config="unlock_method=DELETE"
-      -backend-config="retry_wait_min=5"
-    - terraform plan
-      -out=tfplan
-      -var="yc_cloud_id=${YC_CLOUD_ID}"
-      -var="yc_folder_id=${YC_FOLDER_ID}"
-      -var="yc_token=${YC_TOKEN}"
-      -var="cluster_name=ajasta-monitoring"
+    - terraform init -backend-config="address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}" -backend-config="lock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock" -backend-config="unlock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock" -backend-config="username=${GITLAB_USERNAME}" -backend-config="password=${GITLAB_PAT}" -backend-config="lock_method=POST" -backend-config="unlock_method=DELETE" -backend-config="retry_wait_min=5"
+    - terraform plan -out=tfplan -var="yc_cloud_id=${YC_CLOUD_ID}" -var="yc_folder_id=${YC_FOLDER_ID}" -var="yc_token=${YC_TOKEN}" -var="cluster_name=ajasta-monitoring"
     - if [ -f tfplan ]; then echo "OK Monitoring plan created"; else echo "ERROR Plan not created"; exit 1; fi
   artifacts:
     paths:
@@ -49,19 +36,8 @@ terraform:apply:monitoring:
     TF_STATE_NAME: "monitoring"
   script:
     - cd ${TF_ROOT}
-    - terraform init
-      -backend-config="address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-      -backend-config="lock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-      -backend-config="unlock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock"
-      -backend-config="username=${GITLAB_USERNAME}"
-      -backend-config="password=${GITLAB_PAT}"
-      -backend-config="lock_method=POST"
-      -backend-config="unlock_method=DELETE"
-    - terraform apply -auto-approve
-      -var="yc_cloud_id=${YC_CLOUD_ID}"
-      -var="yc_folder_id=${YC_FOLDER_ID}"
-      -var="yc_token=${YC_TOKEN}"
-      -var="cluster_name=ajasta-monitoring" || true
+    - terraform init -backend-config="address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}" -backend-config="lock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock" -backend-config="unlock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock" -backend-config="username=${GITLAB_USERNAME}" -backend-config="password=${GITLAB_PAT}" -backend-config="lock_method=POST" -backend-config="unlock_method=DELETE" -backend-config="retry_wait_min=5"
+    - terraform apply -auto-approve -var="yc_cloud_id=${YC_CLOUD_ID}" -var="yc_folder_id=${YC_FOLDER_ID}" -var="yc_token=${YC_TOKEN}" -var="cluster_name=ajasta-monitoring" || true
     - echo "Terraform apply completed"
   needs:
     - terraform:plan:monitoring
@@ -185,10 +161,9 @@ verify:monitoring:
 notify:success:
   stage: notify
   image: alpine:3.18
-  before_script:
-    - apk add --no-cache curl
   script:
-    - curl -X POST -H 'Content-type: application/json' --data '{"text":"OK Monitoring stack deployed"}' "${SLACK_WEBHOOK_URL}" || true
+    - echo "Monitoring stack deployed successfully"
+    - wget -q -O- --post-data="Monitoring stack deployed" "${SLACK_WEBHOOK_URL}" || true
   needs:
     - verify:monitoring
   tags:
@@ -198,9 +173,9 @@ notify:success:
 notify:failure:
   stage: notify
   image: alpine:3.18
-  before_script:
-    - apk add --no-cache curl
   script:
-    - curl -X POST -H 'Content-type: application/json' --data '{"text":"ERROR Monitoring stack deployment failed"}' "${SLACK_WEBHOOK_URL}" || true
+    - echo "Monitoring stack deployment failed"
+    - wget -q -O- --post-data="Monitoring stack failed" "${SLACK_WEBHOOK_URL}" || true
+  when: on_failure
   tags:
     - docker
