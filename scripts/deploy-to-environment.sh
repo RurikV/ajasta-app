@@ -26,6 +26,7 @@
 #   - Example: --playbook 03 runs: 03, 04, 05, 06, 09, 10, 13, 14, 19, 31
 #
 # Playbook Execution Order:
+#   00  → Refresh local kubeconfig (fetch latest from master)
 #   01  → Prepare nodes for Kubernetes
 #   02  → Initialize Kubernetes control plane
 #   03  → Install Cilium CNI
@@ -46,6 +47,7 @@ FAILED_STEPS=()
 
 # Playbook number mapping
 declare -A PLAYBOOKS
+PLAYBOOKS[00]="00-refresh-kubeconfig.yml"
 PLAYBOOKS[01]="01-prepare-nodes.yml"
 PLAYBOOKS[02]="02-init-master.yml"
 PLAYBOOKS[03]="03-install-cilium.yml"
@@ -61,6 +63,7 @@ PLAYBOOKS[31]="31-fix-connection-timeout-complete.yml"
 
 # Playbook execution order (sorted by numeric key)
 PLAYBOOK_ORDER=(
+    "00"
     "01"
     "02"
     "03"
@@ -285,6 +288,7 @@ ${GREEN}Deployment Steps:${NC}
   5. Fix connection timeout issues
 
 ${GREEN}Available Playbooks:${NC}
+  00  → Refresh local kubeconfig (fetch latest from master)
   01  → Prepare nodes for Kubernetes
   02  → Initialize Kubernetes control plane
   03  → Install Cilium CNI

@@ -278,14 +278,18 @@ fi
 # =================================================================
 print_step "Updating local kubeconfig"
 
-if [ -f "./update-kubeconfig.sh" ]; then
+# Try Ansible playbook first (preferred method)
+if ansible-playbook -i inventory.ini 00-refresh-kubeconfig.yml $VERBOSITY 2>/dev/null; then
+    print_success "Local kubeconfig refreshed (Ansible)"
+elif [ -f "./update-kubeconfig.sh" ]; then
+    # Fallback to shell script if playbook fails
     if bash ./update-kubeconfig.sh 2>/dev/null; then
-        print_success "Local kubeconfig updated"
+        print_success "Local kubeconfig updated (shell script)"
     else
         print_skip "Kubeconfig update skipped (non-critical)"
     fi
 else
-    print_skip "update-kubeconfig.sh script not found (non-critical)"
+    print_skip "Kubeconfig refresh skipped (ansible playbook and shell script not available)"
 fi
 
 # =================================================================
