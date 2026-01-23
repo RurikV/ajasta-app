@@ -257,6 +257,36 @@
   gather_facts: yes
 
   tasks:
+    - name: Check if all nodes are already Ready
+      ansible.builtin.command:
+        cmd: kubectl get nodes -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}'
+      register: nodes_ready_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Get total number of nodes
+      ansible.builtin.command:
+        cmd: kubectl get nodes -o jsonpath='{.items}'
+      register: nodes_count
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Count ready nodes
+      ansible.builtin.set_fact:
+        ready_nodes_count: "{{ nodes_ready_check.stdout.split() | select('equalto', 'True') | list | length }}"
+        total_nodes_count: "{{ nodes_count.stdout | length | default(0) }}"
+
+    - name: Set fact for nodes readiness
+      ansible.builtin.set_fact:
+        nodes_need_wait: "{{ ready_nodes_count != total_nodes_count }}"
+
+    - name: Display node readiness status
+      ansible.builtin.debug:
+        msg: "{{ 'Nodes are already Ready (' + ready_nodes_count | string + '/' + total_nodes_count | string + ') - skipping wait' if not nodes_need_wait else 'Nodes not Ready (' + ready_nodes_count | string + '/' + total_nodes_count | string + ') - waiting for them to become Ready...' }}"
+
     - name: Wait for all nodes to become Ready
       ansible.builtin.command:
         cmd: kubectl wait --for=condition=ready node --all --timeout=300s
@@ -264,6 +294,12 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: nodes_ready
       changed_when: false
+      failed_when: false
+      when: nodes_need_wait
+
+    - name: Display wait result
+      ansible.builtin.debug:
+        msg: "{{ '✓ All nodes became Ready' if nodes_ready.rc == 0 else '⚠ Nodes did not become Ready within timeout - CNI may have issues' }}"
 
     - name: Verify all nodes are Ready
       ansible.builtin.command:

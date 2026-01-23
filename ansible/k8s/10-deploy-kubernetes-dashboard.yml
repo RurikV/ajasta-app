@@ -133,9 +133,28 @@
         msg: "{{ helm_install.stdout_lines | default([]) }}"
 
     # ============== WAIT FOR DASHBOARD PODS ==============
+    - name: Check if Dashboard pods are already ready
+      ansible.builtin.command:
+        cmd: kubectl get pods -l app.kubernetes.io/instance={{ dashboard_release_name }} -n {{ dashboard_namespace }} -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}'
+      register: dashboard_ready_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Set fact for Dashboard deployment status
+      ansible.builtin.set_fact:
+        dashboard_need_wait: "{{ dashboard_ready_check.stdout.split() | select('equalto', 'True') | list | length < 2 }}"
+
+    - name: Display Dashboard already ready message
+      ansible.builtin.debug:
+        msg: "✓ Dashboard pods already ready - skipping wait"
+      when: not dashboard_need_wait
+
     - name: Pause for Dashboard pods to initialize
       ansible.builtin.pause:
         seconds: 30
+      when: dashboard_need_wait
 
     - name: Wait for all Dashboard pods to be ready
       ansible.builtin.command:
@@ -145,6 +164,7 @@
       retries: 15
       delay: 10
       changed_when: false
+      when: dashboard_need_wait
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       failed_when: false

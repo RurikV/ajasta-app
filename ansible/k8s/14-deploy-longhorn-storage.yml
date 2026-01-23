@@ -368,9 +368,28 @@
       ansible.builtin.debug:
         msg: "{{ longhorn_install.stdout_lines }}"
 
+    - name: Check if Longhorn pods are already ready
+      ansible.builtin.command:
+        cmd: kubectl get pods -l app.kubernetes.io/instance=longhorn -n {{ longhorn_namespace }} -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}'
+      register: longhorn_ready_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Set fact for Longhorn deployment status
+      ansible.builtin.set_fact:
+        longhorn_need_wait: "{{ longhorn_ready_check.stdout.split() | select('equalto', 'True') | list | length < 3 }}"
+
+    - name: Display Longhorn already ready message
+      ansible.builtin.debug:
+        msg: "✓ Longhorn pods already ready - skipping wait"
+      when: not longhorn_need_wait
+
     - name: Pause for Longhorn to initialize
       ansible.builtin.pause:
         seconds: 60
+      when: longhorn_need_wait
 
     - name: Wait for Longhorn pods to be ready
       ansible.builtin.command:
@@ -380,6 +399,7 @@
       retries: 60
       delay: 5
       changed_when: false
+      when: longhorn_need_wait
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       failed_when: false
@@ -717,23 +737,43 @@
         msg: "{{ longhorn_volumes.stdout_lines }}"
       when: minio_exists
 
+    - name: Check if MinIO pod is already ready
+      ansible.builtin.command:
+        cmd: kubectl get pod -l app=minio -n {{ minio_namespace }} -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}'
+      register: minio_ready_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      when: minio_exists
+
+    - name: Set fact for MinIO deployment status
+      ansible.builtin.set_fact:
+        minio_need_wait: "{{ minio_ready_check.stdout != 'True' }}"
+      when: minio_exists
+
+    - name: Display MinIO already ready message
+      ansible.builtin.debug:
+        msg: "✓ MinIO pod already ready - skipping wait"
+      when: minio_exists and not minio_need_wait
+
     - name: Display wait message
       ansible.builtin.debug:
         msg:
           - "================================================================"
           - "WAITING FOR MINIO POD TO BE READY (max 5 minutes)"
           - "================================================================"
-      when: minio_exists
+      when: minio_exists and minio_need_wait
 
     - name: Wait for MinIO StatefulSet to be ready
       ansible.builtin.command:
         cmd: kubectl wait --for=condition=ready pod -l app=minio -n {{ minio_namespace }} --timeout=300s
       register: minio_ready
       changed_when: false
+      when: minio_exists and minio_need_wait
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       failed_when: false
-      when: minio_exists
 
     - name: Check if MinIO wait failed
       ansible.builtin.debug:
@@ -747,11 +787,11 @@
           - ""
           - "Skipping MinIO migration and continuing with Longhorn deployment."
           - "================================================================"
-      when: minio_exists and minio_ready.rc != 0
+      when: minio_exists and minio_need_wait and minio_ready.rc != 0
 
     - name: Set MinIO ready fact for migration
       ansible.builtin.set_fact:
-        minio_ready_for_migration: "{{ minio_ready.rc == 0 }}"
+        minio_ready_for_migration: "{{ not minio_need_wait or (minio_ready.rc | default(1)) == 0 }}"
       when: minio_exists
 
     - name: Set MinIO ready fact when not exists
@@ -808,127 +848,6 @@
           - ""
           - "================================================================"
       when: not minio_exists
-
-    - name: Check MinIO PVC status
-      ansible.builtin.command:
-        cmd: kubectl get pvc -l app=minio -n {{ minio_namespace }}
-      register: minio_pvc_before
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      when: minio_exists
-
-    - name: Display MinIO PVC status
-      ansible.builtin.debug:
-        msg: "{{ minio_pvc_before.stdout_lines }}"
-      when: minio_exists
-
-    - name: Check MinIO pod detailed status
-      ansible.builtin.command:
-        cmd: kubectl describe pod -l app=minio -n {{ minio_namespace }}
-      register: minio_pod_describe
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      when: minio_exists
-
-    - name: Display MinIO pod detailed status
-      ansible.builtin.debug:
-        msg: "{{ minio_pod_describe.stdout_lines }}"
-      when: minio_exists
-
-    - name: Check MinIO pod events
-      ansible.builtin.shell:
-        cmd: kubectl get events -n {{ minio_namespace }} --field-selector involvedObject.name=minio-0 --sort-by='.lastTimestamp' | tail -20
-      register: minio_events
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      when: minio_exists
-
-    - name: Display MinIO pod events
-      ansible.builtin.debug:
-        msg: "{{ minio_events.stdout_lines }}"
-      when: minio_exists
-
-    - name: Check MinIO pod logs (if available)
-      ansible.builtin.shell:
-        cmd: kubectl logs -l app=minio -n {{ minio_namespace }} --tail=50 2>/dev/null || echo "No logs available yet"
-      register: minio_logs
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      when: minio_exists
-
-    - name: Display MinIO pod logs
-      ansible.builtin.debug:
-        msg: "{{ minio_logs.stdout_lines }}"
-      when: minio_exists
-
-    - name: Check Longhorn volumes status
-      ansible.builtin.shell:
-        cmd: kubectl get volumes -n {{ longhorn_namespace }} 2>/dev/null || echo "No Longhorn volumes API or no volumes found"
-      register: longhorn_volumes
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      when: minio_exists
-
-    - name: Display Longhorn volumes
-      ansible.builtin.debug:
-        msg: "{{ longhorn_volumes.stdout_lines }}"
-      when: minio_exists
-
-    - name: Display wait message
-      ansible.builtin.debug:
-        msg:
-          - "================================================================"
-          - "WAITING FOR MINIO POD TO BE READY (max 5 minutes)"
-          - "================================================================"
-      when: minio_exists
-
-    - name: Wait for MinIO StatefulSet to be ready
-      ansible.builtin.command:
-        cmd: kubectl wait --for=condition=ready pod -l app=minio -n {{ minio_namespace }} --timeout=300s
-      register: minio_ready
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      failed_when: false
-      when: minio_exists
-
-    - name: Display MinIO ready status
-      ansible.builtin.debug:
-        msg: "{{ minio_ready.stdout | default('MinIO is ready', true) }}"
-      when: minio_exists
-
-    - name: Get MinIO pods after migration
-      ansible.builtin.command:
-        cmd: kubectl get pods -l app=minio -n {{ minio_namespace }}
-      register: minio_pods_final
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      when: minio_exists
-
-    - name: Display MinIO pods
-      ansible.builtin.debug:
-        msg: "{{ minio_pods_final.stdout_lines }}"
-      when: minio_exists
-
-    - name: Get MinIO PVCs after migration
-      ansible.builtin.command:
-        cmd: kubectl get pvc -n {{ minio_namespace }}
-      register: minio_pvc_final
-      changed_when: false
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      when: minio_exists
-
-    - name: Display MinIO PVCs
-      ansible.builtin.debug:
-        msg: "{{ minio_pvc_final.stdout_lines }}"
-      when: minio_exists
 
     # ==============================================================
     # SUMMARY

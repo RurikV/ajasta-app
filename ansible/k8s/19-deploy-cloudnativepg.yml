@@ -85,9 +85,28 @@
       ansible.builtin.debug:
         msg: "{{ cnpg_apply.stdout_lines }}"
 
+    - name: Check if CloudNativePG controller is already ready
+      ansible.builtin.command:
+        cmd: kubectl get deployment -n {{ cnpg_namespace }} cnpg-controller-manager -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
+      register: cnpg_ready_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Set fact for CloudNativePG deployment status
+      ansible.builtin.set_fact:
+        cnpg_need_wait: "{{ cnpg_ready_check.stdout != 'True' }}"
+
+    - name: Display CloudNativePG already ready message
+      ansible.builtin.debug:
+        msg: "✓ CloudNativePG controller already ready - skipping wait"
+      when: not cnpg_need_wait
+
     - name: Pause for operator to initialize
       ansible.builtin.pause:
         seconds: 15
+      when: cnpg_need_wait
 
     - name: Wait for CloudNativePG controller to be ready
       ansible.builtin.command:
@@ -98,6 +117,7 @@
       until: cnpg_wait.rc == 0
       retries: 30
       delay: 5
+      when: cnpg_need_wait
 
     - name: Get CloudNativePG controller status
       ansible.builtin.command:
@@ -175,9 +195,28 @@
       ansible.builtin.debug:
         msg: "{{ pg_apply.stdout_lines }}"
 
+    - name: Check if PostgreSQL pods are already ready
+      ansible.builtin.command:
+        cmd: kubectl get pods -l cnpg.io/podRole=instance -n {{ pg_namespace }} -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}'
+      register: pg_ready_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Set fact for PostgreSQL deployment status
+      ansible.builtin.set_fact:
+        pg_need_wait: "{{ pg_ready_check.stdout.split() | select('equalto', 'True') | list | length != 2 }}"
+
+    - name: Display PostgreSQL already ready message
+      ansible.builtin.debug:
+        msg: "✓ PostgreSQL pods already ready - skipping wait"
+      when: not pg_need_wait
+
     - name: Pause for PostgreSQL cluster to initialize
       ansible.builtin.pause:
         seconds: 30
+      when: pg_need_wait
 
     # ==============================================================
     # PART 4: VERIFICATION
@@ -192,6 +231,7 @@
       until: pg_wait.rc == 0
       retries: 60
       delay: 5
+      when: pg_need_wait
 
     - name: Get PostgreSQL cluster status
       ansible.builtin.command:

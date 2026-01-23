@@ -7,9 +7,10 @@
 #
 # Examples:
 #   ./k8s-cluster-setup.sh              # Start from step 1
-#   ./k8s-cluster-setup.sh 3            # Start from step 3 (resume)
+#   ./k8s-cluster-setup.sh 3            # Start from step 3 (resume from Cilium)
+#   ./k8s-cluster-setup.sh 7            # Start from step 7 (Dashboard)
 #   ./k8s-cluster-setup.sh -vv          # Start from step 1 with verbose output
-#   ./k8s-cluster-setup.sh 3 -vvv       # Start from step 3 with more verbosity
+#   ./k8s-cluster-setup.sh 5 -vvv       # Start from step 5 with more verbosity
 #
 # Prerequisites:
 #   - Ansible installed
@@ -17,7 +18,10 @@
 #   - SSH key: ~/.ssh/id_rsa_k8s
 #   - All VMs already running
 
-set -e  # Exit on any error
+# NOTE: Script continues on error to allow partial deployment
+
+# Initialize failed steps array
+FAILED_STEPS=()
 
 # Colors for output
 RED='\033[0;31m'
@@ -101,7 +105,8 @@ print_skip() {
 
 print_error() {
     echo -e "${RED}✗ ERROR: $1${NC}"
-    exit 1
+    # Don't exit, just print error and continue
+    FAILED_STEPS+=("$1")
 }
 
 # Function to check if we should run this step
@@ -367,12 +372,30 @@ ansible -i inventory.ini k8s_master -m shell -a 'sudo kubectl get pods -A' 2>/de
 # SUMMARY
 # =================================================================
 echo ""
-echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║   KUBERNETES CLUSTER SETUP COMPLETE!                             ║${NC}"
-echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
+
+# Check if there were any failures
+if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
+    echo -e "${YELLOW}╔════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║   KUBERNETES CLUSTER SETUP COMPLETED WITH WARNINGS           ║${NC}"
+    echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${RED}Failed Steps:${NC}"
+    for step in "${FAILED_STEPS[@]}"; do
+        echo -e "${RED}  ✗ $step${NC}"
+    done
+    echo ""
+    echo -e "${YELLOW}You can re-run the script from the failed step:${NC}"
+    echo -e "${YELLOW}  ./k8s-cluster-setup.sh [step_number]${NC}"
+    echo ""
+else
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║   KUBERNETES CLUSTER SETUP COMPLETE!                             ║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
+fi
+
 echo ""
 echo "Cluster Information:"
-echo "  - Master: master-node (89.169.182.221)"
+echo "  - Master: master-node"
 echo "  - Workers: worker-node-0, worker-node-1, worker-node-2"
 echo "  - CNI: Cilium (with Hubble observability)"
 echo "  - K8s Version: 1.34.3"
@@ -380,16 +403,16 @@ echo ""
 echo "Access Information:"
 echo ""
 echo "1. SSH into master node:"
-echo "   ssh -i ~/.ssh/id_rsa_k8s ajasta@89.169.182.221"
+echo "   ssh -i ~/.ssh/id_rsa_k8s ajasta@<master-ip>"
 echo ""
 echo "2. Use kubectl on master:"
 echo "   sudo kubectl get nodes"
 echo "   sudo kubectl get pods -A"
 echo ""
 echo "3. Update local kubeconfig:"
-echo "   ./scripts/update-kubeconfig.sh  # from ansible-ci directory"
+echo "   ./fetch-kubeconfig.zsh  # from scripts directory"
 echo "   or"
-echo "   kubectl config set-cluster k8s-cluster --server=https://89.169.182.221:6443"
+echo "   kubectl config set-cluster k8s-cluster --server=https://<master-ip>:6443"
 echo ""
 echo "4. Access cluster from local machine:"
 echo "   export KUBECONFIG=~/.kube/config"
@@ -414,10 +437,17 @@ echo "  - Deploy test application: ansible-playbook -i inventory.ini 06-deploy-t
 echo "  - Deploy CloudNativePG: ansible-playbook -i inventory.ini 19-deploy-cloudnativepg.yml"
 echo "  - Deploy nginx chart: ansible-playbook -i inventory.ini 17-deploy-nginx-chart.yml"
 echo ""
+echo "Re-run from specific step:"
+echo "  ./k8s-cluster-setup.sh [step_number]     # e.g., 5 for Cilium, 7 for Dashboard"
+echo ""
 echo "Documentation:"
 echo "  - See README.md for detailed documentation"
 echo "  - All playbooks are located in this directory"
 echo ""
 echo -e "${BLUE}================================================================${NC}"
-echo -e "${GREEN}Setup completed successfully!${NC}"
+if [ ${#FAILED_STEPS[@]} -eq 0 ]; then
+    echo -e "${GREEN}Setup completed successfully!${NC}"
+else
+    echo -e "${YELLOW}Setup completed with ${#FAILED_STEPS[@]} error(s). Check output above.${NC}"
+fi
 echo -e "${BLUE}================================================================${NC}"

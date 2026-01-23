@@ -57,6 +57,19 @@
         msg: "Echoserver manifest created at /tmp/echoserver.yaml"
 
     # ============== DEPLOY APPLICATION ==============
+    - name: Check if echoserver pod already exists and is ready
+      ansible.builtin.command:
+        cmd: kubectl get pod echoserver -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      register: echoserver_ready_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Set fact for echoserver deployment status
+      ansible.builtin.set_fact:
+        echoserver_need_wait: "{{ echoserver_ready_check.stdout != 'True' }}"
+
     - name: Apply echoserver manifest
       ansible.builtin.command:
         cmd: kubectl apply -f /tmp/echoserver.yaml
@@ -68,6 +81,11 @@
       ansible.builtin.debug:
         msg: "{{ apply_echoserver.stdout }}"
 
+    - name: Display echoserver already deployed message
+      ansible.builtin.debug:
+        msg: "✓ Echoserver pod already ready - skipping wait"
+      when: not echoserver_need_wait
+
     # ============== WAIT FOR POD TO BE READY ==============
     - name: Wait for echoserver pod to be ready
       ansible.builtin.command:
@@ -77,6 +95,7 @@
       retries: 12
       delay: 5
       changed_when: false
+      when: echoserver_need_wait
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
 
@@ -221,6 +240,24 @@
       ansible.builtin.debug:
         msg: "{{ apply_nginx.stdout }}"
 
+    - name: Check if nginx-test pods are already ready
+      ansible.builtin.command:
+        cmd: kubectl get pods -l app=nginx-test -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}'
+      register: nginx_ready_check
+      changed_when: false
+      failed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Set fact for nginx-test deployment status
+      ansible.builtin.set_fact:
+        nginx_need_wait: "{{ nginx_ready_check.stdout.split() | select('equalto', 'True') | list | length != 2 }}"
+
+    - name: Display nginx-test already ready message
+      ansible.builtin.debug:
+        msg: "✓ Nginx-test pods already ready - skipping wait"
+      when: not nginx_need_wait
+
     - name: Wait for nginx pods to be ready
       ansible.builtin.command:
         cmd: kubectl wait --for=condition=ready pod -l app=nginx-test --timeout=120s
@@ -229,6 +266,7 @@
       retries: 12
       delay: 5
       changed_when: false
+      when: nginx_need_wait
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
 
