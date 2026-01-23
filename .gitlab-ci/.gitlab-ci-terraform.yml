@@ -320,81 +320,18 @@ terraform:apply:staging:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
-    - |
-      # Configure authentication based on available credentials
-      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
-        # Use Personal Access Token with actual username (required for PAT auth)
-        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
-        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
-        export TF_PASSWORD="${GITLAB_PAT}"
-        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
-      elif [ -n "${GITLAB_PAT}" ]; then
-        # PAT provided but no username - try with gitlab-ci-token (may fail)
-        export TF_HTTP_USERNAME="gitlab-ci-token"
-        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
-        export TF_PASSWORD="${GITLAB_PAT}"
-        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
-      else
-        # Fallback to CI_JOB_TOKEN (won't work across jobs)
-        export TF_HTTP_USERNAME="gitlab-ci-token"
-        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
-        export TF_PASSWORD="${CI_JOB_TOKEN}"
-        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
-      fi
-    - |
-      terraform init -backend=true \
-        -backend-config="address=${TF_HTTP_ADDRESS}" \
-        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-        -backend-config="username=${TF_HTTP_USERNAME}" \
-        -backend-config="password=${TF_HTTP_PASSWORD}" \
-        -backend-config="lock_method=POST" \
-        -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5" \
-        -backend-config="retry_wait_max=30"
-
-    # Load staging variables
-    - |
-      if [ -f "staging.tfvars" ]; then
-        cp staging.tfvars terraform.tfvars
-      fi
-
-    # Apply the plan with locking disabled to prevent lock acquisition failures
+    - if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then export TF_HTTP_USERNAME="${GITLAB_USERNAME}"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"; elif [ -n "${GITLAB_PAT}" ]; then export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"; else export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"; export TF_PASSWORD="${CI_JOB_TOKEN}"; echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"; fi
+    - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5" -backend-config="retry_wait_max=30"
+    - if [ -f "staging.tfvars" ]; then cp staging.tfvars terraform.tfvars; fi
     - terraform apply -input=false -auto-approve -lock=false plan.tfplan; APPLY_EXIT_CODE=$?
-    - |
-      # Check if state upload failed and errored.tfstate exists
-      if [ -f "errored.tfstate" ]; then
-        echo "⚠️  State upload failed during apply, attempting to push errored state..."
-        if terraform state push -lock=false errored.tfstate; then
-          echo "✅ State pushed successfully"
-          rm -f errored.tfstate
-          APPLY_EXIT_CODE=0  # Override exit code since state was recovered
-        else
-          echo "❌ Failed to push state - resources created but state not saved"
-          APPLY_EXIT_CODE=1
-        fi
-      fi
-
-      # Check apply result
-      if [ $APPLY_EXIT_CODE -ne 0 ]; then
-        echo "❌ Apply failed - resources may not have been created"
-        exit 1
-      fi
-      echo "✅ Apply completed successfully"
-
-    # Output results (always generate outputs even after state recovery)
+    - if [ -f "errored.tfstate" ]; then echo "⚠️  State upload failed during apply, attempting to push errored state..."; if terraform state push -lock=false errored.tfstate; then echo "✅ State pushed successfully"; rm -f errored.tfstate; APPLY_EXIT_CODE=0; else echo "❌ Failed to push state - resources created but state not saved"; APPLY_EXIT_CODE=1; fi; fi
+    - if [ $APPLY_EXIT_CODE -ne 0 ]; then echo "❌ Apply failed - resources may not have been created"; exit 1; fi
+    - echo "✅ Apply completed successfully"
     - terraform output -json > outputs.json || echo "Warning: terraform output failed"
-    - |
-      if [ -s outputs.json ]; then
-        echo "✅ Outputs generated successfully"
-      else
-        echo "⚠️  Warning: outputs.json is empty"
-      fi
-    - |
-      echo "Staging deployment completed successfully!"
-      echo ""
-      echo "Infrastructure outputs:"
-      terraform output -raw || echo "Warning: Some outputs failed to display"
+    - if [ -s outputs.json ]; then echo "✅ Outputs generated successfully"; else echo "⚠️  Warning: outputs.json is empty"; fi
+    - echo "Staging deployment completed successfully!"
+    - echo "Infrastructure outputs:"
+    - terraform output -raw || echo "Warning: Some outputs failed to display"
     - echo "✅ Job completed successfully"
   artifacts:
     paths:
@@ -428,89 +365,22 @@ terraform:apply:production:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
-    - |
-      # Configure authentication based on available credentials
-      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
-        # Use Personal Access Token with actual username (required for PAT auth)
-        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
-        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
-        export TF_PASSWORD="${GITLAB_PAT}"
-        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
-      elif [ -n "${GITLAB_PAT}" ]; then
-        # PAT provided but no username - try with gitlab-ci-token (may fail)
-        export TF_HTTP_USERNAME="gitlab-ci-token"
-        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
-        export TF_PASSWORD="${GITLAB_PAT}"
-        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
-      else
-        # Fallback to CI_JOB_TOKEN (won't work across jobs)
-        export TF_HTTP_USERNAME="gitlab-ci-token"
-        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
-        export TF_PASSWORD="${CI_JOB_TOKEN}"
-        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
-      fi
-    - |
-      terraform init -backend=true \
-        -backend-config="address=${TF_HTTP_ADDRESS}" \
-        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-        -backend-config="username=${TF_HTTP_USERNAME}" \
-        -backend-config="password=${TF_HTTP_PASSWORD}" \
-        -backend-config="lock_method=POST" \
-        -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5" \
-        -backend-config="retry_wait_max=30"
-
-    # Load production variables
-    - |
-      if [ -f "production.tfvars" ]; then
-        cp production.tfvars terraform.tfvars
-      fi
-
-    # Apply the plan with locking disabled to prevent lock acquisition failures
+    - if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then export TF_HTTP_USERNAME="${GITLAB_USERNAME}"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"; elif [ -n "${GITLAB_PAT}" ]; then export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"; else export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"; export TF_PASSWORD="${CI_JOB_TOKEN}"; echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"; fi
+    - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5" -backend-config="retry_wait_max=30"
+    - if [ -f "production.tfvars" ]; then cp production.tfvars terraform.tfvars; fi
     - terraform apply -input=false -auto-approve -lock=false plan.tfplan; APPLY_EXIT_CODE=$?
-    - |
-      # Check if state upload failed and errored.tfstate exists
-      if [ -f "errored.tfstate" ]; then
-        echo "⚠️  State upload failed during apply, attempting to push errored state..."
-        if terraform state push -lock=false errored.tfstate; then
-          echo "✅ State pushed successfully"
-          rm -f errored.tfstate
-          APPLY_EXIT_CODE=0  # Override exit code since state was recovered
-        else
-          echo "❌ Failed to push state - resources created but state not saved"
-          APPLY_EXIT_CODE=1
-        fi
-      fi
-
-      # Check apply result
-      if [ $APPLY_EXIT_CODE -ne 0 ]; then
-        echo "❌ Apply failed - resources may not have been created"
-        exit 1
-      fi
-      echo "✅ Apply completed successfully"
-
-    # Output results (always generate outputs even after state recovery)
+    - if [ -f "errored.tfstate" ]; then echo "⚠️  State upload failed during apply, attempting to push errored state..."; if terraform state push -lock=false errored.tfstate; then echo "✅ State pushed successfully"; rm -f errored.tfstate; APPLY_EXIT_CODE=0; else echo "❌ Failed to push state - resources created but state not saved"; APPLY_EXIT_CODE=1; fi; fi
+    - if [ $APPLY_EXIT_CODE -ne 0 ]; then echo "❌ Apply failed - resources may not have been created"; exit 1; fi
+    - echo "✅ Apply completed successfully"
     - terraform output -json > outputs.json || echo "Warning: terraform output failed"
-    - |
-      if [ -s outputs.json ]; then
-        echo "✅ Outputs generated successfully"
-      else
-        echo "⚠️  Warning: outputs.json is empty"
-      fi
-    - |
-      echo "Production deployment completed successfully!"
-      echo ""
-      echo "Infrastructure outputs:"
-      terraform output -raw || echo "Warning: Some outputs failed to display"
-
-      # Create outputs file for GitLab environment
-      cat > terraform-outputs.env << EOF
-      TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip 2>/dev/null || echo "")
-      TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips 2>/dev/null || echo "{}")
-      FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null || echo "")
-      BACKEND_API_URL=$(terraform output -raw backend_api_url 2>/dev/null || echo "")
-      EOF
+    - if [ -s outputs.json ]; then echo "✅ Outputs generated successfully"; else echo "⚠️  Warning: outputs.json is empty"; fi
+    - echo "Production deployment completed successfully!"
+    - echo "Infrastructure outputs:"
+    - terraform output -raw || echo "Warning: Some outputs failed to display"
+    - echo "TERRAFORM_MASTER_IP=$(terraform output -raw master_public_ip 2>/dev/null || echo "")" > terraform-outputs.env
+    - echo "TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips 2>/dev/null || echo '{}')" >> terraform-outputs.env
+    - echo "FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null || echo "")" >> terraform-outputs.env
+    - echo "BACKEND_API_URL=$(terraform output -raw backend_api_url 2>/dev/null || echo "")" >> terraform-outputs.env
     - echo "✅ Job completed successfully"
   artifacts:
     paths:
