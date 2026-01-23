@@ -24,8 +24,6 @@ terraform:plan:monitoring:
     paths:
       - terraform/monitoring/tfplan
     expire_in: 1 week
-  tags:
-    - docker
 
 # Terraform Apply - Provision Storage
 terraform:apply:monitoring:
@@ -42,8 +40,6 @@ terraform:apply:monitoring:
   needs:
     - terraform:plan:monitoring
   allow_failure: false
-  tags:
-    - docker
 
 # Deploy Prometheus Operator
 deploy:prometheus:
@@ -71,8 +67,6 @@ deploy:prometheus:
     - kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/main/bundle.yaml || echo "Prometheus operator deployment skipped"
   needs:
     - terraform:apply:monitoring
-  tags:
-    - docker
 
 # Deploy Grafana
 deploy:grafana:
@@ -102,8 +96,6 @@ deploy:grafana:
     - helm upgrade --install grafana grafana/grafana --namespace monitoring || echo "Grafana deployment skipped"
   needs:
     - terraform:apply:monitoring
-  tags:
-    - docker
 
 # Deploy Exporters
 deploy:exporters:
@@ -131,8 +123,6 @@ deploy:exporters:
     - kubectl apply -f https://raw.githubusercontent.com/prometheus/node_exporter/main/documentation/examples/kubernetes-daemonset.yaml || echo "Node Exporter deployment skipped"
   needs:
     - terraform:apply:monitoring
-  tags:
-    - docker
 
 # Verify Monitoring Stack
 verify:monitoring:
@@ -155,8 +145,6 @@ verify:monitoring:
     - deploy:grafana
     - deploy:exporters
   allow_failure: true
-  tags:
-    - docker
 
 # Notify Success
 notify:success:
@@ -167,8 +155,6 @@ notify:success:
     - wget -q -O- --post-data="Monitoring stack deployed" "${SLACK_WEBHOOK_URL}" || true
   needs:
     - verify:monitoring
-  tags:
-    - docker
 
 # Notify Failure
 notify:failure:
@@ -178,5 +164,3 @@ notify:failure:
     - echo "Monitoring stack deployment failed"
     - wget -q -O- --post-data="Monitoring stack failed" "${SLACK_WEBHOOK_URL}" || true
   when: on_failure
-  tags:
-    - docker
