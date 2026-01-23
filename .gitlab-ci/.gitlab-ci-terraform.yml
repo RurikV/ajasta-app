@@ -112,22 +112,22 @@ terraform:plan:staging:
         export TF_PASSWORD="${CI_JOB_TOKEN}"
         echo "WARNING  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"
       fi
-    - echo "CHECKING Current working directory: $(pwd)"
-    - echo "CHECKING TF_ROOT: ${TF_ROOT}"
+    - echo "CHECKING Current working directory - $(pwd)"
+    - echo "CHECKING TF_ROOT - ${TF_ROOT}"
     - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5" -backend-config="retry_wait_max=30"; if [ $? -ne 0 ]; then echo "ERROR Terraform init failed"; exit 1; fi
     - echo "OK Terraform init successful"
     - if [ -f "staging.tfvars" ]; then echo "Loading staging variables from staging.tfvars"; cp staging.tfvars terraform.tfvars; else echo "Warning: staging.tfvars not found, using CI variables only"; fi
     - terraform plan -out=plan.tfplan -input=false -lock=false; PLAN_EXIT_CODE=$?
     - if [ ${PLAN_EXIT_CODE} -ne 0 ]; then echo "ERROR Terraform plan failed with exit code ${PLAN_EXIT_CODE}"; exit 1; fi
     - echo "OK Terraform plan command succeeded"
-    - if [ -f plan.tfplan ]; then echo "OK Plan file exists: $(ls -lh plan.tfplan)"; echo "PATH Full path: $(pwd)/plan.tfplan"; else echo "ERROR Plan file not created - checking current directory..."; echo "Current directory: $(pwd)"; echo "Directory contents:"; ls -la; exit 1; fi
+    - if [ -f plan.tfplan ]; then echo "OK Plan file exists - $(ls -lh plan.tfplan)"; echo "PATH Full path - $(pwd)/plan.tfplan"; else echo "ERROR Plan file not created - checking current directory..."; echo "Current directory: $(pwd)"; echo "Directory contents:"; ls -la; exit 1; fi
     - terraform show -no-color plan.tfplan > plan.txt; if [ $? -ne 0 ]; then echo "ERROR Terraform show (plan.txt generation) failed"; exit 1; fi
-    - echo "OK Plan summary generated: $(ls -lh plan.txt)"
-    - echo "PATH Full path: $(pwd)/plan.txt"
+    - echo "OK Plan summary generated - $(ls -lh plan.txt)"
+    - echo "PATH Full path - $(pwd)/plan.txt"
     - echo "CHECKING Final verification before artifact upload"
-    - echo "Current directory: $(pwd)"
-    - echo "CI_PROJECT_DIR: ${CI_PROJECT_DIR}"
-    - echo "TF_ROOT: ${TF_ROOT}"
+    - echo "Current directory - $(pwd)"
+    - echo "CI_PROJECT_DIR - ${CI_PROJECT_DIR}"
+    - echo "TF_ROOT - ${TF_ROOT}"
     - echo "Files in current directory:"
     - ls -lh plan.tfplan plan.txt 2>&1 || echo "No plan files in current directory"
     - echo "Files from project root (terraform/):"
@@ -157,23 +157,23 @@ terraform:plan:production:
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
     - if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then export TF_HTTP_USERNAME="${GITLAB_USERNAME}"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "OK Using Personal Access Token (${GITLAB_USERNAME}) for state backend"; else export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"; export TF_PASSWORD="${CI_JOB_TOKEN}"; echo "WARNING  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"; fi
-    - echo "CHECKING Current working directory: $(pwd)"
-    - echo "CHECKING TF_ROOT: ${TF_ROOT}"
+    - echo "CHECKING Current working directory - $(pwd)"
+    - echo "CHECKING TF_ROOT - ${TF_ROOT}"
     - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5" -backend-config="retry_wait_max=30"; if [ $? -ne 0 ]; then echo "ERROR Terraform init failed"; exit 1; fi
     - echo "OK Terraform init successful"
     - if [ -f "production.tfvars" ]; then echo "Loading production variables from production.tfvars"; cp production.tfvars terraform.tfvars; else echo "Warning: production.tfvars not found, using CI variables only"; fi
     - terraform plan -out=plan.tfplan -input=false -lock=false; PLAN_EXIT_CODE=$?
     - if [ ${PLAN_EXIT_CODE} -ne 0 ]; then echo "ERROR Terraform plan failed with exit code ${PLAN_EXIT_CODE}"; exit 1; fi
     - echo "OK Terraform plan command succeeded"
-    - if [ -f plan.tfplan ]; then echo "OK Plan file exists: $(ls -lh plan.tfplan)"; echo "PATH Full path: $(pwd)/plan.tfplan"; else echo "ERROR Plan file not created - checking current directory..."; echo "Current directory: $(pwd)"; echo "Directory contents:"; ls -la; exit 1; fi
+    - if [ -f plan.tfplan ]; then echo "OK Plan file exists - $(ls -lh plan.tfplan)"; echo "PATH Full path - $(pwd)/plan.tfplan"; else echo "ERROR Plan file not created - checking current directory..."; echo "Current directory: $(pwd)"; echo "Directory contents:"; ls -la; exit 1; fi
     - terraform show -no-color plan.tfplan > plan.txt; if [ $? -ne 0 ]; then echo "ERROR Terraform show (plan.txt generation) failed"; exit 1; fi
-    - echo "OK Plan summary generated: $(ls -lh plan.txt)"
-    - echo "PATH Full path: $(pwd)/plan.txt"
+    - echo "OK Plan summary generated - $(ls -lh plan.txt)"
+    - echo "PATH Full path - $(pwd)/plan.txt"
     - cat plan.txt
     - echo "CHECKING Final verification before artifact upload"
-    - echo "Current directory: $(pwd)"
-    - echo "CI_PROJECT_DIR: ${CI_PROJECT_DIR}"
-    - echo "TF_ROOT: ${TF_ROOT}"
+    - echo "Current directory - $(pwd)"
+    - echo "CI_PROJECT_DIR - ${CI_PROJECT_DIR}"
+    - echo "TF_ROOT - ${TF_ROOT}"
     - echo "Files in current directory:"
     - ls -lh plan.tfplan plan.txt 2>&1 || echo "No plan files in current directory"
     - echo "Files from project root (terraform/):"
