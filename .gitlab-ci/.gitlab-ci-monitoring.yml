@@ -8,17 +8,13 @@ stages:
   - verify
   - notify
 
-variables:
-  TF_ROOT: "${CI_PROJECT_DIR}/terraform/monitoring"
-  TF_STATE_NAME: "monitoring"
-  ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
-  ANSIBLE_INVENTORY: "${ANSIBLE_DIR}/k8s/inventory.ini"
-  KUBECONFIG: "${ANSIBLE_DIR}/k8s/kubeconfig"
-
 # Terraform Plan for Monitoring Infrastructure
 terraform:plan:monitoring:
   stage: terraform-plan
   image: hashicorp/terraform:1.6
+  variables:
+    TF_ROOT: "${CI_PROJECT_DIR}/terraform/monitoring"
+    TF_STATE_NAME: "monitoring"
   script:
     - cd ${TF_ROOT}
     - terraform init
@@ -58,6 +54,9 @@ terraform:plan:monitoring:
 terraform:apply:monitoring:
   stage: terraform-apply
   image: hashicorp/terraform:1.6
+  variables:
+    TF_ROOT: "${CI_PROJECT_DIR}/terraform/monitoring"
+    TF_STATE_NAME: "monitoring"
   script:
     - cd ${TF_ROOT}
     - terraform init
@@ -86,6 +85,10 @@ terraform:apply:monitoring:
 deploy:prometheus:
   stage: deploy-monitoring
   image: python:3.11
+  variables:
+    ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
+    ANSIBLE_INVENTORY: "${ANSIBLE_DIR}/k8s/inventory.ini"
+    KUBECONFIG: "${ANSIBLE_DIR}/k8s/kubeconfig"
   before_script:
     # Install Ansible and kubernetes.core collection
     - apt-get update -qq
@@ -145,6 +148,10 @@ deploy:prometheus:
 deploy:grafana:
   stage: deploy-monitoring
   image: python:3.11
+  variables:
+    ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
+    ANSIBLE_INVENTORY: "${ANSIBLE_DIR}/k8s/inventory.ini"
+    KUBECONFIG: "${ANSIBLE_DIR}/k8s/kubeconfig"
   before_script:
     # Install Ansible and kubernetes.core collection
     - apt-get update -qq
@@ -192,6 +199,10 @@ deploy:grafana:
 deploy:exporters:
   stage: deploy-monitoring
   image: python:3.11
+  variables:
+    ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
+    ANSIBLE_INVENTORY: "${ANSIBLE_DIR}/k8s/inventory.ini"
+    KUBECONFIG: "${ANSIBLE_DIR}/k8s/kubeconfig"
   before_script:
     # Install Ansible and kubernetes.core collection
     - apt-get update -qq
