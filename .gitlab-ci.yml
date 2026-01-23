@@ -44,12 +44,12 @@ include:
 stages:
   - validate
   - plan
+  - monitoring-plan
+  - monitoring-apply
+  - monitoring-deploy
   - build
   - test
   - package
   - deploy
-  - terraform-plan
-  - terraform-apply
-  - deploy-monitoring
   - verify
   - notify
