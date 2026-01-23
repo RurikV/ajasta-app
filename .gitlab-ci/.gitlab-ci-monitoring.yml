@@ -34,10 +34,10 @@ terraform:plan:monitoring:
       -var="cluster_name=ajasta-monitoring"
     - |
       if [ -f tfplan ]; then
-        echo "✅ Monitoring plan created successfully: $(ls -lh tfplan)"
-        echo "📍 Full path: $(pwd)/tfplan"
+        echo "OK Monitoring plan created successfully: $(ls -lh tfplan)"
+        echo "PATH Full path: $(pwd)/tfplan"
       else
-        echo "❌ Monitoring plan file not created"
+        echo "ERROR Monitoring plan file not created"
         exit 1
       fi
   artifacts:
@@ -353,7 +353,7 @@ verify:monitoring:
     - sleep 10
     - curl -s http://localhost:9090/api/v1/targets | python3 -m json.tool | head -50
     - pkill -f "kubectl port-forward"
-    - echo "✅ Monitoring stack verification complete!"
+    - echo "OK Monitoring stack verification complete!"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
       when: on_success  # Run automatically on main/env-deploy
@@ -373,7 +373,7 @@ notify:success:
   script:
     - |
       curl -X POST -H 'Content-type: application/json' \
-        --data '{"text":"✅ Monitoring stack deployed successfully!\n\nPrometheus: https://prometheus.ajasta.top\nGrafana: https://grafana.ajasta.top\nAlertmanager: https://alertmanager.ajasta.top\n\nPipeline: '"${CI_PIPELINE_URL}"'"}' \
+        --data '{"text":"OK Monitoring stack deployed successfully!\n\nPrometheus: https://prometheus.ajasta.top\nGrafana: https://grafana.ajasta.top\nAlertmanager: https://alertmanager.ajasta.top\n\nPipeline: '"${CI_PIPELINE_URL}"'"}' \
         "${SLACK_WEBHOOK_URL}"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
@@ -392,7 +392,7 @@ notify:failure:
   script:
     - |
       curl -X POST -H 'Content-type: application/json' \
-        --data '{"text":"❌ Monitoring stack deployment failed!\n\nPipeline: '"${CI_PIPELINE_URL}"'\nStage: '"${CI_JOB_STAGE}"'"}' \
+        --data '{"text":"ERROR Monitoring stack deployment failed!\n\nPipeline: '"${CI_PIPELINE_URL}"'\nStage: '"${CI_JOB_STAGE}"'"}' \
         "${SLACK_WEBHOOK_URL}"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'

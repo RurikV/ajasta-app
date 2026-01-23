@@ -10,24 +10,21 @@
 
     # Setup Terraform CLI config for Yandex Cloud mirror
     - export TF_CLI_CONFIG_FILE="${CI_PROJECT_DIR}/.terraformrc"
-    - |
-      cat > ${CI_PROJECT_DIR}/.terraformrc << 'EOF'
-      provider_installation {
-        network_mirror {
-          url = "https://terraform-mirror.yandexcloud.net/"
-          include = ["registry.terraform.io/*/*"]
-        }
-        direct {
-          exclude = ["registry.terraform.io/*/*"]
-        }
-      }
-      EOF
+    - echo 'provider_installation {' > ${CI_PROJECT_DIR}/.terraformrc
+    - echo '  network_mirror {' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '    url = "https://terraform-mirror.yandexcloud.net/"' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '    include = ["registry.terraform.io/*/*"]' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '  }' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '  direct {' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '    exclude = ["registry.terraform.io/*/*"]' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '  }' >> ${CI_PROJECT_DIR}/.terraformrc
+    - echo '}' >> ${CI_PROJECT_DIR}/.terraformrc
 
     # Navigate to terraform directory
     - cd ${TF_ROOT}
 
     # Clean up ALL local state and cache to ensure fresh start
-    - echo "🧹 Cleaning up local Terraform state and cache..."
+    - echo "CLEANING Cleaning up local Terraform state and cache..."
     - rm -rf .terraform || true
     - rm -f .terraform.lock.hcl || true
     - rm -f terraform.tfstate* || true
@@ -36,7 +33,7 @@
     - rm -f .terraform/environment || true
     - find . -name "*.tfstate*" -type f -delete 2>/dev/null || true
     - find . -name ".terraform" -type d -exec rm -rf {} + 2>/dev/null || true
-    - echo "✅ Cleanup complete"
+    - echo "OK Cleanup complete"
 
     # Show versions
     - terraform --version
@@ -107,85 +104,34 @@ terraform:plan:staging:
         export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
         export TF_HTTP_PASSWORD="${GITLAB_PAT}"
         export TF_PASSWORD="${GITLAB_PAT}"
-        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+        echo "OK Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
       else
         # Fallback to CI_JOB_TOKEN
         export TF_HTTP_USERNAME="gitlab-ci-token"
         export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
         export TF_PASSWORD="${CI_JOB_TOKEN}"
-        echo "⚠️  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"
+        echo "WARNING  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"
       fi
-    - |
-      echo "🔍 Current working directory: $(pwd)"
-      echo "🔍 TF_ROOT: ${TF_ROOT}"
-      terraform init -backend=true \
-        -backend-config="address=${TF_HTTP_ADDRESS}" \
-        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-        -backend-config="username=${TF_HTTP_USERNAME}" \
-        -backend-config="password=${TF_HTTP_PASSWORD}" \
-        -backend-config="lock_method=POST" \
-        -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5" \
-        -backend-config="retry_wait_max=30"
-      if [ $? -ne 0 ]; then
-        echo "❌ Terraform init failed"
-        exit 1
-      fi
-      echo "✅ Terraform init successful"
-
-    # Load staging variables
-    - |
-      if [ -f "staging.tfvars" ]; then
-        echo "Loading staging variables from staging.tfvars"
-        cp staging.tfvars terraform.tfvars
-      else
-        echo "Warning: staging.tfvars not found, using CI variables only"
-      fi
-
-    # Create plan with locking disabled to prevent lock acquisition failures
-    - |
-      terraform plan -out=plan.tfplan -input=false -lock=false
-      PLAN_EXIT_CODE=$?
-      if [ ${PLAN_EXIT_CODE} -ne 0 ]; then
-        echo "❌ Terraform plan failed with exit code ${PLAN_EXIT_CODE}"
-        exit 1
-      fi
-      echo "✅ Terraform plan command succeeded"
-
-    - |
-      if [ -f plan.tfplan ]; then
-        echo "✅ Plan file exists: $(ls -lh plan.tfplan)"
-        echo "📍 Full path: $(pwd)/plan.tfplan"
-      else
-        echo "❌ Plan file not created - checking current directory..."
-        echo "Current directory: $(pwd)"
-        echo "Directory contents:"
-        ls -la
-        exit 1
-      fi
-
-    # Show plan summary
-    - |
-      terraform show -no-color plan.tfplan > plan.txt
-      if [ $? -ne 0 ]; then
-        echo "❌ Terraform show (plan.txt generation) failed"
-        exit 1
-      fi
-      echo "✅ Plan summary generated: $(ls -lh plan.txt)"
-      echo "📍 Full path: $(pwd)/plan.txt"
-
-    - |
-      echo "🔍 Final verification before artifact upload"
-      echo "Current directory: $(pwd)"
-      echo "CI_PROJECT_DIR: ${CI_PROJECT_DIR}"
-      echo "TF_ROOT: ${TF_ROOT}"
-      echo ""
-      echo "Files in current directory:"
-      ls -lh plan.tfplan plan.txt 2>&1 || echo "No plan files in current directory"
-      echo ""
-      echo "Files from project root (terraform/):"
-      ls -lh "${CI_PROJECT_DIR}/terraform/plan.tfplan" "${CI_PROJECT_DIR}/terraform/plan.txt" 2>&1 || echo "No plan files in terraform/ from project root"
+    - echo "CHECKING Current working directory: $(pwd)"
+    - echo "CHECKING TF_ROOT: ${TF_ROOT}"
+    - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5" -backend-config="retry_wait_max=30"; if [ $? -ne 0 ]; then echo "ERROR Terraform init failed"; exit 1; fi
+    - echo "OK Terraform init successful"
+    - if [ -f "staging.tfvars" ]; then echo "Loading staging variables from staging.tfvars"; cp staging.tfvars terraform.tfvars; else echo "Warning: staging.tfvars not found, using CI variables only"; fi
+    - terraform plan -out=plan.tfplan -input=false -lock=false; PLAN_EXIT_CODE=$?
+    - if [ ${PLAN_EXIT_CODE} -ne 0 ]; then echo "ERROR Terraform plan failed with exit code ${PLAN_EXIT_CODE}"; exit 1; fi
+    - echo "OK Terraform plan command succeeded"
+    - if [ -f plan.tfplan ]; then echo "OK Plan file exists: $(ls -lh plan.tfplan)"; echo "PATH Full path: $(pwd)/plan.tfplan"; else echo "ERROR Plan file not created - checking current directory..."; echo "Current directory: $(pwd)"; echo "Directory contents:"; ls -la; exit 1; fi
+    - terraform show -no-color plan.tfplan > plan.txt; if [ $? -ne 0 ]; then echo "ERROR Terraform show (plan.txt generation) failed"; exit 1; fi
+    - echo "OK Plan summary generated: $(ls -lh plan.txt)"
+    - echo "PATH Full path: $(pwd)/plan.txt"
+    - echo "CHECKING Final verification before artifact upload"
+    - echo "Current directory: $(pwd)"
+    - echo "CI_PROJECT_DIR: ${CI_PROJECT_DIR}"
+    - echo "TF_ROOT: ${TF_ROOT}"
+    - echo "Files in current directory:"
+    - ls -lh plan.tfplan plan.txt 2>&1 || echo "No plan files in current directory"
+    - echo "Files from project root (terraform/):"
+    - ls -lh "${CI_PROJECT_DIR}/terraform/plan.tfplan" "${CI_PROJECT_DIR}/terraform/plan.txt" 2>&1 || echo "No plan files in terraform/ from project root"
 
   artifacts:
     paths:
@@ -210,94 +156,28 @@ terraform:plan:production:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
-    - |
-      # Use GITLAB_PAT for consistent authentication across plan and apply jobs
-      if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then
-        export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
-        export TF_HTTP_PASSWORD="${GITLAB_PAT}"
-        export TF_PASSWORD="${GITLAB_PAT}"
-        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
-      else
-        # Fallback to CI_JOB_TOKEN
-        export TF_HTTP_USERNAME="gitlab-ci-token"
-        export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
-        export TF_PASSWORD="${CI_JOB_TOKEN}"
-        echo "⚠️  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"
-      fi
-    - |
-      echo "🔍 Current working directory: $(pwd)"
-      echo "🔍 TF_ROOT: ${TF_ROOT}"
-      terraform init -backend=true \
-        -backend-config="address=${TF_HTTP_ADDRESS}" \
-        -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" \
-        -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" \
-        -backend-config="username=${TF_HTTP_USERNAME}" \
-        -backend-config="password=${TF_HTTP_PASSWORD}" \
-        -backend-config="lock_method=POST" \
-        -backend-config="unlock_method=POST" \
-        -backend-config="retry_wait_min=5" \
-        -backend-config="retry_wait_max=30"
-      if [ $? -ne 0 ]; then
-        echo "❌ Terraform init failed"
-        exit 1
-      fi
-      echo "✅ Terraform init successful"
-
-    # Load production variables
-    - |
-      if [ -f "production.tfvars" ]; then
-        echo "Loading production variables from production.tfvars"
-        cp production.tfvars terraform.tfvars
-      else
-        echo "Warning: production.tfvars not found, using CI variables only"
-      fi
-
-    # Create plan with locking disabled to prevent lock acquisition failures
-    - |
-      terraform plan -out=plan.tfplan -input=false -lock=false
-      PLAN_EXIT_CODE=$?
-      if [ ${PLAN_EXIT_CODE} -ne 0 ]; then
-        echo "❌ Terraform plan failed with exit code ${PLAN_EXIT_CODE}"
-        exit 1
-      fi
-      echo "✅ Terraform plan command succeeded"
-
-    - |
-      if [ -f plan.tfplan ]; then
-        echo "✅ Plan file exists: $(ls -lh plan.tfplan)"
-        echo "📍 Full path: $(pwd)/plan.tfplan"
-      else
-        echo "❌ Plan file not created - checking current directory..."
-        echo "Current directory: $(pwd)"
-        echo "Directory contents:"
-        ls -la
-        exit 1
-      fi
-
-    # Show plan summary
-    - |
-      terraform show -no-color plan.tfplan > plan.txt
-      if [ $? -ne 0 ]; then
-        echo "❌ Terraform show (plan.txt generation) failed"
-        exit 1
-      fi
-      echo "✅ Plan summary generated: $(ls -lh plan.txt)"
-      echo "📍 Full path: $(pwd)/plan.txt"
-
-    # Display plan in job output
+    - if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then export TF_HTTP_USERNAME="${GITLAB_USERNAME}"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "OK Using Personal Access Token (${GITLAB_USERNAME}) for state backend"; else export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"; export TF_PASSWORD="${CI_JOB_TOKEN}"; echo "WARNING  Using CI_JOB_TOKEN (apply job will fail - use GITLAB_PAT)"; fi
+    - echo "CHECKING Current working directory: $(pwd)"
+    - echo "CHECKING TF_ROOT: ${TF_ROOT}"
+    - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5" -backend-config="retry_wait_max=30"; if [ $? -ne 0 ]; then echo "ERROR Terraform init failed"; exit 1; fi
+    - echo "OK Terraform init successful"
+    - if [ -f "production.tfvars" ]; then echo "Loading production variables from production.tfvars"; cp production.tfvars terraform.tfvars; else echo "Warning: production.tfvars not found, using CI variables only"; fi
+    - terraform plan -out=plan.tfplan -input=false -lock=false; PLAN_EXIT_CODE=$?
+    - if [ ${PLAN_EXIT_CODE} -ne 0 ]; then echo "ERROR Terraform plan failed with exit code ${PLAN_EXIT_CODE}"; exit 1; fi
+    - echo "OK Terraform plan command succeeded"
+    - if [ -f plan.tfplan ]; then echo "OK Plan file exists: $(ls -lh plan.tfplan)"; echo "PATH Full path: $(pwd)/plan.tfplan"; else echo "ERROR Plan file not created - checking current directory..."; echo "Current directory: $(pwd)"; echo "Directory contents:"; ls -la; exit 1; fi
+    - terraform show -no-color plan.tfplan > plan.txt; if [ $? -ne 0 ]; then echo "ERROR Terraform show (plan.txt generation) failed"; exit 1; fi
+    - echo "OK Plan summary generated: $(ls -lh plan.txt)"
+    - echo "PATH Full path: $(pwd)/plan.txt"
     - cat plan.txt
-
-    - |
-      echo "🔍 Final verification before artifact upload"
-      echo "Current directory: $(pwd)"
-      echo "CI_PROJECT_DIR: ${CI_PROJECT_DIR}"
-      echo "TF_ROOT: ${TF_ROOT}"
-      echo ""
-      echo "Files in current directory:"
-      ls -lh plan.tfplan plan.txt 2>&1 || echo "No plan files in current directory"
-      echo ""
-      echo "Files from project root (terraform/):"
-      ls -lh "${CI_PROJECT_DIR}/terraform/plan.tfplan" "${CI_PROJECT_DIR}/terraform/plan.txt" 2>&1 || echo "No plan files in terraform/ from project root"
+    - echo "CHECKING Final verification before artifact upload"
+    - echo "Current directory: $(pwd)"
+    - echo "CI_PROJECT_DIR: ${CI_PROJECT_DIR}"
+    - echo "TF_ROOT: ${TF_ROOT}"
+    - echo "Files in current directory:"
+    - ls -lh plan.tfplan plan.txt 2>&1 || echo "No plan files in current directory"
+    - echo "Files from project root (terraform/):"
+    - ls -lh "${CI_PROJECT_DIR}/terraform/plan.tfplan" "${CI_PROJECT_DIR}/terraform/plan.txt" 2>&1 || echo "No plan files in terraform/ from project root"
   artifacts:
     paths:
       - terraform/plan.tfplan
@@ -320,19 +200,19 @@ terraform:apply:staging:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/staging/lock"
-    - if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then export TF_HTTP_USERNAME="${GITLAB_USERNAME}"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"; elif [ -n "${GITLAB_PAT}" ]; then export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"; else export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"; export TF_PASSWORD="${CI_JOB_TOKEN}"; echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"; fi
+    - if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then export TF_HTTP_USERNAME="${GITLAB_USERNAME}"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "OK Using Personal Access Token (${GITLAB_USERNAME}) for state backend"; elif [ -n "${GITLAB_PAT}" ]; then export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "WARNING  Using PAT with gitlab-ci-token username (may not work)"; else export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"; export TF_PASSWORD="${CI_JOB_TOKEN}"; echo "WARNING  Using CI_JOB_TOKEN (will fail across jobs)"; fi
     - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5" -backend-config="retry_wait_max=30"
     - if [ -f "staging.tfvars" ]; then cp staging.tfvars terraform.tfvars; fi
     - terraform apply -input=false -auto-approve -lock=false plan.tfplan; APPLY_EXIT_CODE=$?
-    - if [ -f "errored.tfstate" ]; then echo "⚠️  State upload failed during apply, attempting to push errored state..."; if terraform state push -lock=false errored.tfstate; then echo "✅ State pushed successfully"; rm -f errored.tfstate; APPLY_EXIT_CODE=0; else echo "❌ Failed to push state - resources created but state not saved"; APPLY_EXIT_CODE=1; fi; fi
-    - if [ $APPLY_EXIT_CODE -ne 0 ]; then echo "❌ Apply failed - resources may not have been created"; exit 1; fi
-    - echo "✅ Apply completed successfully"
+    - if [ -f "errored.tfstate" ]; then echo "WARNING  State upload failed during apply, attempting to push errored state..."; if terraform state push -lock=false errored.tfstate; then echo "OK State pushed successfully"; rm -f errored.tfstate; APPLY_EXIT_CODE=0; else echo "ERROR Failed to push state - resources created but state not saved"; APPLY_EXIT_CODE=1; fi; fi
+    - if [ $APPLY_EXIT_CODE -ne 0 ]; then echo "ERROR Apply failed - resources may not have been created"; exit 1; fi
+    - echo "OK Apply completed successfully"
     - terraform output -json > outputs.json || echo "Warning: terraform output failed"
-    - if [ -s outputs.json ]; then echo "✅ Outputs generated successfully"; else echo "⚠️  Warning: outputs.json is empty"; fi
+    - if [ -s outputs.json ]; then echo "OK Outputs generated successfully"; else echo "WARNING  Warning: outputs.json is empty"; fi
     - echo "Staging deployment completed successfully!"
     - echo "Infrastructure outputs:"
     - terraform output -raw || echo "Warning: Some outputs failed to display"
-    - echo "✅ Job completed successfully"
+    - echo "OK Job completed successfully"
   artifacts:
     paths:
       - terraform/outputs.json
@@ -365,15 +245,15 @@ terraform:apply:production:
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production"
     - export TF_HTTP_LOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
     - export TF_HTTP_UNLOCK_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/production/lock"
-    - if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then export TF_HTTP_USERNAME="${GITLAB_USERNAME}"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"; elif [ -n "${GITLAB_PAT}" ]; then export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"; else export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"; export TF_PASSWORD="${CI_JOB_TOKEN}"; echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"; fi
+    - if [ -n "${GITLAB_PAT}" ] && [ -n "${GITLAB_USERNAME}" ]; then export TF_HTTP_USERNAME="${GITLAB_USERNAME}"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "OK Using Personal Access Token (${GITLAB_USERNAME}) for state backend"; elif [ -n "${GITLAB_PAT}" ]; then export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${GITLAB_PAT}"; export TF_PASSWORD="${GITLAB_PAT}"; echo "WARNING  Using PAT with gitlab-ci-token username (may not work)"; else export TF_HTTP_USERNAME="gitlab-ci-token"; export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"; export TF_PASSWORD="${CI_JOB_TOKEN}"; echo "WARNING  Using CI_JOB_TOKEN (will fail across jobs)"; fi
     - terraform init -backend=true -backend-config="address=${TF_HTTP_ADDRESS}" -backend-config="lock_address=${TF_HTTP_LOCK_ADDRESS}" -backend-config="unlock_address=${TF_HTTP_UNLOCK_ADDRESS}" -backend-config="username=${TF_HTTP_USERNAME}" -backend-config="password=${TF_HTTP_PASSWORD}" -backend-config="lock_method=POST" -backend-config="unlock_method=POST" -backend-config="retry_wait_min=5" -backend-config="retry_wait_max=30"
     - if [ -f "production.tfvars" ]; then cp production.tfvars terraform.tfvars; fi
     - terraform apply -input=false -auto-approve -lock=false plan.tfplan; APPLY_EXIT_CODE=$?
-    - if [ -f "errored.tfstate" ]; then echo "⚠️  State upload failed during apply, attempting to push errored state..."; if terraform state push -lock=false errored.tfstate; then echo "✅ State pushed successfully"; rm -f errored.tfstate; APPLY_EXIT_CODE=0; else echo "❌ Failed to push state - resources created but state not saved"; APPLY_EXIT_CODE=1; fi; fi
-    - if [ $APPLY_EXIT_CODE -ne 0 ]; then echo "❌ Apply failed - resources may not have been created"; exit 1; fi
-    - echo "✅ Apply completed successfully"
+    - if [ -f "errored.tfstate" ]; then echo "WARNING  State upload failed during apply, attempting to push errored state..."; if terraform state push -lock=false errored.tfstate; then echo "OK State pushed successfully"; rm -f errored.tfstate; APPLY_EXIT_CODE=0; else echo "ERROR Failed to push state - resources created but state not saved"; APPLY_EXIT_CODE=1; fi; fi
+    - if [ $APPLY_EXIT_CODE -ne 0 ]; then echo "ERROR Apply failed - resources may not have been created"; exit 1; fi
+    - echo "OK Apply completed successfully"
     - terraform output -json > outputs.json || echo "Warning: terraform output failed"
-    - if [ -s outputs.json ]; then echo "✅ Outputs generated successfully"; else echo "⚠️  Warning: outputs.json is empty"; fi
+    - if [ -s outputs.json ]; then echo "OK Outputs generated successfully"; else echo "WARNING  Warning: outputs.json is empty"; fi
     - echo "Production deployment completed successfully!"
     - echo "Infrastructure outputs:"
     - terraform output -raw || echo "Warning: Some outputs failed to display"
@@ -381,7 +261,7 @@ terraform:apply:production:
     - echo "TERRAFORM_WORKER_IPS=$(terraform output -json worker_public_ips 2>/dev/null || echo '{}')" >> terraform-outputs.env
     - echo "FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null || echo "")" >> terraform-outputs.env
     - echo "BACKEND_API_URL=$(terraform output -raw backend_api_url 2>/dev/null || echo "")" >> terraform-outputs.env
-    - echo "✅ Job completed successfully"
+    - echo "OK Job completed successfully"
   artifacts:
     paths:
       - terraform/outputs.json
@@ -437,7 +317,7 @@ k8s:update-kubeconfig:
     - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
 
     # Wait for cluster to be ready
-    - echo "⏳ Waiting 60 seconds for Kubernetes cluster to initialize..."
+    - echo "WAITING Waiting 60 seconds for Kubernetes cluster to initialize..."
     - sleep 60
 
     # Run the kubeconfig update script
@@ -452,7 +332,7 @@ k8s:update-kubeconfig:
     - export KUBECONFIG="$PWD/../.kube/config"
     - kubectl cluster-info
     - kubectl get nodes
-    - echo "✅ Kubeconfig updated and verified successfully"
+    - echo "OK Kubeconfig updated and verified successfully"
   artifacts:
     paths:
       - .kube/config
@@ -489,19 +369,19 @@ terraform:destroy:staging:
         export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
         export TF_HTTP_PASSWORD="${GITLAB_PAT}"
         export TF_PASSWORD="${GITLAB_PAT}"
-        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+        echo "OK Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
       elif [ -n "${GITLAB_PAT}" ]; then
         # PAT provided but no username - try with gitlab-ci-token (may fail)
         export TF_HTTP_USERNAME="gitlab-ci-token"
         export TF_HTTP_PASSWORD="${GITLAB_PAT}"
         export TF_PASSWORD="${GITLAB_PAT}"
-        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
+        echo "WARNING  Using PAT with gitlab-ci-token username (may not work)"
       else
         # Fallback to CI_JOB_TOKEN (won't work across jobs)
         export TF_HTTP_USERNAME="gitlab-ci-token"
         export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
         export TF_PASSWORD="${CI_JOB_TOKEN}"
-        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
+        echo "WARNING  Using CI_JOB_TOKEN (will fail across jobs)"
       fi
     - |
       terraform init -backend=true \
@@ -525,9 +405,9 @@ terraform:destroy:staging:
     - terraform plan -destroy -out=destroy.tfplan -input=false -lock=false
     - |
       if [ -f destroy.tfplan ]; then
-        echo "✅ Destroy plan created successfully"
+        echo "OK Destroy plan created successfully"
       else
-        echo "❌ Destroy plan file not created"
+        echo "ERROR Destroy plan file not created"
         exit 1
       fi
 
@@ -542,24 +422,24 @@ terraform:destroy:staging:
 
       # Check if state upload failed and errored.tfstate exists
       if [ -f "errored.tfstate" ]; then
-        echo "⚠️  State upload failed during destroy, attempting to push errored state..."
+        echo "WARNING  State upload failed during destroy, attempting to push errored state..."
         if terraform state push -lock=false errored.tfstate; then
-          echo "✅ State pushed successfully"
+          echo "OK State pushed successfully"
           rm -f errored.tfstate
           unset DESTROY_APPLY_FAILED
         else
-          echo "❌ Failed to push state - resources destroyed but state not updated"
-          echo "⚠️  This is non-critical - resources are already destroyed"
+          echo "ERROR Failed to push state - resources destroyed but state not updated"
+          echo "WARNING  This is non-critical - resources are already destroyed"
           unset DESTROY_APPLY_FAILED
         fi
       fi
 
       # Only fail if destroy itself failed (not just state upload)
       if [ "${DESTROY_APPLY_FAILED:-false}" = "true" ]; then
-        echo "❌ Destroy apply failed - resources may not have been destroyed"
+        echo "ERROR Destroy apply failed - resources may not have been destroyed"
         exit 1
       fi
-      echo "✅ Destroy completed successfully"
+      echo "OK Destroy completed successfully"
 
     - echo "Staging infrastructure destroyed successfully"
   rules:
@@ -589,19 +469,19 @@ terraform:destroy:production:
         export TF_HTTP_USERNAME="${GITLAB_USERNAME}"
         export TF_HTTP_PASSWORD="${GITLAB_PAT}"
         export TF_PASSWORD="${GITLAB_PAT}"
-        echo "✅ Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
+        echo "OK Using Personal Access Token (${GITLAB_USERNAME}) for state backend"
       elif [ -n "${GITLAB_PAT}" ]; then
         # PAT provided but no username - try with gitlab-ci-token (may fail)
         export TF_HTTP_USERNAME="gitlab-ci-token"
         export TF_HTTP_PASSWORD="${GITLAB_PAT}"
         export TF_PASSWORD="${GITLAB_PAT}"
-        echo "⚠️  Using PAT with gitlab-ci-token username (may not work)"
+        echo "WARNING  Using PAT with gitlab-ci-token username (may not work)"
       else
         # Fallback to CI_JOB_TOKEN (won't work across jobs)
         export TF_HTTP_USERNAME="gitlab-ci-token"
         export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
         export TF_PASSWORD="${CI_JOB_TOKEN}"
-        echo "⚠️  Using CI_JOB_TOKEN (will fail across jobs)"
+        echo "WARNING  Using CI_JOB_TOKEN (will fail across jobs)"
       fi
     - |
       terraform init -backend=true \
@@ -625,9 +505,9 @@ terraform:destroy:production:
     - terraform plan -destroy -out=destroy.tfplan -input=false -lock=false
     - |
       if [ -f destroy.tfplan ]; then
-        echo "✅ Destroy plan created successfully"
+        echo "OK Destroy plan created successfully"
       else
-        echo "❌ Destroy plan file not created"
+        echo "ERROR Destroy plan file not created"
         exit 1
       fi
 
@@ -642,24 +522,24 @@ terraform:destroy:production:
 
       # Check if state upload failed and errored.tfstate exists
       if [ -f "errored.tfstate" ]; then
-        echo "⚠️  State upload failed during destroy, attempting to push errored state..."
+        echo "WARNING  State upload failed during destroy, attempting to push errored state..."
         if terraform state push -lock=false errored.tfstate; then
-          echo "✅ State pushed successfully"
+          echo "OK State pushed successfully"
           rm -f errored.tfstate
           unset DESTROY_APPLY_FAILED
         else
-          echo "❌ Failed to push state - resources destroyed but state not updated"
-          echo "⚠️  This is non-critical - resources are already destroyed"
+          echo "ERROR Failed to push state - resources destroyed but state not updated"
+          echo "WARNING  This is non-critical - resources are already destroyed"
           unset DESTROY_APPLY_FAILED
         fi
       fi
 
       # Only fail if destroy itself failed (not just state upload)
       if [ "${DESTROY_APPLY_FAILED:-false}" = "true" ]; then
-        echo "❌ Destroy apply failed - resources may not have been destroyed"
+        echo "ERROR Destroy apply failed - resources may not have been destroyed"
         exit 1
       fi
-      echo "✅ Destroy completed successfully"
+      echo "OK Destroy completed successfully"
 
     - echo "Production infrastructure destroyed successfully"
   rules:
