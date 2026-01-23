@@ -18,7 +18,7 @@ terraform:plan:monitoring:
   script:
     - cd ${TF_ROOT}
     - terraform init -backend-config="address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}" -backend-config="lock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock" -backend-config="unlock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock" -backend-config="username=${GITLAB_USERNAME}" -backend-config="password=${GITLAB_PAT}" -backend-config="lock_method=POST" -backend-config="unlock_method=DELETE" -backend-config="retry_wait_min=5"
-    - terraform plan -out=tfplan -var="yc_cloud_id=${YC_CLOUD_ID}" -var="yc_folder_id=${YC_FOLDER_ID}" -var="yc_token=${YC_TOKEN}" -var="cluster_name=ajasta-monitoring"
+    - terraform plan -out=tfplan -input=false -lock=false -var="yc_cloud_id=${YC_CLOUD_ID}" -var="yc_folder_id=${YC_FOLDER_ID}" -var="yc_token=${YC_TOKEN}" -var="cluster_name=ajasta-monitoring"
     - if [ -f tfplan ]; then echo "OK Monitoring plan created"; else echo "ERROR Plan not created"; exit 1; fi
   artifacts:
     paths:
