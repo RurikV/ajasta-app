@@ -29,7 +29,7 @@ terraform:plan:monitoring:
 
 # Terraform Apply - Provision Storage
 terraform:apply:monitoring:
-  stage: deploy
+  stage: monitoring-apply
   image: hashicorp/terraform:1.6
   variables:
     TF_ROOT: "${CI_PROJECT_DIR}/terraform/monitoring"
@@ -47,7 +47,7 @@ terraform:apply:monitoring:
 
 # Deploy Prometheus Operator
 deploy:prometheus:
-  stage: deploy
+  stage: monitoring-deploy
   image: python:3.11
   variables:
     ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
@@ -76,7 +76,7 @@ deploy:prometheus:
 
 # Deploy Grafana
 deploy:grafana:
-  stage: deploy
+  stage: monitoring-deploy
   image: python:3.11
   variables:
     ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
@@ -107,7 +107,7 @@ deploy:grafana:
 
 # Deploy Exporters
 deploy:exporters:
-  stage: deploy
+  stage: monitoring-deploy
   image: python:3.11
   variables:
     ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
