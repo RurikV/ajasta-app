@@ -25,7 +25,7 @@ SCRIPT_DIR=$(cd -- "${0:A:h}" && pwd)
 PROJECT_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
 # Configuration
-INVENTORY_FILE="$PROJECT_ROOT/ansible-k8s/inventory.ini"
+INVENTORY_FILE="$PROJECT_ROOT/ansible/k8s/inventory.ini"
 KUBECONFIG_CONTEXT=${KUBECONFIG_CONTEXT:-ajasta-cluster}
 # Try default key first (matching inventory.ini), fall back to K8s-specific key
 if [ -z "${SSH_KEY:-}" ]; then
@@ -60,8 +60,8 @@ fi
 
 # Extract master node information from inventory
 log "Reading master node information from inventory..."
-MASTER_IP=$(grep -A1 '^\[k8s_master\]' "$INVENTORY_FILE" | grep 'ansible_host=' | sed 's/.*ansible_host=\([0-9.]*\).*/\1/')
-MASTER_USER=$(grep -A1 '^\[k8s_master\]' "$INVENTORY_FILE" | grep 'ansible_user=' | sed 's/.*ansible_user=\([^ ]*\).*/\1/')
+MASTER_IP=$(grep -A1 '^\[cluster_master\]' "$INVENTORY_FILE" | grep 'ansible_host=' | sed 's/.*ansible_host=\([0-9.]*\).*/\1/')
+MASTER_USER=$(grep -A1 '^\[cluster_master\]' "$INVENTORY_FILE" | grep 'ansible_user=' | sed 's/.*ansible_user=\([^ ]*\).*/\1/')
 
 if [ -z "$MASTER_IP" ]; then
     error "Could not extract master IP from inventory file"
