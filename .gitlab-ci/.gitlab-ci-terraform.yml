@@ -383,7 +383,7 @@ terraform:apply:staging:
       echo "✅ Apply completed successfully"
 
     # Output results (always generate outputs even after state recovery)
-    - terraform output -json > outputs.json
+    - terraform output -json > outputs.json || echo "Warning: terraform output failed"
     - |
       if [ -s outputs.json ]; then
         echo "✅ Outputs generated successfully"
@@ -394,7 +394,8 @@ terraform:apply:staging:
       echo "Staging deployment completed successfully!"
       echo ""
       echo "Infrastructure outputs:"
-      terraform output -raw || true
+      terraform output -raw || echo "Warning: Some outputs failed to display"
+    - echo "✅ Job completed successfully"
   artifacts:
     paths:
       - terraform/outputs.json
@@ -490,7 +491,7 @@ terraform:apply:production:
       echo "✅ Apply completed successfully"
 
     # Output results (always generate outputs even after state recovery)
-    - terraform output -json > outputs.json
+    - terraform output -json > outputs.json || echo "Warning: terraform output failed"
     - |
       if [ -s outputs.json ]; then
         echo "✅ Outputs generated successfully"
@@ -501,7 +502,7 @@ terraform:apply:production:
       echo "Production deployment completed successfully!"
       echo ""
       echo "Infrastructure outputs:"
-      terraform output -raw || true
+      terraform output -raw || echo "Warning: Some outputs failed to display"
 
       # Create outputs file for GitLab environment
       cat > terraform-outputs.env << EOF
@@ -510,6 +511,7 @@ terraform:apply:production:
       FRONTEND_URL=$(terraform output -raw frontend_url 2>/dev/null || echo "")
       BACKEND_API_URL=$(terraform output -raw backend_api_url 2>/dev/null || echo "")
       EOF
+    - echo "✅ Job completed successfully"
   artifacts:
     paths:
       - terraform/outputs.json

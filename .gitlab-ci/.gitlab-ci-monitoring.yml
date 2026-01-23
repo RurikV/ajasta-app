@@ -47,6 +47,7 @@ terraform:plan:monitoring:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+      when: on_success  # Run automatically on main/env-deploy
   tags:
     - docker
 
@@ -75,9 +76,10 @@ terraform:apply:monitoring:
     - echo "Terraform apply completed"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+      when: on_success  # Run automatically on main/env-deploy
   needs:
     - terraform:plan:monitoring
-  allow_failure: true
+  allow_failure: false  # Don't allow failure - this is important
   tags:
     - docker
 
@@ -139,6 +141,7 @@ deploy:prometheus:
     - ansible-playbook deploy-monitoring.yml -i localhost, -v
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+      when: on_success  # Run automatically on main/env-deploy
   needs:
     - terraform:apply:monitoring
   tags:
@@ -190,6 +193,7 @@ deploy:grafana:
     - ansible-playbook deploy-grafana.yml -i localhost, -v
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+      when: on_success  # Run automatically on main/env-deploy
   needs:
     - deploy:prometheus
   tags:
@@ -305,6 +309,7 @@ deploy:exporters:
     - ansible-playbook deploy-exporters.yml -i localhost, -v
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+      when: on_success  # Run automatically on main/env-deploy
   needs:
     - deploy:prometheus
   tags:
@@ -351,6 +356,7 @@ verify:monitoring:
     - echo "✅ Monitoring stack verification complete!"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "env-deploy"'
+      when: on_success  # Run automatically on main/env-deploy
   needs:
     - deploy:grafana
     - deploy:exporters
