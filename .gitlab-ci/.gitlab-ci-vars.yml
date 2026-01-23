@@ -23,6 +23,11 @@ variables:
   # GitLab authentication for Terraform state backend
   GITLAB_PAT: "${GITLAB_PAT}"
   GITLAB_USERNAME: "${GITLAB_USERNAME}"
+  GITLAB_HTTP_ADDRESS: "${CI_API_V4_URL}"  # GitLab API URL for Terraform state backend
+
+  # Monitoring Stack Configuration
+  KUBECONFIG_CONTENT: "${KUBECONFIG_CONTENT}"  # Base64 encoded kubeconfig for Kubernetes access
+  SLACK_WEBHOOK_URL: "${SLACK_WEBHOOK_URL}"  # Slack webhook for notifications
 
   # Application Configuration
   # Convert CI_PROJECT_PATH to lowercase for Docker registry compatibility
