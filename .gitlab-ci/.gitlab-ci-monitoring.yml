@@ -10,7 +10,7 @@ stages:
 
 # Terraform Plan for Monitoring Infrastructure
 terraform:plan:monitoring:
-  stage: terraform-plan
+  stage: plan
   image: hashicorp/terraform:1.6
   variables:
     TF_ROOT: "${CI_PROJECT_DIR}/terraform/monitoring"
@@ -29,7 +29,7 @@ terraform:plan:monitoring:
 
 # Terraform Apply - Provision Storage
 terraform:apply:monitoring:
-  stage: terraform-apply
+  stage: deploy
   image: hashicorp/terraform:1.6
   variables:
     TF_ROOT: "${CI_PROJECT_DIR}/terraform/monitoring"
@@ -41,13 +41,13 @@ terraform:apply:monitoring:
     - echo "Terraform apply completed"
   needs:
     - terraform:plan:monitoring
-  allow_failure: false  # Don't allow failure - this is important
+  allow_failure: false
   tags:
     - docker
 
 # Deploy Prometheus Operator
 deploy:prometheus:
-  stage: deploy-monitoring
+  stage: deploy
   image: python:3.11
   variables:
     ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
@@ -76,7 +76,7 @@ deploy:prometheus:
 
 # Deploy Grafana
 deploy:grafana:
-  stage: deploy-monitoring
+  stage: deploy
   image: python:3.11
   variables:
     ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
@@ -101,13 +101,13 @@ deploy:grafana:
     - helm repo add grafana https://grafana.github.io/helm-charts || true
     - helm upgrade --install grafana grafana/grafana --namespace monitoring || echo "Grafana deployment skipped"
   needs:
-    - deploy:prometheus
+    - terraform:apply:monitoring
   tags:
     - docker
 
 # Deploy Exporters
 deploy:exporters:
-  stage: deploy-monitoring
+  stage: deploy
   image: python:3.11
   variables:
     ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
@@ -130,7 +130,7 @@ deploy:exporters:
     - echo "Deploying Node Exporter to Kubernetes cluster"
     - kubectl apply -f https://raw.githubusercontent.com/prometheus/node_exporter/main/documentation/examples/kubernetes-daemonset.yaml || echo "Node Exporter deployment skipped"
   needs:
-    - deploy:prometheus
+    - terraform:apply:monitoring
   tags:
     - docker
 
@@ -151,6 +151,7 @@ verify:monitoring:
     - kubectl get svc -n monitoring || true
     - echo "Monitoring verification complete"
   needs:
+    - deploy:prometheus
     - deploy:grafana
     - deploy:exporters
   allow_failure: true
