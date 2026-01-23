@@ -35,7 +35,7 @@ terraform:apply:monitoring:
   script:
     - cd ${TF_ROOT}
     - terraform init -backend-config="address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}" -backend-config="lock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock" -backend-config="unlock_address=${GITLAB_HTTP_ADDRESS}/api/v4/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock" -backend-config="username=${GITLAB_USERNAME}" -backend-config="password=${GITLAB_PAT}" -backend-config="lock_method=POST" -backend-config="unlock_method=DELETE" -backend-config="retry_wait_min=5"
-    - terraform apply -auto-approve -var="yc_cloud_id=${YC_CLOUD_ID}" -var="yc_folder_id=${YC_FOLDER_ID}" -var="yc_token=${YC_TOKEN}" -var="cluster_name=ajasta-monitoring" || true
+    - terraform apply -lock=false -auto-approve -var="yc_cloud_id=${YC_CLOUD_ID}" -var="yc_folder_id=${YC_FOLDER_ID}" -var="yc_token=${YC_TOKEN}" -var="cluster_name=ajasta-monitoring" || true
     - echo "Terraform apply completed"
   needs:
     - terraform:plan:monitoring
