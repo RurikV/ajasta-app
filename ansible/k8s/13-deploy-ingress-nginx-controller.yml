@@ -61,14 +61,18 @@
         msg: "Ingress-nginx manifest downloaded to /tmp/ingress-nginx-deploy.yaml"
 
     # ============== INSTALL INGRESS-NGINX CONTROLLER ==============
-    - name: Check if ingress-nginx namespace exists
+    - name: Check if ingress-nginx controller is already deployed
       ansible.builtin.command:
-        cmd: kubectl get namespace {{ ingress_namespace }}
-      register: ingress_namespace_check
+        cmd: kubectl get deployment -n {{ ingress_namespace }} ingress-nginx-controller
+      register: ingress_deployment
       changed_when: false
       failed_when: false
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Set fact for ingress deployment status
+      ansible.builtin.set_fact:
+        ingress_deployed_new: "{{ ingress_deployment.rc != 0 }}"
 
     - name: Apply ingress-nginx controller manifest
       ansible.builtin.command:
@@ -81,10 +85,18 @@
       ansible.builtin.debug:
         msg: "{{ ingress_apply.stdout_lines }}"
 
+    - name: Display ingress already deployed message
+      ansible.builtin.debug:
+        msg:
+          - "✓ ingress-nginx controller already deployed"
+          - "Controller is operational on this cluster"
+      when: not ingress_deployed_new
+
     # ============== WAIT FOR INGRESS-NGINX PODS ==============
     - name: Pause for ingress-nginx to initialize
       ansible.builtin.pause:
         seconds: 15
+      when: ingress_deployed_new
 
     - name: Wait for ingress-nginx controller deployment to be ready
       ansible.builtin.command:
@@ -94,6 +106,7 @@
       retries: 30
       delay: 5
       changed_when: false
+      when: ingress_deployed_new
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
 
