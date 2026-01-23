@@ -49,19 +49,11 @@ deploy:prometheus:
     ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
     ANSIBLE_INVENTORY: "${ANSIBLE_DIR}/k8s/inventory.ini"
     KUBECONFIG: "${ANSIBLE_DIR}/k8s/kubeconfig"
-  before_script:
-    # Install Ansible and kubernetes.core collection
-    - apt-get update -qq
-    - apt-get install -y -qq ssh-pass ansible-core python3-pip
-    - pip3 install ansible
-    - pip3 install kubernetes
-    - ansible-galaxy collection install kubernetes.core:>=2.0.0 community.docker:>=3.0.0
-    # Configure kubectl
+  script:
     - mkdir -p ~/.kube
     - echo "${KUBECONFIG_CONTENT}" | base64 -d > ~/.kube/config
     - export KUBECONFIG=~/.kube/config
     - chmod 600 ~/.kube/config
-  script:
     - cd ${ANSIBLE_DIR}
     - echo "Deploying Prometheus Operator to Kubernetes cluster"
     - kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/main/bundle.yaml || echo "Prometheus operator deployment skipped"
@@ -76,19 +68,11 @@ deploy:grafana:
     ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
     ANSIBLE_INVENTORY: "${ANSIBLE_DIR}/k8s/inventory.ini"
     KUBECONFIG: "${ANSIBLE_DIR}/k8s/kubeconfig"
-  before_script:
-    # Install Ansible and kubernetes.core collection
-    - apt-get update -qq
-    - apt-get install -y -qq ssh-pass ansible-core python3-pip
-    - pip3 install ansible
-    - pip3 install kubernetes
-    - ansible-galaxy collection install kubernetes.core:>=2.0.0 community.docker:>=3.0.0
-    # Configure kubectl
+  script:
     - mkdir -p ~/.kube
     - echo "${KUBECONFIG_CONTENT}" | base64 -d > ~/.kube/config
     - export KUBECONFIG=~/.kube/config
     - chmod 600 ~/.kube/config
-  script:
     - cd ${ANSIBLE_DIR}
     - echo "Deploying Grafana to Kubernetes cluster"
     - kubectl create namespace monitoring || true
@@ -105,19 +89,11 @@ deploy:exporters:
     ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
     ANSIBLE_INVENTORY: "${ANSIBLE_DIR}/k8s/inventory.ini"
     KUBECONFIG: "${ANSIBLE_DIR}/k8s/kubeconfig"
-  before_script:
-    # Install Ansible and kubernetes.core collection
-    - apt-get update -qq
-    - apt-get install -y -qq ssh-pass ansible-core python3-pip
-    - pip3 install ansible
-    - pip3 install kubernetes
-    - ansible-galaxy collection install kubernetes.core:>=2.0.0 community.docker:>=3.0.0
-    # Configure kubectl
+  script:
     - mkdir -p ~/.kube
     - echo "${KUBECONFIG_CONTENT}" | base64 -d > ~/.kube/config
     - export KUBECONFIG=~/.kube/config
     - chmod 600 ~/.kube/config
-  script:
     - cd ${ANSIBLE_DIR}
     - echo "Deploying Node Exporter to Kubernetes cluster"
     - kubectl apply -f https://raw.githubusercontent.com/prometheus/node_exporter/main/documentation/examples/kubernetes-daemonset.yaml || echo "Node Exporter deployment skipped"
@@ -128,14 +104,10 @@ deploy:exporters:
 verify:monitoring:
   stage: verify
   image: python:3.11
-  before_script:
-    - apt-get update -qq
-    - apt-get install -y -qq curl
-    - pip3 install kubernetes
+  script:
     - mkdir -p ~/.kube
     - echo "${KUBECONFIG_CONTENT}" | base64 -d > ~/.kube/config
     - export KUBECONFIG=~/.kube/config
-  script:
     - echo "Verifying monitoring stack..."
     - kubectl get pods -n monitoring || true
     - kubectl get svc -n monitoring || true
