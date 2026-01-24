@@ -328,19 +328,15 @@
     - name: Deploy kube-prometheus-stack via Helm
       ansible.builtin.shell:
         cmd: >
+          KUBECONFIG=/etc/kubernetes/admin.conf
           /usr/local/bin/helm upgrade --install kube-prometheus prometheus-community/kube-prometheus-stack
           --version {{ kube_prometheus_version }}
           --namespace {{ monitoring_namespace }}
           --create-namespace
           --values /tmp/kube-prometheus-values.yaml
           --timeout 15m
-        environment:
-          KUBECONFIG: /etc/kubernetes/admin.conf
       register: helm_deploy
       when: not monitoring_installed
-      until: helm_deploy.rc == 0
-      retries: 3
-      delay: 10
 
     - name: Display deployment status
       ansible.builtin.debug:

@@ -76,6 +76,15 @@
       ansible.builtin.set_fact:
         nat_needs_configuration: "{{ current_nat_ip.stdout != static_ip }}"
 
+    - name: Remove existing NAT if different from static IP
+      ansible.builtin.shell:
+        cmd: yc compute instance remove-one-to-one-nat --id {{ master_instance_id.stdout }} --network-interface-index 0
+      register: nat_removal
+      when:
+        - nat_needs_configuration
+        - current_nat_ip.stdout != "NONE"
+      ignore_errors: yes
+
     - name: Attach static IP via NAT
       ansible.builtin.shell:
         cmd: yc compute instance add-one-to-one-nat --id {{ master_instance_id.stdout }} --network-interface-index 0 --nat-address {{ static_ip }}
