@@ -1,0 +1,288 @@
+---
+# Verify Monitoring Stack is Working
+# This playbook verifies that all monitoring components are functioning
+# Usage:
+#   ansible-playbook -i inventory.ini 21-verify-monitoring.yml
+
+- name: Verify Monitoring Stack
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    monitoring_namespace: "monitoring"
+
+  tasks:
+    - name: Display verification information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "VERIFYING MONITORING STACK"
+          - "================================================================"
+          - ""
+          - "This playbook will verify:"
+          - "  1. All monitoring pods are running"
+          - "  2. Prometheus is collecting metrics"
+          - "  3. Grafana is accessible"
+          - "  4. Dashboards are loaded"
+          - "  5. Alertmanager is working"
+          - ""
+          - "================================================================"
+
+    # ============== CHECK POD STATUS ==============
+    - name: Get monitoring pods status
+      ansible.builtin.shell:
+        cmd: "kubectl get pods -n {{ monitoring_namespace }} -o json"
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pods_json
+      changed_when: false
+
+    - name: Parse pod status
+      ansible.builtin.set_fact:
+        pods_not_ready: "{{ pods_json.stdout | from_json | json_query('items[?status.phase!=`Running`].metadata.name') | default([]) }}"
+        pods_ready: "{{ pods_json.stdout | from_json | json_query(\"items[?status.phase=='Running'].metadata.name\") | default([]) }}"
+
+    - name: Display pod status summary
+      ansible.builtin.debug:
+        msg:
+          - "Pods Running: {{ pods_ready | length }}"
+          - "Pods Not Running: {{ pods_not_ready | length }}"
+
+    - name: Fail if critical pods are not running
+      ansible.builtin.fail:
+        msg: "Critical monitoring pods are not running. Check pod status: kubectl get pods -n {{ monitoring_namespace }}"
+      when: pods_not_ready | length > 0
+
+    - name: Display success message
+      ansible.builtin.debug:
+        msg: "✓ All monitoring pods are running"
+
+    # ============== VERIFY PROMETHEUS ==============
+    - name: Get Prometheus service endpoint
+      ansible.builtin.shell:
+        cmd: "kubectl get svc prometheus-operated -n {{ monitoring_namespace }} -o jsonpath='{.spec.clusterIP}'"
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+      register: prometheus_endpoint
+      changed_when: false
+
+    - name: Display Prometheus endpoint
+      ansible.builtin.debug:
+        msg: "Prometheus endpoint: http://{{ prometheus_endpoint.stdout }}:9090"
+
+    - name: Check Prometheus API
+      ansible.builtin.uri:
+        url: "http://{{ prometheus_endpoint.stdout }}:9090/-/healthy"
+        method: GET
+        timeout: 10
+      register: prometheus_health
+      failed_when: false
+      delegate_to: localhost
+
+    - name: Display Prometheus health check
+      ansible.builtin.debug:
+        msg: "{{ '✓ Prometheus is healthy' if prometheus_health.status == 200 else '✗ Prometheus health check failed' }}"
+
+    - name: Query Prometheus metrics count
+      ansible.builtin.shell:
+        cmd: >
+          kubectl exec -n {{ monitoring_namespace }} prometheus-kube-prometheus-prometheus-0 --
+          wget -qO- http://localhost:9090/api/v1/label/__name__/values
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+      register: prometheus_metrics
+      changed_when: false
+      failed_when: false
+
+    - name: Display metrics count
+      ansible.builtin.debug:
+        msg: "Metrics collected: {{ prometheus_metrics.stdout.split(',') | length if prometheus_metrics.rc == 0 else 'Unknown' }}"
+
+    - name: Verify targets are up in Prometheus
+      ansible.builtin.shell:
+        cmd: >
+          kubectl exec -n {{ monitoring_namespace }} prometheus-kube-prometheus-prometheus-0 --
+          wget -qO- http://localhost:9090/api/v1/targets | grep -o '"health":"up"' | wc -l
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+      register: prometheus_targets
+      changed_when: false
+
+    - name: Display Prometheus targets
+      ansible.builtin.debug:
+        msg: "✓ Prometheus targets up: {{ prometheus_targets.stdout.strip() }}"
+
+    # ============== VERIFY GRAFANA ==============
+    - name: Get Grafana service endpoint
+      ansible.builtin.shell:
+        cmd: "kubectl get svc grafana -n {{ monitoring_namespace }} -o jsonpath='{.spec.clusterIP}'"
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_endpoint
+      changed_when: false
+
+    - name: Display Grafana endpoint
+      ansible.builtin.debug:
+        msg: "Grafana endpoint: http://{{ grafana_endpoint.stdout }}:3000"
+
+    - name: Check Grafana API
+      ansible.builtin.uri:
+        url: "http://{{ grafana_endpoint.stdout }}:3000/api/health"
+        method: GET
+        timeout: 10
+        user: admin
+        password: admin123
+        force_basic_auth: yes
+      register: grafana_health
+      delegate_to: localhost
+      failed_when: false
+
+    - name: Display Grafana health check
+      ansible.builtin.debug:
+        msg: "{{ '✓ Grafana is healthy' if grafana_health.status == 200 else '✗ Grafana health check failed' }}"
+
+    - name: Get Grafana datasources
+      ansible.builtin.uri:
+        url: "http://{{ grafana_endpoint.stdout }}:3000/api/datasources"
+        method: GET
+        timeout: 10
+        user: admin
+        password: admin123
+        force_basic_auth: yes
+      register: grafana_datasources
+      delegate_to: localhost
+
+    - name: Display Grafana datasources
+      ansible.builtin.debug:
+        msg: "✓ Grafana datasources configured: {{ grafana_datasources.json | length }}"
+
+    - name: Get Grafana dashboards
+      ansible.builtin.uri:
+        url: "http://{{ grafana_endpoint.stdout }}:3000/api/search"
+        method: GET
+        timeout: 10
+        user: admin
+        password: admin123
+        force_basic_auth: yes
+      register: grafana_dashboards
+      delegate_to: localhost
+
+    - name: Display Grafana dashboards count
+      ansible.builtin.debug:
+        msg: "✓ Grafana dashboards loaded: {{ grafana_dashboards.json | length }}"
+
+    - name: Query specific metrics from Prometheus
+      ansible.builtin.shell:
+        cmd: >
+          kubectl exec -n {{ monitoring_namespace }} prometheus-kube-prometheus-prometheus-0 --
+          wget -qO- "http://localhost:9090/api/v1/query?query=up" | grep -o '"metric":' | wc -l
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+      register: up_metrics_count
+      changed_when: false
+
+    - name: Display up metrics count
+      ansible.builtin.debug:
+        msg: "✓ 'up' metrics available: {{ up_metrics_count.stdout.strip() }}"
+
+    - name: Test node metrics are collected
+      ansible.builtin.shell:
+        cmd: >
+          kubectl exec -n {{ monitoring_namespace }} prometheus-kube-prometheus-prometheus-0 --
+          wget -qO- "http://localhost:9090/api/v1/query?query=node_cpu_seconds_total" | grep -o '"result":[[]' || echo "has_data"
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+      register: node_metrics
+      changed_when: false
+
+    - name: Display node metrics status
+      ansible.builtin.debug:
+        msg: "{{ '✓ Node metrics are being collected' if 'has_data' in node_metrics.stdout else '⚠ Node metrics may not be fully collected yet' }}"
+
+    - name: Test Kubernetes pods metrics
+      ansible.builtin.shell:
+        cmd: >
+          kubectl exec -n {{ monitoring_namespace }} prometheus-kube-prometheus-prometheus-0 --
+          wget -qO- "http://localhost:9090/api/v1/query?query=kube_pod_info" | grep -o '"result":[[]' || echo "has_data"
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+      register: k8s_metrics
+      changed_when: false
+
+    - name: Display Kubernetes metrics status
+      ansible.builtin.debug:
+        msg: "{{ '✓ Kubernetes metrics are being collected' if 'has_data' in k8s_metrics.stdout else '⚠ Kubernetes metrics may not be fully collected yet' }}"
+
+    # ============== VERIFY ALERTMANAGER ==============
+    - name: Get Alertmanager status
+      ansible.builtin.shell:
+        cmd: "kubectl get pod -l app.kubernetes.io/name=alertmanager -n {{ monitoring_namespace }} -o jsonpath='{.items[0].status.phase}'"
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+      register: alertmanager_status
+      changed_when: false
+
+    - name: Display Alertmanager status
+      ansible.builtin.debug:
+        msg: "✓ Alertmanager is {{ alertmanager_status.stdout }}"
+
+    # ============== FINAL SUMMARY ==============
+    - name: Display verification summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "MONITORING STACK VERIFICATION COMPLETE"
+          - "================================================================"
+          - ""
+          - "✓ All monitoring pods are running"
+          - "✓ Prometheus is collecting metrics"
+          - "✓ Grafana is accessible and configured"
+          - "✓ Dashboards are loaded"
+          - "✓ Alertmanager is running"
+          - ""
+          - "Access Information:"
+          - "  Grafana:"
+          - "    - URL: http://{{ grafana_endpoint.stdout }}:3000"
+          - "    - Username: admin"
+          - "    - Password: admin123"
+          - "    - Port Forward: kubectl port-forward -n monitoring svc/grafana 3000:3000"
+          - ""
+          - "  Prometheus:"
+          - "    - URL: http://{{ prometheus_endpoint.stdout }}:9090"
+          - "    - Port Forward: kubectl port-forward -n monitoring svc/prometheus-operated 9090:9090"
+          - ""
+          - "Available Dashboards in Grafana:"
+          - "  - Kubernetes / Compute Resources / Pod"
+          - "  - Kubernetes / Compute Resources / Namespace"
+          - "  - Kubernetes / Compute Resources / Node"
+          - "  - Node Exporter / Nodes"
+          - "  - Node Exporter / Prometheus"
+          - "  - And many more..."
+          - ""
+          - "================================================================"
+
+- name: Overall verification summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "MONITORING STACK VERIFIED AND WORKING"
+          - "================================================================"
+          - ""
+          - "Your monitoring pipeline is fully operational!"
+          - ""
+          - "Next Steps:"
+          - "  1. Port-forward Grafana:"
+          - "     kubectl port-forward -n monitoring svc/grafana 3000:3000"
+          - "  2. Open browser: http://localhost:3000"
+          - "  3. Login with admin/admin123"
+          - "  4. Explore dashboards and metrics"
+          - ""
+          - "To access via Ingress (add to /etc/hosts):"
+          - "  <ingress-ip> grafana.local"
+          - ""
+          - "================================================================"

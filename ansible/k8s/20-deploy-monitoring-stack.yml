@@ -1,0 +1,536 @@
+---
+# Deploy Complete Monitoring Stack
+# Installs Prometheus, Grafana, Alertmanager, and all necessary components
+# Usage:
+#   ansible-playbook -i inventory.ini 20-deploy-monitoring-stack.yml
+
+- name: Deploy Monitoring Stack
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    kube_prometheus_version: "66.5.0"
+    monitoring_namespace: "monitoring"
+
+  tasks:
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYING KUBERNETES MONITORING STACK"
+          - "================================================================"
+          - ""
+          - "This playbook will deploy:"
+          - "  - Prometheus Operator"
+          - "  - Prometheus"
+          - "  - Grafana"
+          - "  - Alertmanager"
+          - "  - Node Exporter"
+          - "  - Kube-State-Metrics"
+          - "  - Kubernetes Dashboard Metrics"
+          - ""
+          - "Version: kube-prometheus-stack {{ kube_prometheus_version }}"
+          - "Namespace: {{ monitoring_namespace }}"
+          - ""
+          - "================================================================"
+
+    # ============== CREATE NAMESPACE ==============
+    - name: Create monitoring namespace
+      ansible.builtin.shell:
+        cmd: "KUBECONFIG=/etc/kubernetes/admin.conf kubectl create namespace {{ monitoring_namespace }} --dry-run=client -o yaml | KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f -"
+      register: monitoring_ns
+
+    - name: Display namespace creation
+      ansible.builtin.debug:
+        msg: "✓ Created namespace: {{ monitoring_namespace }}"
+
+    # ============== INSTALL HELM ==============
+    - name: Check if Helm is already installed
+      ansible.builtin.shell:
+        cmd: "helm version --short"
+      register: helm_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display Helm installation check
+      ansible.builtin.debug:
+        msg: "Helm check result: {{ 'Installed' if helm_check.rc == 0 else 'Not found - will install' }}"
+
+    - name: Get system architecture
+      ansible.builtin.shell:
+        cmd: "uname -m"
+      register: arch_check
+      changed_when: false
+      when: helm_check.rc != 0
+
+    - name: Set architecture for Helm download
+      ansible.builtin.set_fact:
+        helm_arch: "{{ 'amd64' if arch_check.stdout == 'x86_64' else 'arm64' if arch_check.stdout == 'aarch64' or arch_check.stdout == 'arm64' else arch_check.stdout }}"
+      when: helm_check.rc != 0
+
+    - name: Download and install Helm binary directly
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          HELM_VERSION="v3.20.0"
+          ARCH="{{ helm_arch }}"
+          DOWNLOAD_URL="https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz"
+
+          echo "Downloading Helm from: ${DOWNLOAD_URL}"
+          curl -fsSL -o /tmp/helm.tar.gz "${DOWNLOAD_URL}"
+
+          echo "Extracting Helm binary..."
+          tar -xzf /tmp/helm.tar.gz -C /tmp/
+
+          echo "Installing Helm to /usr/local/bin..."
+          mv /tmp/linux-${ARCH}/helm /usr/local/bin/helm
+          chmod +x /usr/local/bin/helm
+
+          echo "Cleaning up..."
+          rm -rf /tmp/linux-${ARCH}
+          rm -f /tmp/helm.tar.gz
+
+          echo "Verifying installation..."
+          /usr/local/bin/helm version --short
+      register: helm_install
+      when: helm_check.rc != 0
+      failed_when: helm_install.rc != 0
+      changed_when: true
+
+    - name: Verify Helm installation
+      ansible.builtin.shell:
+        cmd: "/usr/local/bin/helm version --short"
+      register: helm_verify
+      changed_when: false
+
+    - name: Display Helm version
+      ansible.builtin.debug:
+        msg: "✓ Helm installed: {{ helm_verify.stdout }}"
+
+    # ============== ADD HELM REPOSITORY ==============
+    - name: Add Prometheus Community Helm repository
+      ansible.builtin.shell:
+        cmd: "/usr/local/bin/helm repo add prometheus-community https://prometheus-community.github.io/helm-charts"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: helm_repo_add
+      changed_when: "'already exists' not in helm_repo_add.stderr"
+      failed_when: helm_repo_add.rc != 0 and 'already exists' not in helm_repo_add.stderr
+
+    - name: Update Helm repositories
+      ansible.builtin.shell:
+        cmd: "/usr/local/bin/helm repo update"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: helm_repo_update
+      changed_when: true
+
+    - name: Display Helm repository status
+      ansible.builtin.debug:
+        msg: "✓ Helm repository configured"
+
+    # ============== DEPLOY KUBE-PROMETHEUS-STACK ==============
+    - name: Check if monitoring stack is already deployed
+      ansible.builtin.shell:
+        cmd: "/usr/local/bin/helm status kube-prometheus -n {{ monitoring_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: monitoring_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set fact for monitoring installation
+      ansible.builtin.set_fact:
+        monitoring_installed: "{{ monitoring_check.rc == 0 }}"
+
+    - name: Create values file for kube-prometheus-stack
+      ansible.builtin.copy:
+        dest: /tmp/kube-prometheus-values.yaml
+        content: |
+          # Prometheus Configuration
+          prometheus:
+            prometheusSpec:
+              retention: 30d
+              retentionSize: 10GB
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 512Mi
+                limits:
+                  cpu: 1000m
+                  memory: 2Gi
+              storageSpec:
+                volumeClaimTemplate:
+                  spec:
+                    storageClassName: longhorn
+                    accessModes: ["ReadWriteOnce"]
+                    resources:
+                      requests:
+                        storage: 20Gi
+              serviceMonitorSelectorNilUsesHelmValues: false
+              serviceMonitorNamespaceSelector:
+                any: true
+              podMonitorNamespaceSelector:
+                any: true
+
+          # Grafana Configuration
+          grafana:
+            defaultDashboardsEnabled: true
+            defaultDashboardsTimezone: utc
+            adminPassword: admin123
+            service:
+              type: LoadBalancer
+              port: 3000
+              targetPort: 3000
+            persistence:
+              enabled: true
+              storageClassName: longhorn
+              accessModes: ["ReadWriteOnce"]
+              size: 5Gi
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                cpu: 500m
+                memory: 1Gi
+            dashboardProviders:
+              dashboardproviders.yaml:
+                apiVersion: 1
+                providers:
+                  - name: 'default'
+                    orgId: 1
+                    folder: ''
+                    type: file
+                    disableDeletion: false
+                    editable: true
+                    options:
+                      path: /var/lib/grafana/dashboards/default
+
+          # Alertmanager Configuration
+          alertmanager:
+            alertmanagerSpec:
+              retention: 120h
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 200m
+                  memory: 512Mi
+              storage:
+                volumeClaimTemplate:
+                  spec:
+                    storageClassName: longhorn
+                    accessModes: ["ReadWriteOnce"]
+                    resources:
+                      requests:
+                        storage: 5Gi
+
+          # Node Exporter
+          nodeExporter:
+            enabled: true
+            service:
+              port: 9100
+              targetPort: 9100
+
+          # Kube-State-Metrics
+          kubeStateMetrics:
+            enabled: true
+            resources:
+              requests:
+                cpu: 50m
+                memory: 128Mi
+              limits:
+                cpu: 200m
+                memory: 512Mi
+
+          # Kubernetes Metrics Server
+          kubelet:
+            enabled: true
+            serviceMonitor:
+              interval: 30s
+
+          # CoreDNS Metrics
+          kubeDns:
+            enabled: true
+            service:
+              port: 53
+              targetPort: 53
+
+          # API Server Metrics
+          kubeApiServer:
+            enabled: true
+
+          # Controller Manager Metrics
+          kubeControllerManager:
+            enabled: true
+            endpoints:
+              - 10.10.0.20
+
+          # Scheduler Metrics
+          kubeScheduler:
+            enabled: true
+            endpoints:
+              - 10.10.0.20
+
+          # ETCD Metrics
+          kubeEtcd:
+            enabled: true
+            endpoints:
+              - 10.10.0.20
+
+          # Proxy Metrics
+          kubeProxy:
+            enabled: true
+
+          # Prometheus Operator
+          prometheusOperator:
+            resources:
+              requests:
+                cpu: 50m
+                memory: 128Mi
+              limits:
+                cpu: 200m
+                memory: 512Mi
+
+          # Default ServiceMonitors
+          defaultRules:
+            create: true
+            rules:
+              alertmanager: true
+              etcd: true
+              configReloaders: true
+              general: true
+              k8s: true
+              kubeApiserver: true
+              kubeApiserverAvailability: true
+              kubeApiserverBurnrate: true
+              kubeApiserverHistogram: true
+              kubeApiserverSlos: true
+              kubeControllerManager: true
+              kubelet: true
+              kubeProxy: true
+              kubeScheduler: true
+              kubernetesAbsent: true
+              kubernetesResources: true
+              kubernetesStorage: true
+              kubernetesSystem: true
+              kubeStateMetrics: true
+              network: true
+              node: true
+              nodeExporterAlerting: true
+              nodeExporterRecording: true
+              prometheus: true
+              prometheusOperator: true
+
+    - name: Deploy kube-prometheus-stack via Helm
+      ansible.builtin.shell:
+        cmd: >
+          /usr/local/bin/helm upgrade --install kube-prometheus prometheus-community/kube-prometheus-stack
+          --version {{ kube_prometheus_version }}
+          --namespace {{ monitoring_namespace }}
+          --create-namespace
+          --values /tmp/kube-prometheus-values.yaml
+          --timeout 15m
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+      register: helm_deploy
+      when: not monitoring_installed
+      until: helm_deploy.rc == 0
+      retries: 3
+      delay: 10
+
+    - name: Display deployment status
+      ansible.builtin.debug:
+        msg: "✓ kube-prometheus-stack deployed successfully"
+      when: not monitoring_installed
+
+    - name: Display already installed message
+      ansible.builtin.debug:
+        msg: "✓ kube-prometheus-stack already installed"
+      when: monitoring_installed
+
+    # ============== WAIT FOR DEPLOYMENTS ==============
+    - name: Wait for Prometheus Operator to be ready
+      ansible.builtin.shell:
+        cmd: "kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=prometheus-operator -n {{ monitoring_namespace }} --timeout=300s"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: prom_operator_wait
+      until: prom_operator_wait.rc == 0
+      retries: 30
+      delay: 10
+      failed_when: false
+
+    - name: Wait for Prometheus to be ready
+      ansible.builtin.shell:
+        cmd: "kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=prometheus -n {{ monitoring_namespace }} --timeout=300s"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: prom_wait
+      until: prom_wait.rc == 0
+      retries: 30
+      delay: 10
+      failed_when: false
+
+    - name: Wait for Grafana to be ready
+      ansible.builtin.shell:
+        cmd: "kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=grafana -n {{ monitoring_namespace }} --timeout=300s"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_wait
+      until: grafana_wait.rc == 0
+      retries: 30
+      delay: 10
+      failed_when: false
+
+    - name: Wait for Alertmanager to be ready
+      ansible.builtin.shell:
+        cmd: "kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=alertmanager -n {{ monitoring_namespace }} --timeout=300s"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: alertmanager_wait
+      until: alertmanager_wait.rc == 0
+      retries: 30
+      delay: 10
+      failed_when: false
+
+    - name: Wait for Node Exporter to be ready
+      ansible.builtin.shell:
+        cmd: "kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=prometheus-node-exporter -n {{ monitoring_namespace }} --timeout=300s"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: node_exporter_wait
+      until: node_exporter_wait.rc == 0
+      retries: 30
+      delay: 10
+      failed_when: false
+
+    - name: Wait for Kube-State-Metrics to be ready
+      ansible.builtin.shell:
+        cmd: "kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=kube-state-metrics -n {{ monitoring_namespace }} --timeout=300s"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ksm_wait
+      until: ksm_wait.rc == 0
+      retries: 30
+      delay: 10
+      failed_when: false
+
+    # ============== CREATE INGRESS FOR GRAFANA ==============
+    - name: Create Ingress for Grafana
+      ansible.builtin.shell:
+        cmd: |
+          cat <<EOF | kubectl apply -f -
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: grafana-ingress
+            namespace: {{ monitoring_namespace }}
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: /
+              nginx.ingress.kubernetes.io/ssl-redirect: "false"
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: grafana.local
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: grafana
+                          port:
+                            number: 3000
+          EOF
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Display Ingress creation
+      ansible.builtin.debug:
+        msg: "✓ Created Grafana Ingress (grafana.local)"
+
+    # ============== VERIFY DEPLOYMENT ==============
+    - name: Get all monitoring pods
+      ansible.builtin.shell:
+        cmd: "kubectl get pods -n {{ monitoring_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: monitoring_pods
+      changed_when: false
+
+    - name: Display monitoring pods
+      ansible.builtin.debug:
+        msg: "{{ monitoring_pods.stdout_lines }}"
+
+    - name: Get monitoring services
+      ansible.builtin.shell:
+        cmd: "kubectl get svc -n {{ monitoring_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: monitoring_svc
+      changed_when: false
+
+    - name: Display monitoring services
+      ansible.builtin.debug:
+        msg: "{{ monitoring_svc.stdout_lines }}"
+
+    # ============== SUMMARY ==============
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "MONITORING STACK DEPLOYED SUCCESSFULLY"
+          - "================================================================"
+          - ""
+          - "Components Deployed:"
+          - "  - Prometheus Operator"
+          - "  - Prometheus (metrics collection)"
+          - "  - Grafana (visualization)"
+          - "  - Alertmanager (alerting)"
+          - "  - Node Exporter (node metrics)"
+          - "  - Kube-State-Metrics (K8s resource metrics)"
+          - ""
+          - "Access Information:"
+          - "  Grafana:"
+          - "    - Ingress: http://grafana.local"
+          - "    - Username: admin"
+          - "    - Password: admin123"
+          - "    - Port Forward: kubectl port-forward -n monitoring svc/grafana 3000:3000"
+          - ""
+          - "  Prometheus:"
+          - "    - Port Forward: kubectl port-forward -n monitoring svc/prometheus-operated 9090:9090"
+          - ""
+          - "  Alertmanager:"
+          - "    - Port Forward: kubectl port-forward -n monitoring svc/alertmanager-operated 9093:9093"
+          - ""
+          - "Next Steps:"
+          - "  1. Run: ansible-playbook -i inventory.ini 21-verify-monitoring.yml"
+          - "  2. Access Grafana: http://grafana.local (add to /etc/hosts)"
+          - "  3. Explore pre-configured dashboards"
+          - ""
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "MONITORING STACK READY"
+          - "================================================================"
+          - ""
+          - "Next step: Verify monitoring is working"
+          - "  ansible-playbook -i inventory.ini 21-verify-monitoring.yml"
+          - ""
+          - "Quick commands:"
+          - "  kubectl get pods -n monitoring"
+          - "  kubectl get svc -n monitoring"
+          - "  kubectl port-forward -n monitoring svc/grafana 3000:3000"
+          - ""
+          - "================================================================"

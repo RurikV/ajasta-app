@@ -1,0 +1,317 @@
+---
+# Setup Nginx Reverse Proxy on Master Node for Ingress Controller
+# This allows external access to Kubernetes services via domain names
+# Usage:
+#   ansible-playbook -i inventory.ini 22-setup-ingress-proxy.yml
+
+- name: Setup Ingress Proxy on Master Node
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    ingress_proxy_port: 80
+    ingress_nodeport: 30187
+    ingress_controller_ip: "10.10.0.15"  # Cluster IP of ingress controller
+
+  tasks:
+    - name: Display setup information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "SETTING UP NGINX REVERSE PROXY FOR INGRESS"
+          - "================================================================"
+          - ""
+          - "This playbook will:"
+          - "  1. Install nginx on master node"
+          - "  2. Configure reverse proxy to ingress controller"
+          - "  3. Enable access via ajasta.top domain"
+          - ""
+          - "================================================================"
+
+    # ============== INSTALL NGINX ==============
+    - name: Install nginx (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Install nginx (CentOS/RHEL)
+      ansible.builtin.yum:
+        name: nginx
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Ensure nginx is running
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: yes
+      register: nginx_service
+
+    - name: Display nginx installation status
+      ansible.builtin.debug:
+        msg: "✓ Nginx installed and running"
+
+    # ============== CONFIGURE REVERSE PROXY ==============
+    - name: Create nginx reverse proxy configuration (CentOS/RHEL)
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/ingress-proxy.conf
+        content: |
+          # Reverse proxy for Kubernetes Ingress Controller
+          # Proxies requests to ingress controller NodePort
+
+          upstream ingress_backend {
+              # Ingress controller NodePort
+              server localhost:{{ ingress_nodeport }} max_fails=3 fail_timeout=30s;
+          }
+
+          server {
+              listen {{ ingress_proxy_port }};
+              server_name _;
+
+              # Logging
+              access_log /var/log/nginx/ingress-access.log;
+              error_log /var/log/nginx/ingress-error.log;
+
+              # Proxy settings
+              location / {
+                  proxy_pass http://ingress_backend;
+
+                  # Pass the Host header to the ingress controller
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+
+                  # WebSocket support
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection "upgrade";
+
+                  # Timeouts
+                  proxy_connect_timeout 60s;
+                  proxy_send_timeout 60s;
+                  proxy_read_timeout 60s;
+
+                  # Buffering
+                  proxy_buffering off;
+                  proxy_request_buffering off;
+              }
+          }
+        mode: '0644'
+        owner: root
+        group: root
+      when: ansible_os_family == "RedHat"
+      notify: reload nginx
+
+    - name: Create nginx reverse proxy configuration (Debian/Ubuntu)
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/ingress-proxy
+        content: |
+          # Reverse proxy for Kubernetes Ingress Controller
+          # Proxies requests to ingress controller NodePort
+
+          upstream ingress_backend {
+              # Ingress controller NodePort
+              server localhost:{{ ingress_nodeport }} max_fails=3 fail_timeout=30s;
+          }
+
+          server {
+              listen {{ ingress_proxy_port }};
+              server_name _;
+
+              # Logging
+              access_log /var/log/nginx/ingress-access.log;
+              error_log /var/log/nginx/ingress-error.log;
+
+              # Proxy settings
+              location / {
+                  proxy_pass http://ingress_backend;
+
+                  # Pass the Host header to the ingress controller
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+
+                  # WebSocket support
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection "upgrade";
+
+                  # Timeouts
+                  proxy_connect_timeout 60s;
+                  proxy_send_timeout 60s;
+                  proxy_read_timeout 60s;
+
+                  # Buffering
+                  proxy_buffering off;
+                  proxy_request_buffering off;
+              }
+          }
+        mode: '0644'
+        owner: root
+        group: root
+      when: ansible_os_family == "Debian"
+
+    - name: Remove default nginx site (Debian/Ubuntu)
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      when: ansible_os_family == "Debian"
+      notify: reload nginx
+
+    - name: Enable ingress proxy site (Debian/Ubuntu)
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/ingress-proxy
+        dest: /etc/nginx/sites-enabled/ingress-proxy
+        state: link
+      when: ansible_os_family == "Debian"
+      notify: reload nginx
+
+    - name: Test nginx configuration
+      ansible.builtin.command: nginx -t
+      register: nginx_test
+      changed_when: false
+
+    - name: Display nginx test result
+      ansible.builtin.debug:
+        msg: "✓ Nginx configuration test: {{ nginx_test.rc == 0 | ternary('PASSED', 'FAILED') }}"
+
+    - name: Reload nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+      when: nginx_test.rc == 0
+
+    - name: Display nginx reload status
+      ansible.builtin.debug:
+        msg: "✓ Nginx reloaded successfully"
+
+    # ============== CONFIGURE FIREWALL ==============
+    - name: Check if firewalld is installed
+      ansible.builtin.command: which firewall-cmd
+      register: firewalld_check
+      changed_when: false
+      failed_when: false
+
+    - name: Allow HTTP traffic through firewalld (CentOS/RHEL)
+      ansible.builtin.firewalld:
+        port: "{{ ingress_proxy_port }}/tcp"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      when: firewalld_check.rc == 0
+      ignore_errors: yes
+
+    - name: Check if ufw is installed
+      ansible.builtin.command: which ufw
+      register: ufw_check
+      changed_when: false
+      failed_when: false
+
+    - name: Allow HTTP traffic through ufw (Debian/Ubuntu)
+      ansible.builtin.ufw:
+        rule: allow
+        port: "{{ ingress_proxy_port }}"
+        proto: tcp
+      when: ufw_check.rc == 0
+      ignore_errors: yes
+
+    - name: Display firewall configuration
+      ansible.builtin.debug:
+        msg: "✓ Firewall configured (if active)"
+
+    # ============== VERIFY SETUP ==============
+    - name: Wait for nginx to start listening
+      ansible.builtin.wait_for:
+        port: "{{ ingress_proxy_port }}"
+        host: "0.0.0.0"
+        timeout: 30
+
+    - name: Check nginx is listening
+      ansible.builtin.shell: |
+        ss -tlnp | grep :{{ ingress_proxy_port }}
+      register: nginx_listening
+      changed_when: false
+
+    - name: Display nginx listening status
+      ansible.builtin.debug:
+        msg: "✓ Nginx is listening on port {{ ingress_proxy_port }}"
+
+    # ============== TEST PROXY ==============
+    - name: Test proxy to Grafana via localhost
+      ansible.builtin.uri:
+        url: "http://localhost:{{ ingress_proxy_port }}"
+        method: GET
+        headers:
+          Host: ajasta.top
+        timeout: 10
+      register: proxy_test
+      delegate_to: localhost
+      failed_when: false
+
+    - name: Display proxy test result
+      ansible.builtin.debug:
+        msg: "✓ Proxy test: {{ 'SUCCESS' if proxy_test.status == 200 else 'NOT READY (may need DNS setup)' }}"
+
+    # ============== DISPLAY SUMMARY ==============
+    - name: Display setup summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "NGINX REVERSE PROXY CONFIGURED SUCCESSFULLY"
+          - "================================================================"
+          - ""
+          - "Configuration:"
+          - "  - Nginx listening on port {{ ingress_proxy_port }}"
+          - "  - Proxying to ingress controller at localhost:{{ ingress_nodeport }}"
+          - "  - Host header forwarding enabled"
+          - ""
+          - "Access Information:"
+          - "  - External IP: {{ ansible_default_ipv4.address }}"
+          - "  - Domain: ajasta.top"
+          - "  - URL: http://ajasta.top"
+          - ""
+          - "DNS Configuration Required:"
+          - "  Add A record for ajasta.top pointing to {{ ansible_default_ipv4.address }}"
+          - ""
+          - "Local Testing (before DNS):"
+          - "  curl -H 'Host: ajasta.top' http://{{ ansible_default_ipv4.address }}/"
+          - "  # Add to /etc/hosts: {{ ansible_default_ipv4.address }} ajasta.top"
+          - ""
+          - "Next Steps:"
+          - "  1. Configure DNS: ajasta.top → {{ ansible_default_ipv4.address }}"
+          - "  2. Test access: curl http://ajasta.top"
+          - "  3. Access Grafana: http://ajasta.top"
+          - ""
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "INGRESS PROXY READY"
+          - "================================================================"
+          - ""
+          - "Nginx reverse proxy is now running on the master node."
+          - ""
+          - "To access Grafana at ajasta.top:"
+          - "  1. Add to your local /etc/hosts:"
+          - "     <master-ip> ajasta.top"
+          - ""
+          - "  2. Or configure DNS A record:"
+          - "     ajasta.top → <master-ip>"
+          - ""
+          - "  3. Access Grafana:"
+          - "     http://ajasta.top"
+          - "     Username: admin"
+          - "     Password: admin123"
+          - ""
+          - "================================================================"
