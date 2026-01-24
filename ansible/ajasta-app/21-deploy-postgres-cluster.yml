@@ -17,7 +17,7 @@
     pg_database: ajastadb
 
     # Cluster configuration
-    pg_instances: 2
+    pg_instances: 1
     pg_image: ghcr.io/cloudnative-pg/postgresql:15.4
 
     # Storage configuration
@@ -46,7 +46,7 @@
           - "Cluster Configuration:"
           - "  - Name: {{ pg_cluster_name }}"
           - "  - Namespace: {{ pg_namespace }}"
-          - "  - Instances: {{ pg_instances }} (1 primary, 1 replica)"
+          - "  - Instances: {{ pg_instances }}"
           - "  - Image: {{ pg_image }}"
           - ""
           - "Storage:"
@@ -407,13 +407,35 @@
 
     - name: Wait for PostgreSQL cluster to be ready
       ansible.builtin.command:
-        cmd: kubectl wait --for=condition=ready cluster/{{ pg_cluster_name }} -n {{ pg_namespace }} --timeout=600s
+        cmd: kubectl wait --for=condition=ready cluster/{{ pg_cluster_name }} -n {{ pg_namespace }} --timeout=180s
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: pg_wait
       until: pg_wait.rc == 0
-      retries: 120
-      delay: 5
+      retries: 3
+      delay: 10
+      failed_when: false
+
+    - name: Check if cluster is ready
+      ansible.builtin.command:
+        cmd: kubectl get cluster -n {{ pg_namespace }} {{ pg_cluster_name }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cluster_ready_check
+      changed_when: false
+
+    - name: Display cluster readiness
+      ansible.builtin.debug:
+        msg: "{{ '✓ Cluster is READY!' if cluster_ready_check.stdout == 'True' else '✗ Cluster is NOT ready - will diagnose' }}"
+
+    - name: Fail if cluster is not ready after retries
+      ansible.builtin.fail:
+        msg: |
+          PostgreSQL cluster failed to become ready after multiple attempts.
+          Check cluster status with: kubectl get cluster -n {{ pg_namespace }}
+          Check pods with: kubectl get pods -n {{ pg_namespace }}
+          Check PVCs with: kubectl get pvc -n {{ pg_namespace }}
+      when: cluster_ready_check.stdout != 'True'
 
     - name: Get PostgreSQL cluster status
       ansible.builtin.command:
@@ -552,7 +574,7 @@
           - "Cluster Configuration:"
           - "  - Name: {{ pg_cluster_name }}"
           - "  - Namespace: {{ pg_namespace }}"
-          - "  - Instances: {{ pg_instances }} (1 primary, 1 replica)"
+          - "  - Instances: {{ pg_instances }}"
           - "  - Database: {{ pg_database }}"
           - "  - Image: {{ pg_image }}"
           - ""
