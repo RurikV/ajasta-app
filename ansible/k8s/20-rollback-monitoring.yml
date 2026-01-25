@@ -1,0 +1,203 @@
+---
+# Rollback Monitoring Stack
+# Rolls back the kube-prometheus-stack to a previous Helm revision
+# Usage:
+#   ansible-playbook -i inventory.ini 20-rollback-monitoring.yml
+#   ansible-playbook -i inventory.ini 20-rollback-monitoring.yml -e "revision=2"
+
+- name: Rollback Monitoring Stack
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    monitoring_namespace: "monitoring"
+    helm_release: "kube-prometheus"
+    # Revision to rollback to (optional). If not specified, rolls back to previous revision
+    target_revision: "{{ revision | default(0) }}"
+
+  tasks:
+    - name: Display rollback information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ROLLBACK KUBERNETES MONITORING STACK"
+          - "================================================================"
+          - ""
+          - "This playbook will rollback the monitoring stack"
+          - ""
+          - "Helm Release: {{ helm_release }}"
+          - "Namespace: {{ monitoring_namespace }}"
+          - "Target Revision: {{ target_revision if target_revision != 0 else 'Previous revision' }}"
+          - ""
+          - "================================================================"
+
+    # ============== CHECK CURRENT STATE ==============
+    - name: Check if Helm release exists
+      ansible.builtin.shell:
+        cmd: "/usr/local/bin/helm status {{ helm_release }} -n {{ monitoring_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: helm_status
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if release does not exist
+      ansible.builtin.fail:
+        msg: "Helm release {{ helm_release }} does not exist in namespace {{ monitoring_namespace }}"
+      when: helm_status.rc != 0
+
+    - name: Display current release status
+      ansible.builtin.debug:
+        msg: "{{ helm_status.stdout_lines }}"
+
+    # ============== SHOW RELEASE HISTORY ==============
+    - name: Get Helm release history
+      ansible.builtin.shell:
+        cmd: "/usr/local/bin/helm history {{ helm_release }} -n {{ monitoring_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: helm_history
+      changed_when: false
+
+    - name: Display release history
+      ansible.builtin.debug:
+        msg: "{{ helm_history.stdout_lines }}"
+
+    # ============== CONFIRM ROLLBACK ==============
+    - name: Confirm rollback operation
+      ansible.builtin.pause:
+        prompt: |
+          WARNING: This will rollback the monitoring stack to revision {{ target_revision if target_revision != 0 else 'the previous revision' }}.
+
+          Press Enter to continue or Ctrl+C to cancel.
+      register: rollback_confirm
+
+    # ============== PERFORM ROLLBACK ==============
+    - name: Rollback Helm release
+      ansible.builtin.shell:
+        cmd: >
+          KUBECONFIG=/etc/kubernetes/admin.conf
+          /usr/local/bin/helm rollback {{ helm_release }}
+          {{ target_revision if target_revision != 0 else '' }}
+          -n {{ monitoring_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: helm_rollback
+      when: rollback_confirm is defined
+
+    - name: Display rollback result
+      ansible.builtin.debug:
+        msg: "✓ Rollback completed successfully"
+      when: helm_rollback.rc == 0
+
+    # ============== WAIT FOR ROLLPBACK TO COMPLETE ==============
+    - name: Wait for Prometheus Operator to be ready after rollback
+      ansible.builtin.shell:
+        cmd: "kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=prometheus-operator -n {{ monitoring_namespace }} --timeout=300s"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: prom_operator_wait
+      until: prom_operator_wait.rc == 0
+      retries: 30
+      delay: 10
+      failed_when: false
+
+    - name: Wait for Prometheus to be ready after rollback
+      ansible.builtin.shell:
+        cmd: "kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=prometheus -n {{ monitoring_namespace }} --timeout=300s"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: prom_wait
+      until: prom_wait.rc == 0
+      retries: 30
+      delay: 10
+      failed_when: false
+
+    - name: Wait for Grafana to be ready after rollback
+      ansible.builtin.shell:
+        cmd: "kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=grafana -n {{ monitoring_namespace }} --timeout=300s"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_wait
+      until: grafana_wait.rc == 0
+      retries: 30
+      delay: 10
+      failed_when: false
+
+    - name: Wait for Alertmanager to be ready after rollback
+      ansible.builtin.shell:
+        cmd: "kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=alertmanager -n {{ monitoring_namespace }} --timeout=300s"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: alertmanager_wait
+      until: alertmanager_wait.rc == 0
+      retries: 30
+      delay: 10
+      failed_when: false
+
+    # ============== VERIFY ROLLBACK ==============
+    - name: Get updated Helm status
+      ansible.builtin.shell:
+        cmd: "/usr/local/bin/helm status {{ helm_release }} -n {{ monitoring_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: updated_status
+      changed_when: false
+
+    - name: Display updated status
+      ansible.builtin.debug:
+        msg: "{{ updated_status.stdout_lines }}"
+
+    - name: Get monitoring pods after rollback
+      ansible.builtin.shell:
+        cmd: "kubectl get pods -n {{ monitoring_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: monitoring_pods
+      changed_when: false
+
+    - name: Display monitoring pods
+      ansible.builtin.debug:
+        msg: "{{ monitoring_pods.stdout_lines }}"
+
+    # ============== SUMMARY ==============
+    - name: Display rollback summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "MONITORING STACK ROLLBACK COMPLETED"
+          - "================================================================"
+          - ""
+          - "The monitoring stack has been rolled back successfully."
+          - ""
+          - "To verify everything is working:"
+          - "  1. Run: ansible-playbook -i inventory.ini 21-verify-monitoring.yml"
+          - "  2. Access Grafana: http://grafana.local"
+          - ""
+          - "To see full rollback history:"
+          - "  helm history {{ helm_release }} -n {{ monitoring_namespace }}"
+          - ""
+          - "To rollback again if needed:"
+          - "  ansible-playbook -i inventory.ini 20-rollback-monitoring.yml"
+          - "  ansible-playbook -i inventory.ini 20-rollback-monitoring.yml -e 'revision=3'"
+          - ""
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ROLLBACK COMPLETE"
+          - "================================================================"
+          - ""
+          - "Next steps:"
+          - "  1. Verify monitoring is working: ansible-playbook -i inventory.ini 21-verify-monitoring.yml"
+          - "  2. Check pod status: kubectl get pods -n monitoring"
+          - "  3. Check Grafana: http://grafana.local"
+          - ""
+          - "================================================================"

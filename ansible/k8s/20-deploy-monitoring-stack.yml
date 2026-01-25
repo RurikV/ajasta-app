@@ -460,8 +460,8 @@
                           port:
                             number: 3000
           EOF
-        environment:
-          KUBECONFIG: /etc/kubernetes/admin.conf
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
 
     - name: Display Ingress creation
       ansible.builtin.debug:
