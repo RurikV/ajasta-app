@@ -1,0 +1,171 @@
+---
+# Rollback Port Forwarding Configuration
+# This playbook stops and disables the port forwarding services
+# Universal - works with any dynamically assigned master IP
+# Usage: ansible-playbook -i inventory.ini 83-rollback-port-forwarding.yml
+
+- name: Discover Master IP
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Get master IP from inventory
+      ansible.builtin.shell:
+        cmd: "grep 'ansible_host=' inventory.ini | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2"
+      register: inventory_ip
+      changed_when: false
+
+    - name: Set master IP fact
+      ansible.builtin.set_fact:
+        master_ip: "{{ inventory_ip.stdout }}"
+
+    - name: Display rollback information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ROLLBACK PORT FORWARDING"
+          - "================================================================"
+          - ""
+          - "Discovered Master IP: {{ master_ip }}"
+          - ""
+          - "This will:"
+          - "  1. Stop http-port-forward service"
+          - "  2. Stop https-port-forward service"
+          - "  3. Disable both services"
+          - "  4. Verify services are stopped"
+          - ""
+          - "After rollback, access will be via NodePorts:"
+          - "  HTTP:  http://{{ master_ip }}:31180/"
+          - "  HTTPS: https://{{ master_ip }}:30577/"
+          - ""
+          - "================================================================"
+
+    - name: Confirm rollback
+      ansible.builtin.pause:
+        prompt: |
+          This will stop and disable port forwarding services.
+
+          Services to be stopped:
+            - http-port-forward (port 80)
+            - https-port-forward (port 443)
+
+          Press Enter to continue or Ctrl+C to cancel.
+
+- name: Rollback Port Forwarding
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    http_port: 80
+    https_port: 443
+
+  tasks:
+    - name: Display rollback configuration
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ROLLING BACK PORT FORWARDING"
+          - "================================================================"
+          - ""
+          - "Stopping services:"
+          - "  - http-port-forward"
+          - "  - https-port-forward"
+          - ""
+
+    # ============== STOP AND DISABLE SERVICES ==============
+    - name: Stop http-port-forward service
+      ansible.builtin.shell:
+        cmd: "systemctl stop http-port-forward"
+      register: stop_http
+      failed_when: false
+
+    - name: Stop https-port-forward service
+      ansible.builtin.shell:
+        cmd: "systemctl stop https-port-forward"
+      register: stop_https
+      failed_when: false
+
+    - name: Disable http-port-forward service
+      ansible.builtin.shell:
+        cmd: "systemctl disable http-port-forward 2>/dev/null || true"
+      register: disable_http
+      changed_when: false
+
+    - name: Disable https-port-forward service
+      ansible.builtin.shell:
+        cmd: "systemctl disable https-port-forward 2>/dev/null || true"
+      register: disable_https
+      changed_when: false
+
+    - name: Display service status
+      ansible.builtin.debug:
+        msg: "✓ Services stopped and disabled"
+
+    # ============== VERIFY SERVICES ARE STOPPED ==============
+    - name: Check http-port-forward status
+      ansible.builtin.shell:
+        cmd: "systemctl is-active http-port-forward"
+      register: http_check
+      failed_when: false
+
+    - name: Check https-port-forward status
+      ansible.builtin.shell:
+        cmd: "systemctl is-active https-port-forward"
+      register: https_check
+      failed_when: false
+
+    - name: Display verification
+      ansible.builtin.debug:
+        msg:
+          - "✓ http-port-forward: {{ http_check.stdout if http_check.rc == 0 else 'inactive/unknown' }}"
+          - "✓ https-port-forward: {{ https_check.stdout if https_check.rc == 0 else 'inactive/unknown' }}"
+
+    # ============== DISPLAY SUMMARY ==============
+    - name: Display rollback summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PORT FORWARDING ROLLBACK COMPLETE"
+          - "================================================================"
+          - ""
+          - "✓ Port forwarding services stopped and disabled"
+          - ""
+          - "ACCESS NOW VIA NODEPORTS:"
+          - "  HTTP:  http://{{ hostvars['localhost']['master_ip'] }}:31180/"
+          - "  HTTPS: https://{{ hostvars['localhost']['master_ip'] }}:30577/"
+          - ""
+          - "TO RE-ENABLE PORT FORWARDING:"
+          - "  ansible-playbook -i inventory.ini 82-configure-port-forwarding.yml"
+          - ""
+          - "TO REMOVE SERVICE FILES (optional):"
+          - "  rm /etc/systemd/system/http-port-forward.service"
+          - "  rm /etc/systemd/system/https-port-forward.service"
+          - "  systemctl daemon-reload"
+          - ""
+          - "================================================================"
+
+- name: Final Instructions
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ROLLBACK COMPLETE"
+          - "================================================================"
+          - ""
+          - "Port forwarding has been disabled."
+          - ""
+          - "Access via NodePorts:"
+          - "  HTTP:  http://{{ master_ip }}:31180/"
+          - "  HTTPS: https://{{ master_ip }}:30577/"
+          - ""
+          - "TEST (from your machine):"
+          - "  curl -H 'Host: ajasta.top' http://{{ master_ip }}:31180/"
+          - "  curl -k -H 'Host: ajasta.top' https://{{ master_ip }}:30577/"
+          - ""
+          - "To re-enable:"
+          - "  ansible-playbook -i inventory.ini 82-configure-port-forwarding.yml"
+          - ""
+          - "================================================================"

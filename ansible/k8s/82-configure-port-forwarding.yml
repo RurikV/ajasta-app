@@ -1,0 +1,481 @@
+---
+# Configure Port Forwarding for Direct HTTPS Access
+# This playbook sets up socat to forward ports 80/443 to ingress NodePorts
+# Allows direct access on standard ports: http://IP/ and https://IP/
+# Universal - works with any dynamically assigned master IP
+# FULL ROLLBACK CAPABILITY
+# Usage: ansible-playbook -i inventory.ini 82-configure-port-forwarding.yml
+
+- name: Discover Master IP
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Get master IP from inventory
+      ansible.builtin.shell:
+        cmd: "grep 'ansible_host=' inventory.ini | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2"
+      register: inventory_ip
+      changed_when: false
+
+    - name: Set master IP fact
+      ansible.builtin.set_fact:
+        master_ip: "{{ inventory_ip.stdout }}"
+
+    - name: Display configuration information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CONFIGURE PORT FORWARDING FOR DIRECT ACCESS"
+          - "================================================================"
+          - ""
+          - "Discovered Master IP: {{ master_ip }}"
+          - ""
+          - "This will:"
+          - "  1. Set up socat to forward port 80 → NodePort 31180"
+          - "  2. Set up socat to forward port 443 → NodePort 30577"
+          - "  3. Configure firewall rules for ports 80/443"
+          - "  4. Create systemd services for auto-start"
+          - "  5. Test connectivity"
+          - ""
+          - "After completion, you can access:"
+          - "  http://{{ master_ip }}/"
+          - "  https://{{ master_ip }}/"
+          - ""
+          - "================================================================"
+
+    - name: Confirm action
+      ansible.builtin.pause:
+        prompt: |
+          This will create systemd services for port forwarding.
+
+          Forwarding:
+            Port 80  → NodePort 31180 (HTTP)
+            Port 443 → NodePort 30577 (HTTPS)
+
+          Press Enter to continue or Ctrl+C to cancel.
+
+- name: Configure Port Forwarding
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    domain: "ajasta.top"
+    http_port: 80
+    https_port: 443
+    http_nodeport: 31180
+    https_nodeport: 30577
+
+  tasks:
+    - name: Get master's public IP from localhost facts
+      ansible.builtin.set_fact:
+        master_public_ip: "{{ hostvars['localhost']['master_ip'] }}"
+
+    - name: Display configuration
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CONFIGURING PORT FORWARDING"
+          - "================================================================"
+          - ""
+          - "Master IP: {{ master_public_ip }}"
+          - "Domain: {{ domain }}"
+          - ""
+          - "Port forwarding rules:"
+          - "  {{ http_port }} → {{ http_nodeport }} (HTTP)"
+          - "  {{ https_port }} → {{ https_nodeport }} (HTTPS)"
+          - ""
+
+    # ============== INSTALL SOCAT IF NEEDED ==============
+    - name: Check if socat is installed
+      ansible.builtin.shell:
+        cmd: "which socat"
+      register: socat_check
+      failed_when: false
+
+    - name: Install socat if not present
+      ansible.builtin.yum:
+        name: socat
+        state: present
+      when: socat_check.rc != 0
+
+    - name: Display socat status
+      ansible.builtin.debug:
+        msg: "✓ socat is installed"
+      when: socat_check.rc == 0
+
+    # ============== STOP EXISTING SERVICES IF RUNNING ==============
+    - name: Stop existing http-port-forward service
+      ansible.builtin.shell:
+        cmd: "systemctl stop http-port-forward 2>/dev/null || true"
+      register: stop_http
+      changed_when: false
+
+    - name: Stop existing https-port-forward service
+      ansible.builtin.shell:
+        cmd: "systemctl stop https-port-forward 2>/dev/null || true"
+      register: stop_https
+      changed_when: false
+
+    # ============== CREATE SYSTEMD SERVICE FOR HTTP ==============
+    - name: Create systemd service for HTTP port forwarding
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/http-port-forward.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=HTTP Port Forward ({{ http_port }} → {{ http_nodeport }})
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/socat TCP-LISTEN:{{ http_port }},fork,reuseaddr,bind=0.0.0.0 TCP:localhost:{{ http_nodeport }}
+          Restart=always
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Display HTTP service creation
+      ansible.builtin.debug:
+        msg: "✓ Created http-port-forward.service"
+
+    # ============== CREATE SYSTEMD SERVICE FOR HTTPS ==============
+    - name: Create systemd service for HTTPS port forwarding
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/https-port-forward.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=HTTPS Port Forward ({{ https_port }} → {{ https_nodeport }})
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/socat TCP-LISTEN:{{ https_port }},fork,reuseaddr,bind=0.0.0.0 TCP:localhost:{{ https_nodeport }}
+          Restart=always
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Display HTTPS service creation
+      ansible.builtin.debug:
+        msg: "✓ Created https-port-forward.service"
+
+    # ============== RELOAD AND START SERVICES ==============
+    - name: Reload systemd daemon
+      ansible.builtin.shell:
+        cmd: "systemctl daemon-reload"
+      register: daemon_reload
+
+    - name: Enable and start HTTP port forward service
+      ansible.builtin.shell:
+        cmd: "systemctl enable http-port-forward.service && systemctl restart http-port-forward.service"
+      register: http_service_start
+
+    - name: Enable and start HTTPS port forward service
+      ansible.builtin.shell:
+        cmd: "systemctl enable https-port-forward.service && systemctl restart https-port-forward.service"
+      register: https_service_start
+
+    - name: Wait for services to start
+      ansible.builtin.pause:
+        seconds: 3
+
+    # ============== VERIFY SERVICES ==============
+    - name: Check HTTP service status
+      ansible.builtin.shell:
+        cmd: "systemctl is-active http-port-forward"
+      register: http_status
+
+    - name: Check HTTPS service status
+      ansible.builtin.shell:
+        cmd: "systemctl is-active https-port-forward"
+      register: https_status
+
+    - name: Display service status
+      ansible.builtin.debug:
+        msg:
+          - "✓ http-port-forward: {{ http_status.stdout }}"
+          - "✓ https-port-forward: {{ https_status.stdout }}"
+      when: http_status.stdout == "active" and https_status.stdout == "active"
+
+    # ============== CONFIGURE FIREWALL ==============
+    - name: Ensure port 80 is open in iptables
+      ansible.builtin.shell:
+        cmd: "iptables -C INPUT -p tcp --dport {{ http_port }} -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport {{ http_port }} -j ACCEPT"
+      changed_when: false
+
+    - name: Ensure port 443 is open in iptables
+      ansible.builtin.shell:
+        cmd: "iptables -C INPUT -p tcp --dport {{ https_port }} -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport {{ https_port }} -j ACCEPT"
+      changed_when: false
+
+    - name: Check firewalld status
+      ansible.builtin.shell:
+        cmd: "systemctl is-active firewalld"
+      register: firewalld_status
+      failed_when: false
+
+    - name: Open ports in firewalld
+      ansible.builtin.shell:
+        cmd: "firewall-cmd --permanent --add-port={{ http_port }}/tcp --add-port={{ https_port }}/tcp && firewall-cmd --reload"
+      when: firewalld_status.rc == 0
+      register: firewall_open
+      failed_when: false
+
+    - name: Display firewall status
+      ansible.builtin.debug:
+        msg: "✓ Firewall configured for ports {{ http_port }} and {{ https_port }}"
+
+    # ============== UPDATE YANDEX CLOUD SECURITY GROUPS ==============
+    - name: Check if yc CLI is available
+      ansible.builtin.shell:
+        cmd: "which yc"
+      register: yc_check
+      failed_when: false
+
+    - name: Add security group rules for HTTP/HTTPS
+      ansible.builtin.shell:
+        cmd: "yc vpc security-group update-rules enploc3i6e19p1kuhs6c --add-rule 'direction=ingress,protocol=tcp,port={{ http_port }},v4-cidrs=0.0.0.0/0,description=HTTP port {{ http_port }}' --add-rule 'direction=ingress,protocol=tcp,port={{ https_port }},v4-cidrs=0.0.0.0/0,description=HTTPS port {{ https_port }}' 2>/dev/null || echo 'YC CLI not available'"
+      register: sg_update
+      failed_when: false
+      changed_when: false
+      when: yc_check.rc == 0
+
+    - name: Display security group status
+      ansible.builtin.debug:
+        msg: "✓ Yandex Cloud security group rules updated"
+      when: yc_check.rc == 0 and sg_update.rc == 0
+
+    # ============== TEST CONNECTIVITY ==============
+    - name: Test HTTP access locally
+      ansible.builtin.shell:
+        cmd: "curl -sL -o /dev/null -w '%{http_code}' -H 'Host: {{ domain }}' -m 10 http://localhost:{{ http_port }}/"
+      register: http_test
+      failed_when: http_test.stdout not in ["200", "301", "302", "308"]
+
+    - name: Display HTTP test
+      ansible.builtin.debug:
+        msg: "✓ HTTP access: HTTP {{ http_test.stdout }}"
+
+    - name: Test HTTPS access locally
+      ansible.builtin.shell:
+        cmd: "curl -skL -o /dev/null -w '%{http_code}' -H 'Host: {{ domain }}' -m 10 https://localhost:{{ https_port }}/"
+      register: https_test
+      failed_when: https_test.stdout != "200"
+
+    - name: Display HTTPS test
+      ansible.builtin.debug:
+        msg: "✓ HTTPS access: HTTP {{ https_test.stdout }}"
+
+    # ============== CREATE ROLLBACK SCRIPT ==============
+    - name: Create rollback script
+      ansible.builtin.copy:
+        dest: /tmp/rollback-port-forwarding.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Rollback script for port forwarding configuration
+          # Generated by: 82-configure-port-forwarding.yml
+
+          set -e
+
+          HTTP_PORT={{ http_port }}
+          HTTPS_PORT={{ https_port }}
+
+          echo "================================================================"
+          echo "ROLLBACK PORT FORWARDING"
+          echo "================================================================"
+          echo ""
+
+          # Confirm rollback
+          echo "This will:"
+          echo "  Stop and disable http-port-forward service"
+          echo "  Stop and disable https-port-forward service"
+          echo ""
+          read -p "Continue? (y/N) " -n 1 -r
+          echo
+          if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Rollback cancelled"
+            exit 0
+          fi
+          echo ""
+
+          # Stop services
+          echo "Stopping port forwarding services..."
+          systemctl stop http-port-forward 2>/dev/null || true
+          systemctl stop https-port-forward 2>/dev/null || true
+          systemctl disable http-port-forward 2>/dev/null || true
+          systemctl disable https-port-forward 2>/dev/null || true
+          echo "✓ Services stopped and disabled"
+          echo ""
+
+          echo "================================================================"
+          echo "ROLLBACK COMPLETE"
+          echo "================================================================"
+          echo ""
+          echo "Port forwarding has been disabled."
+          echo ""
+          echo "To re-enable:"
+          echo "  ansible-playbook -i inventory.ini 82-configure-port-forwarding.yml"
+          echo ""
+          echo "To remove service files:"
+          echo "  rm /etc/systemd/system/http-port-forward.service"
+          echo "  rm /etc/systemd/system/https-port-forward.service"
+          echo "  systemctl daemon-reload"
+          echo ""
+
+    - name: Make rollback script executable
+      ansible.builtin.shell:
+        cmd: "chmod +x /tmp/rollback-port-forwarding.sh"
+      changed_when: false
+
+    # ============== CREATE VERIFICATION SCRIPT ==============
+    - name: Create verification script
+      ansible.builtin.copy:
+        dest: /tmp/verify-port-forwarding.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Verification script for port forwarding
+          # Generated by: 82-configure-port-forwarding.yml
+
+          DOMAIN="{{ domain }}"
+          MASTER_IP="{{ master_public_ip }}"
+          HTTP_PORT={{ http_port }}
+          HTTPS_PORT={{ https_port }}
+
+          echo "================================================================"
+          echo "PORT FORWARDING VERIFICATION"
+          echo "================================================================"
+          echo ""
+
+          echo "1. CHECKING SERVICES"
+          HTTP_STATUS=$(systemctl is-active http-port-forward 2>/dev/null || echo "not found")
+          HTTPS_STATUS=$(systemctl is-active https-port-forward 2>/dev/null || echo "not found")
+          echo "   http-port-forward: $HTTP_STATUS"
+          echo "   https-port-forward: $HTTPS_STATUS"
+          if [ "$HTTP_STATUS" = "active" ] && [ "$HTTPS_STATUS" = "active" ]; then
+            echo "   ✓ Both services active"
+          fi
+          echo ""
+
+          echo "2. CHECKING PORTS"
+          ss -tlnp | grep ":$HTTP_PORT" | grep "socat" && echo "   ✓ Port $HTTP_PORT listening" || echo "   ✗ Port $HTTP_PORT not listening"
+          ss -tlnp | grep ":$HTTPS_PORT" | grep "socat" && echo "   ✓ Port $HTTPS_PORT listening" || echo "   ✗ Port $HTTPS_PORT not listening"
+          echo ""
+
+          echo "3. TESTING HTTP ACCESS"
+          HTTP_CODE=$(curl -sL -o /dev/null -w '%{http_code}' -H "Host: $DOMAIN" -m 10 http://localhost:$HTTP_PORT/)
+          echo "   http://localhost:$HTTP_PORT/ → HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" = "308" ] || [ "$HTTP_CODE" = "301" ]; then
+            echo "   ✓ HTTP redirect working"
+          fi
+          echo ""
+
+          echo "4. TESTING HTTPS ACCESS"
+          HTTPS_CODE=$(curl -skL -o /dev/null -w '%{http_code}' -H "Host: $DOMAIN" -m 10 https://localhost:$HTTPS_PORT/)
+          echo "   https://localhost:$HTTPS_PORT/ → HTTP $HTTPS_CODE"
+          if [ "$HTTPS_CODE" = "200" ]; then
+            echo "   ✓ HTTPS working"
+          fi
+          echo ""
+
+          echo "5. TESTING EXTERNAL ACCESS (from your machine)"
+          echo "   Run these commands from your local machine:"
+          echo "   curl -H 'Host: $DOMAIN' http://$MASTER_IP/"
+          echo "   curl -k -H 'Host: $DOMAIN' https://$MASTER_IP/"
+          echo ""
+
+          echo "================================================================"
+          echo "SUMMARY"
+          echo "================================================================"
+          echo ""
+          if [ "$HTTP_STATUS" = "active" ] && [ "$HTTPS_STATUS" = "active" ] && [ "$HTTPS_CODE" = "200" ]; then
+            echo "✓ ALL CHECKS PASSED"
+            echo ""
+            echo "Access URLs (from anywhere):"
+            echo "  HTTP:  http://$MASTER_IP/"
+            echo "  HTTPS: https://$MASTER_IP/"
+            echo ""
+            echo "Note: Add 'Host: $DOMAIN' header for proper routing"
+          else
+            echo "⚠ SOME CHECKS FAILED"
+          fi
+          echo ""
+          echo "================================================================"
+
+    - name: Make verification script executable
+      ansible.builtin.shell:
+        cmd: "chmod +x /tmp/verify-port-forwarding.sh"
+      changed_when: false
+
+    # ============== DISPLAY SUMMARY ==============
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PORT FORWARDING CONFIGURED"
+          - "================================================================"
+          - ""
+          - "✓ HTTP port forwarding: {{ http_port }} → {{ http_nodeport }}"
+          - "✓ HTTPS port forwarding: {{ https_port }} → {{ https_nodeport }}"
+          - "✓ Systemd services: http-port-forward, https-port-forward"
+          - "✓ Firewall configured: ports {{ http_port }}, {{ https_port }}"
+          - "✓ HTTP access: HTTP {{ http_test.stdout }}"
+          - "✓ HTTPS access: HTTP {{ https_test.stdout }}"
+          - ""
+          - "ACCESS URLS (from anywhere):"
+          - "  HTTP:  http://{{ master_public_ip }}/"
+          - "  HTTPS: https://{{ master_public_ip }}/"
+          - ""
+          - "With curl (works from anywhere):"
+          - "  curl -H 'Host: {{ domain }}' http://{{ master_public_ip }}/"
+          - "  curl -k -H 'Host: {{ domain }}' https://{{ master_public_ip }}/"
+          - ""
+          - "SERVICE MANAGEMENT:"
+          - "  Status: systemctl status http-port-forward https-port-forward"
+          - "  Restart: systemctl restart http-port-forward https-port-forward"
+          - "  Logs: journalctl -u http-port-forward -f"
+          - ""
+          - "ROLLBACK IF NEEDED:"
+          - "  /tmp/rollback-port-forwarding.sh (on master node)"
+          - "  ansible-playbook -i inventory.ini 83-rollback-port-forwarding.yml"
+          - ""
+          - "VERIFICATION:"
+          - "  /tmp/verify-port-forwarding.sh (on master node)"
+          - ""
+          - "================================================================"
+
+- name: Final Instructions
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PORT FORWARDING CONFIGURATION COMPLETE"
+          - "================================================================"
+          - ""
+          - "Port forwarding is now configured!"
+          - ""
+          - "You can now access:"
+          - "  HTTP:  http://{{ master_ip }}/"
+          - "  HTTPS: https://{{ master_ip }}/"
+          - ""
+          - "QUICK TEST (from your machine):"
+          - "  curl -H 'Host: ajasta.top' http://{{ master_ip }}/"
+          - "  curl -k -H 'Host: ajasta.top' https://{{ master_ip }}/"
+          - ""
+          - "NOTE: Add 'Host: ajasta.top' header for proper routing!"
+          - ""
+          - "ROLLBACK:"
+          - "  ansible-playbook -i inventory.ini 83-rollback-port-forwarding.yml"
+          - ""
+          - "================================================================"

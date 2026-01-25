@@ -1,0 +1,306 @@
+---
+# Add Direct IP Access to Ingress
+# This playbook adds an ingress rule to allow direct IP access without Host header
+# Allows accessing https://178.154.192.180/ directly in browser
+# Universal - works with any dynamically assigned master IP
+# FULL ROLLBACK CAPABILITY
+# Usage: ansible-playbook -i inventory.ini 84-add-direct-ip-ingress.yml
+
+- name: Discover Master IP
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Get master IP from inventory
+      ansible.builtin.shell:
+        cmd: "grep 'ansible_host=' inventory.ini | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2"
+      register: inventory_ip
+      changed_when: false
+
+    - name: Set master IP fact
+      ansible.builtin.set_fact:
+        master_ip: "{{ inventory_ip.stdout }}"
+
+    - name: Display configuration information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ADD DIRECT IP ACCESS TO INGRESS"
+          - "================================================================"
+          - ""
+          - "Discovered Master IP: {{ master_ip }}"
+          - ""
+          - "This will:"
+          - "  1. Backup current ingress configuration"
+          - "  2. Add ingress rule for direct IP access"
+          - "  3. Allow https://{{ master_ip }}/ in browser"
+          - "  4. Test connectivity"
+          - ""
+          - "After completion, you can access:"
+          - "  https://ajasta.top/ (with Host header)"
+          - "  https://{{ master_ip }}/ (direct IP access)"
+          - ""
+          - "================================================================"
+
+    - name: Confirm action
+      ansible.builtin.pause:
+        prompt: |
+          This will add a direct IP access rule to the ingress.
+
+          New rule:
+            Host: {{ master_ip }}
+            Path: /
+            Backend: ajasta-frontend
+
+          Press Enter to continue or Ctrl+C to cancel.
+
+- name: Add Direct IP Access
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    domain: "ajasta.top"
+    ajasta_namespace: "ajasta"
+    ingress_name: "ajasta-ingress"
+    backup_dir: "/tmp/ingress-ip-access-backup"
+
+  tasks:
+    - name: Get master's public IP from localhost facts
+      ansible.builtin.set_fact:
+        master_public_ip: "{{ hostvars['localhost']['master_ip'] }}"
+
+    - name: Display configuration
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ADDING DIRECT IP ACCESS TO INGRESS"
+          - "================================================================"
+          - ""
+          - "Master IP: {{ master_public_ip }}"
+          - "Domain: {{ domain }}"
+          - "Ingress: {{ ingress_name }}"
+          - "Namespace: {{ ajasta_namespace }}"
+          - ""
+
+    # ============== BACKUP CURRENT INGRESS ==============
+    - name: Create backup directory
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Backup current ingress
+      ansible.builtin.shell:
+        cmd: "kubectl get ingress {{ ingress_name }} -n {{ ajasta_namespace }} -o yaml > {{ backup_dir }}/{{ ingress_name }}.yaml"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_backup
+
+    - name: Display backup status
+      ansible.builtin.debug:
+        msg: "✓ Backed up ingress to {{ backup_dir }}/"
+
+    # ============== GET CURRENT INGRESS CONFIGURATION ==============
+    - name: Get current ingress YAML
+      ansible.builtin.shell:
+        cmd: "kubectl get ingress {{ ingress_name }} -n {{ ajasta_namespace }} -o yaml"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: current_ingress
+
+    # ============== ADD DIRECT IP RULE ==============
+    - name: Create patch file with new host rule
+      ansible.builtin.copy:
+        dest: /tmp/ingress-patch.yaml
+        mode: '0644'
+        content: |
+          spec:
+            rules:
+              - host: {{ master_public_ip }}
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ajasta-frontend
+                          port:
+                            number: 80
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ajasta-backend
+                          port:
+                            number: 8090
+
+    - name: Apply ingress patch
+      ansible.builtin.shell:
+        cmd: "kubectl patch ingress {{ ingress_name }} -n {{ ajasta_namespace }} --patch-file /tmp/ingress-patch.yaml --type=strategic"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_patch
+
+    - name: Display patch result
+      ansible.builtin.debug:
+        msg: "✓ Added direct IP access rule to ingress"
+
+    - name: Wait for ingress update
+      ansible.builtin.pause:
+        seconds: 5
+
+    # ============== VERIFY INGRESS ==============
+    - name: Get updated ingress
+      ansible.builtin.shell:
+        cmd: "kubectl get ingress {{ ingress_name }} -n {{ ajasta_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: updated_ingress
+
+    - name: Display updated ingress
+      ansible.builtin.debug:
+        msg: "{{ updated_ingress.stdout_lines }}"
+
+    # ============== TEST CONNECTIVITY ==============
+    - name: Test access with domain Host header
+      ansible.builtin.shell:
+        cmd: "curl -skL -o /dev/null -w '%{http_code}' -H 'Host: {{ domain }}' -m 10 https://localhost:443/"
+      register: domain_test
+      failed_when: domain_test.stdout != "200"
+
+    - name: Display domain test
+      ansible.builtin.debug:
+        msg: "✓ Access with Host: {{ domain }} → HTTP {{ domain_test.stdout }}"
+
+    - name: Test access with IP Host header
+      ansible.builtin.shell:
+        cmd: "curl -skL -o /dev/null -w '%{http_code}' -H 'Host: {{ master_public_ip }}' -m 10 https://localhost:443/"
+      register: ip_test
+      failed_when: ip_test.stdout != "200"
+
+    - name: Display IP test
+      ansible.builtin.debug:
+        msg: "✓ Access with Host: {{ master_public_ip }} → HTTP {{ ip_test.stdout }}"
+
+    # ============== CREATE ROLLBACK SCRIPT ==============
+    - name: Create rollback script
+      ansible.builtin.copy:
+        dest: /tmp/rollback-direct-ip-ingress.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Rollback script for direct IP ingress rule
+          # Generated by: 84-add-direct-ip-ingress.yml
+
+          set -e
+
+          INGRESS="{{ ingress_name }}"
+          NAMESPACE="{{ ajasta_namespace }}"
+          BACKUP_DIR="{{ backup_dir }}"
+          MASTER_IP="{{ master_public_ip }}"
+
+          echo "================================================================"
+          echo "ROLLBACK DIRECT IP INGRESS RULE"
+          echo "================================================================"
+          echo ""
+
+          # Confirm rollback
+          echo "This will:"
+          echo "  Remove ingress rule for direct IP access"
+          echo "  Ingress: $INGRESS"
+          echo "  Namespace: $NAMESPACE"
+          echo "  Host to remove: $MASTER_IP"
+          echo ""
+          read -p "Continue? (y/N) " -n 1 -r
+          echo
+          if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Rollback cancelled"
+            exit 0
+          fi
+          echo ""
+
+          # Restore from backup
+          echo "Restoring ingress from backup..."
+          kubectl apply -f "$BACKUP_DIR/{{ ingress_name }}.yaml"
+          echo "✓ Ingress restored"
+          echo ""
+
+          echo "================================================================"
+          echo "ROLLBACK COMPLETE"
+          echo "================================================================"
+          echo ""
+          echo "Direct IP access rule has been removed."
+          echo ""
+          echo "Access now available:"
+          echo "  - With Host header: https://$MASTER_IP/ (Host: {{ domain }})"
+          echo ""
+          echo "To re-add direct IP access:"
+          echo "  ansible-playbook -i inventory.ini 84-add-direct-ip-ingress.yml"
+          echo ""
+          echo "Backup files preserved at: $BACKUP_DIR"
+          echo ""
+
+    - name: Make rollback script executable
+      ansible.builtin.shell:
+        cmd: "chmod +x /tmp/rollback-direct-ip-ingress.sh"
+      changed_when: false
+
+    # ============== DISPLAY SUMMARY ==============
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DIRECT IP ACCESS ADDED TO INGRESS"
+          - "================================================================"
+          - ""
+          - "✓ Ingress updated with direct IP access rule"
+          - "✓ Host added: {{ master_public_ip }}"
+          - "✓ Access with Host: {{ domain }} → HTTP {{ domain_test.stdout }}"
+          - "✓ Access with Host: {{ master_public_ip }} → HTTP {{ ip_test.stdout }}"
+          - ""
+          - "ACCESS URLS (from anywhere):"
+          - "  With domain Host header: https://{{ master_public_ip }}/ (Host: {{ domain }})"
+          - "  Direct IP access: https://{{ master_public_ip }}/ (Host: {{ master_public_ip }})"
+          - ""
+          - "TEST (from your machine):"
+          - "  curl -k -H 'Host: {{ domain }}' https://{{ master_public_ip }}/"
+          - "  curl -k https://{{ master_public_ip }}/"
+          - ""
+          - "BROWSER ACCESS:"
+          - "  Open: https://{{ master_public_ip }}/"
+          - "  Note: Will work directly in browser now!"
+          - ""
+          - "ROLLBACK IF NEEDED:"
+          - "  /tmp/rollback-direct-ip-ingress.sh (on master node)"
+          - "  ansible-playbook -i inventory.ini 85-rollback-direct-ip-ingress.yml"
+          - ""
+          - "BACKUP LOCATION: {{ backup_dir }}"
+          - ""
+
+- name: Final Instructions
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DIRECT IP ACCESS CONFIGURED"
+          - "================================================================"
+          - ""
+          - "You can now access the frontend directly in your browser!"
+          - ""
+          - "ACCESS URLS:"
+          - "  Browser: https://{{ master_ip }}/"
+          - "  cURL: curl -k https://{{ master_ip }}/"
+          - ""
+          - "TEST NOW (from your machine):"
+          - "  Open https://{{ master_ip }}/ in your browser!"
+          - ""
+          - "NOTE: You'll see a certificate warning (self-signed cert)"
+          - "      This is normal - proceed to the site"
+          - ""
+          - "ROLLBACK:"
+          - "  ansible-playbook -i inventory.ini 85-rollback-direct-ip-ingress.yml"
+          - ""
+          - "================================================================"

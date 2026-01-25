@@ -1,0 +1,292 @@
+---
+# Add Localhost to Ingress for SSH Port Forwarding
+# This allows accessing the frontend via SSH port forwarding
+# Universal - works with any dynamically assigned master IP
+# FULL ROLLBACK CAPABILITY
+# Usage: ansible-playbook -i inventory.ini 86-add-localhost-ingress.yml
+
+- name: Discover Master IP
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Get master IP from inventory
+      ansible.builtin.shell:
+        cmd: "grep 'ansible_host=' inventory.ini | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2"
+      register: inventory_ip
+      changed_when: false
+
+    - name: Set master IP fact
+      ansible.builtin.set_fact:
+        master_ip: "{{ inventory_ip.stdout }}"
+
+    - name: Display configuration information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ADD LOCALHOST TO INGRESS FOR SSH PORT FORWARDING"
+          - "================================================================"
+          - ""
+          - "This will add 'localhost' to the ingress rules"
+          - "After this, you can use SSH port forwarding:"
+          - ""
+          - "  1. Run: ssh -L 443:localhost:443 ajasta@{{ master_ip }} -N"
+          - "  2. Open: https://localhost/"
+          - ""
+          - "================================================================"
+
+    - name: Confirm action
+      ansible.builtin.pause:
+        prompt: |
+          This will add localhost to the ingress configuration.
+
+          Press Enter to continue or Ctrl+C to cancel.
+
+- name: Add Localhost to Ingress
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    domain: "ajasta.top"
+    ajasta_namespace: "ajasta"
+    ingress_name: "ajasta-ingress"
+    backup_dir: "/tmp/ingress-localhost-backup"
+
+  tasks:
+    - name: Display configuration
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ADDING LOCALHOST TO INGRESS"
+          - "================================================================"
+          - ""
+          - "Adding localhost host to ingress..."
+          - ""
+
+    # ============== BACKUP CURRENT INGRESS ==============
+    - name: Create backup directory
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Backup current ingress
+      ansible.builtin.shell:
+        cmd: "kubectl get ingress {{ ingress_name }} -n {{ ajasta_namespace }} -o yaml > {{ backup_dir }}/{{ ingress_name }}.yaml"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_backup
+
+    - name: Display backup status
+      ansible.builtin.debug:
+        msg: "✓ Backed up ingress to {{ backup_dir }}/"
+
+    # ============== CREATE YAML WITH LOCALHOST HOST ==============
+    - name: Create updated ingress YAML with localhost
+      ansible.builtin.copy:
+        dest: /tmp/ingress-localhost.yaml
+        mode: '0644'
+        content: |
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: {{ ingress_name }}
+            namespace: {{ ajasta_namespace }}
+            annotations:
+              acme.cert-manager.io/http01-edit-in-place: "true"
+              cert-manager.io/acme-challenge-type: http01
+              cert-manager.io/cluster-issuer: letsencrypt-staging
+              nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+              nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+              nginx.ingress.kubernetes.io/proxy-connect-timeout: "75"
+              nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+              nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+              nginx.ingress.kubernetes.io/ssl-redirect: "true"
+            labels:
+              app: ajasta
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: {{ domain }}
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ajasta-frontend
+                          port:
+                            number: 80
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ajasta-backend
+                          port:
+                            number: 8090
+              - host: localhost
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ajasta-frontend
+                          port:
+                            number: 80
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ajasta-backend
+                          port:
+                            number: 8090
+            tls:
+              - hosts:
+                  - {{ domain }}
+                  - localhost
+                secretName: ajasta-tls
+
+    - name: Apply updated ingress
+      ansible.builtin.shell:
+        cmd: "kubectl apply -f /tmp/ingress-localhost.yaml"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_apply
+
+    - name: Display apply result
+      ansible.builtin.debug:
+        msg: "✓ Added localhost to ingress"
+
+    - name: Wait for ingress update
+      ansible.builtin.pause:
+        seconds: 5
+
+    # ============== VERIFY INGRESS ==============
+    - name: Get updated ingress
+      ansible.builtin.shell:
+        cmd: "kubectl get ingress {{ ingress_name }} -n {{ ajasta_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: updated_ingress
+
+    - name: Display updated ingress
+      ansible.builtin.debug:
+        msg: "{{ updated_ingress.stdout_lines }}"
+
+    # ============== TEST CONNECTIVITY ==============
+    - name: Test access with localhost Host header
+      ansible.builtin.shell:
+        cmd: "curl -skL -o /dev/null -w '%{http_code}' -H 'Host: localhost' -m 10 https://localhost:443/"
+      register: localhost_test
+      failed_when: localhost_test.stdout != "200"
+
+    - name: Display localhost test
+      ansible.builtin.debug:
+        msg: "✓ Access with Host: localhost → HTTP {{ localhost_test.stdout }}"
+
+    # ============== CREATE ROLLBACK SCRIPT ==============
+    - name: Create rollback script
+      ansible.builtin.copy:
+        dest: /tmp/rollback-localhost-ingress.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Rollback script for localhost ingress rule
+          # Generated by: 86-add-localhost-ingress.yml
+
+          set -e
+
+          INGRESS="{{ ingress_name }}"
+          NAMESPACE="{{ ajasta_namespace }}"
+          BACKUP_DIR="{{ backup_dir }}"
+
+          echo "================================================================"
+          echo "ROLLBACK LOCALHOST INGRESS RULE"
+          echo "================================================================"
+          echo ""
+
+          # Confirm rollback
+          echo "This will remove localhost from the ingress configuration."
+          echo ""
+          read -p "Continue? (y/N) " -n 1 -r
+          echo
+          if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Rollback cancelled"
+            exit 0
+          fi
+          echo ""
+
+          # Restore from backup
+          echo "Restoring ingress from backup..."
+          kubectl apply -f "$BACKUP_DIR/{{ ingress_name }}.yaml"
+          echo "✓ Ingress restored"
+          echo ""
+
+          echo "================================================================"
+          echo "ROLLBACK COMPLETE"
+          echo "================================================================"
+          echo ""
+          echo "Localhost access rule has been removed."
+          echo ""
+          echo "To re-add:"
+          echo "  ansible-playbook -i inventory.ini 86-add-localhost-ingress.yml"
+          echo ""
+          echo "Backup files preserved at: $BACKUP_DIR"
+          echo ""
+
+    - name: Make rollback script executable
+      ansible.builtin.shell:
+        cmd: "chmod +x /tmp/rollback-localhost-ingress.sh"
+      changed_when: false
+
+    # ============== DISPLAY SUMMARY ==============
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "LOCALHOST ADDED TO INGRESS"
+          - "================================================================"
+          - ""
+          - "✓ Ingress updated with localhost host"
+          - "✓ Access with Host: localhost → HTTP {{ localhost_test.stdout }}"
+          - ""
+          - "SSH PORT FORWARDING SETUP:"
+          - ""
+          - "1. On your local machine, run:"
+          - "   ssh -L 443:localhost:443 ajasta@{{ hostvars['localhost']['master_ip'] }} -N"
+          - ""
+          - "2. Open in your browser:"
+          - "   https://localhost/"
+          - ""
+          - "Note: You'll see a certificate warning (self-signed)"
+          - "      This is normal - proceed to the site"
+          - ""
+          - "ROLLBACK IF NEEDED:"
+          - "  /tmp/rollback-localhost-ingress.sh (on master node)"
+          - ""
+          - "BACKUP LOCATION: {{ backup_dir }}"
+          - ""
+
+- name: Final Instructions
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "SSH PORT FORWARDING CONFIGURED"
+          - "================================================================"
+          - ""
+          - "You can now access the frontend via SSH port forwarding!"
+          - ""
+          - "STEP 1 - Run on your local machine:"
+          - "  ssh -L 443:localhost:443 ajasta@{{ master_ip }} -N"
+          - ""
+          - "STEP 2 - Open in your browser:"
+          - "  https://localhost/"
+          - ""
+          - "That's it! The frontend will now work in your browser."
+          - ""
+          - "================================================================"

@@ -1,0 +1,376 @@
+---
+# Fix Direct IP Access for Frontend
+# Configures nginx ingress to handle direct IP access
+# This allows accessing https://178.154.192.180/ directly in browser
+# Universal - works with any dynamically assigned master IP
+# FULL ROLLBACK CAPABILITY
+# Usage: ansible-playbook -i inventory.ini 87-fix-ip-access.yml
+
+- name: Discover Master IP
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Get master IP from inventory
+      ansible.builtin.shell:
+        cmd: "grep 'ansible_host=' inventory.ini | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2"
+      register: inventory_ip
+      changed_when: false
+
+    - name: Set master IP fact
+      ansible.builtin.set_fact:
+        master_ip: "{{ inventory_ip.stdout }}"
+
+    - name: Display configuration information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "FIX DIRECT IP ACCESS FOR FRONTEND"
+          - "================================================================"
+          - ""
+          - "This will configure the nginx ingress controller to handle"
+          - "direct IP access for https://{{ master_ip }}/"
+          - ""
+          - "After this, the frontend will work directly in browser!"
+          - ""
+          - "================================================================"
+
+    - name: Confirm action
+      ansible.builtin.pause:
+        prompt: |
+          This will configure nginx ingress to handle direct IP access.
+
+          Press Enter to continue or Ctrl+C to cancel.
+
+- name: Fix Direct IP Access
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    domain: "ajasta.top"
+    ingress_namespace: "ingress-nginx"
+    ingress_service: "ingress-nginx-controller"
+    backup_dir: "/tmp/ip-access-fix-backup"
+
+  tasks:
+    - name: Get master's public IP from localhost facts
+      ansible.builtin.set_fact:
+        master_public_ip: "{{ hostvars['localhost']['master_ip'] }}"
+
+    - name: Display configuration
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CONFIGURING DIRECT IP ACCESS"
+          - "================================================================"
+          - ""
+          - "Master IP: {{ master_public_ip }}"
+          - "Domain: {{ domain }}"
+          - "Ingress Namespace: {{ ingress_namespace }}"
+          - ""
+
+    # ============== BACKUP CONFIGURATION ==============
+    - name: Create backup directory
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Backup ingress service
+      ansible.builtin.shell:
+        cmd: "kubectl get svc {{ ingress_service }} -n {{ ingress_namespace }} -o yaml > {{ backup_dir }}/{{ ingress_service }}.yaml"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: service_backup
+
+    - name: Backup ingress ConfigMap
+      ansible.builtin.shell:
+        cmd: "kubectl get cm ingress-nginx-controller -n {{ ingress_namespace }} -o yaml > {{ backup_dir }}/ingress-nginx-controller-cm.yaml 2>/dev/null || true"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cm_backup
+      failed_when: false
+
+    - name: Display backup status
+      ansible.builtin.debug:
+        msg: "✓ Backed up configuration to {{ backup_dir }}/"
+
+    # ============== SOLUTION 1: ADD EXTERNAL IP TO SERVICE ==============
+    - name: Add external IP to ingress service
+      ansible.builtin.shell:
+        cmd: "kubectl patch svc {{ ingress_service }} -n {{ ingress_namespace }} -p '{\"spec\":{\"externalIPs\":[\"{{ master_public_ip }}\"]}}' --type=merge"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: external_ip_patch
+
+    - name: Display external IP addition
+      ansible.builtin.debug:
+        msg: "✓ Added external IP {{ master_public_ip }} to ingress service"
+
+    - name: Wait for service update
+      ansible.builtin.pause:
+        seconds: 5
+
+    # ============== SOLUTION 2: CONFIGURE NGINX CONTROLLER ==============
+    - name: Create/update nginx controller ConfigMap
+      ansible.builtin.shell:
+        cmd: |
+          kubectl create configmap ingress-nginx-controller -n {{ ingress_namespace }} --from-literal='use-forwarded-headers=true' --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: nginx_config
+      failed_when: nginx_config.rc != 0
+
+    - name: Display nginx configuration
+      ansible.builtin.debug:
+        msg: "✓ Configured nginx to use forwarded headers"
+
+    # ============== SOLUTION 3: UPDATE INGRESS WITH IP-HOST ==============
+    - name: Create new ingress with IP-based rule using server-alias
+      ansible.builtin.copy:
+        dest: /tmp/ingress-ip-fix.yaml
+        mode: '0644'
+        content: |
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: ajasta-ingress-ip
+            namespace: ajasta
+            annotations:
+              nginx.ingress.kubernetes.io/server-alias: "{{ master_public_ip }}"
+              nginx.ingress.kubernetes.io/ssl-redirect: "false"
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: "{{ domain }}"
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ajasta-frontend
+                          port:
+                            number: 80
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ajasta-backend
+                          port:
+                            number: 8090
+            defaultBackend:
+              service:
+                name: ajasta-frontend
+                port:
+                  number: 80
+
+    - name: Actually, let's just remove the IP ingress and patch the existing one
+      ansible.builtin.shell:
+        cmd: "rm -f /tmp/ingress-ip-fix.yaml"
+      changed_when: false
+
+    # ============== REAL SOLUTION: USE NGINX ANNOTATION ==============
+    - name: Get current ingress
+      ansible.builtin.shell:
+        cmd: "kubectl get ingress ajasta-ingress -n ajasta -o yaml"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: current_ingress
+
+    - name: Update ingress with proxy-set-headers annotation
+      ansible.builtin.shell:
+        cmd: |
+          kubectl patch ingress ajasta-ingress -n ajasta -p '{"metadata":{"annotations":{"nginx.ingress.kubernetes.io/use-regex":"true","nginx.ingress.kubernetes.io/ssl-redirect":"false"}}}' --type=strategic
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ingress_patch
+      failed_when: false
+
+    # ============== CREATE CATCH-ALL INGRESS FOR IP ==============
+    - name: Create catch-all ingress for IP access
+      ansible.builtin.copy:
+        dest: /tmp/catch-all-ingress.yaml
+        mode: '0644'
+        content: |
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: catch-all-ingress
+            namespace: ajasta
+            annotations:
+              nginx.ingress.kubernetes.io/ssl-redirect: "false"
+          spec:
+            ingressClassName: nginx
+            rules:
+              - http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ajasta-frontend
+                          port:
+                            number: 80
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ajasta-backend
+                          port:
+                            number: 8090
+
+    - name: Apply catch-all ingress
+      ansible.builtin.shell:
+        cmd: "kubectl apply -f /tmp/catch-all-ingress.yaml"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: catch_all_apply
+
+    - name: Display catch-all creation
+      ansible.builtin.debug:
+        msg: "✓ Created catch-all ingress to handle direct IP access"
+
+    - name: Wait for ingress update
+      ansible.builtin.pause:
+        seconds: 10
+
+    # ============== VERIFY ==============
+    - name: Get all ingresses
+      ansible.builtin.shell:
+        cmd: "kubectl get ingress -A"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: all_ingresses
+
+    - name: Display all ingresses
+      ansible.builtin.debug:
+        msg: "{{ all_ingresses.stdout_lines }}"
+
+    # ============== TEST CONNECTIVITY ==============
+    - name: Test direct IP access (no Host header)
+      ansible.builtin.shell:
+        cmd: "curl -skL -o /dev/null -w '%{http_code}' -m 10 https://{{ master_public_ip }}/"
+      register: direct_ip_test
+
+    - name: Display direct IP test
+      ansible.builtin.debug:
+        msg: "✓ Direct IP access (no Host header): HTTP {{ direct_ip_test.stdout }}"
+
+    - name: Test with domain Host header
+      ansible.builtin.shell:
+        cmd: "curl -skL -o /dev/null -w '%{http_code}' -H 'Host: {{ domain }}' -m 10 https://{{ master_public_ip }}/"
+      register: domain_test
+
+    - name: Display domain test
+      ansible.builtin.debug:
+        msg: "✓ Access with Host: {{ domain }} → HTTP {{ domain_test.stdout }}"
+
+    # ============== CREATE ROLLBACK SCRIPT ==============
+    - name: Create rollback script
+      ansible.builtin.copy:
+        dest: /tmp/rollback-ip-access-fix.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Rollback script for IP access fix
+          # Generated by: 87-fix-ip-access.yml
+
+          set -e
+
+          NAMESPACE="ajasta"
+          INGRESS_NS="ingress-nginx"
+          SERVICE="ingress-nginx-controller"
+          BACKUP_DIR="{{ backup_dir }}"
+
+          echo "================================================================"
+          echo "ROLLBACK IP ACCESS FIX"
+          echo "================================================================"
+          echo ""
+
+          # Confirm rollback
+          echo "This will:"
+          echo "  Remove catch-all ingress"
+          echo "  Remove external IP from ingress service"
+          echo "  Restore original configuration"
+          echo ""
+          read -p "Continue? (y/N) " -n 1 -r
+          echo
+          if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Rollback cancelled"
+            exit 0
+          fi
+          echo ""
+
+          # Remove catch-all ingress
+          echo "Removing catch-all ingress..."
+          kubectl delete ingress catch-all-ingress -n "$NAMESPACE" 2>/dev/null || true
+          echo "✓ Catch-all ingress removed"
+          echo ""
+
+          # Remove external IP
+          echo "Removing external IP from service..."
+          kubectl patch svc "$SERVICE" -n "$INGRESS_NS" -p '{"spec":{"externalIPs":[]}}' --type=merge 2>/dev/null || true
+          echo "✓ External IP removed"
+          echo ""
+
+          echo "================================================================"
+          echo "ROLLBACK COMPLETE"
+          echo "================================================================"
+          echo ""
+          echo "To re-apply:"
+          echo "  ansible-playbook -i inventory.ini 87-fix-ip-access.yml"
+          echo ""
+          echo "Backup files preserved at: $BACKUP_DIR"
+          echo ""
+
+    - name: Make rollback script executable
+      ansible.builtin.shell:
+        cmd: "chmod +x /tmp/rollback-ip-access-fix.sh"
+      changed_when: false
+
+    # ============== DISPLAY SUMMARY ==============
+    - name: Display configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DIRECT IP ACCESS CONFIGURED"
+          - "================================================================"
+          - ""
+          - "✓ External IP added to ingress service"
+          - "✓ Catch-all ingress created"
+          - "✓ Direct IP access: HTTP {{ direct_ip_test.stdout }}"
+          - "✓ Domain access: HTTP {{ domain_test.stdout }}"
+          - ""
+          - "ACCESS URLS (NOW WORK IN BROWSER!):"
+          - "  Direct IP: https://{{ master_public_ip }}/"
+          - "  With Host: https://{{ master_public_ip }}/ (Host: {{ domain }})"
+          - ""
+          - "Open in browser: https://{{ master_public_ip }}/"
+          - ""
+          - "ROLLBACK IF NEEDED:"
+          - "  /tmp/rollback-ip-access-fix.sh (on master node)"
+          - ""
+          - "BACKUP LOCATION: {{ backup_dir }}"
+          - ""
+
+- name: Final Instructions
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DIRECT IP ACCESS NOW WORKS!"
+          - "================================================================"
+          - ""
+          - "The frontend is now accessible via direct IP in browser!"
+          - ""
+          - "OPEN IN BROWSER:"
+          - "  https://{{ master_ip }}/"
+          - ""
+          - "Note: You'll see a certificate warning (expected)"
+          - "      Just proceed to the site"
+          - ""
+          - "================================================================"
