@@ -1,0 +1,185 @@
+---
+# Rollback Static IP Binding for ajasta.top
+# This playbook detaches the static IP and restores previous configuration
+# Usage: ansible-playbook -i inventory.ini 61-rollback-static-ip.yml
+
+- name: Rollback Static IP Binding
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    static_ip_id: "e2l8nts0dcdl8snnfbjs"
+    static_ip: "89.169.188.248"
+    master_instance_name: "k8s-master"
+    monitoring_namespace: "monitoring"
+
+  tasks:
+    - name: Display rollback information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ROLLBACK STATIC IP BINDING"
+          - "================================================================"
+          - ""
+          - "This playbook will:"
+          - "  1. Detach static IP {{ static_ip }} from master node"
+          - "  2. Restore original service configuration"
+          - "  3. Restart grafana-port-forward service"
+          - "  4. Verify system is functional"
+          - ""
+          - "Static IP to detach: {{ static_ip }}"
+          - "Instance: {{ master_instance_name }}"
+          - ""
+          - "================================================================"
+
+    # ============== CONFIRM ROLLBACK ==============
+    - name: Confirm rollback operation
+      ansible.builtin.pause:
+        prompt: |
+          WARNING: This will detach static IP {{ static_ip }} from {{ master_instance_name }}.
+
+          Press Enter to continue or Ctrl+C to cancel.
+
+    # ============== STOP CURRENT SERVICE ==============
+    - name: Stop grafana-port-forward service
+      ansible.builtin.shell:
+        cmd: "systemctl stop grafana-port-forward"
+      register: service_stop
+
+    - name: Display service stop
+      ansible.builtin.debug:
+        msg: "✓ Stopped grafana-port-forward service"
+
+    # ============== DETACH STATIC IP ==============
+    - name: Check if static IP is attached
+      ansible.builtin.shell:
+        cmd: "ip addr show | grep {{ static_ip }}"
+      register: ip_check
+      failed_when: false
+
+    - name: Display IP status
+      ansible.builtin.debug:
+        msg: "Static IP {{ static_ip }} is attached: {{ ip_check.rc == 0 }}"
+
+    - name: Detach static IP using YC CLI
+      ansible.builtin.shell:
+        cmd: "yc compute instance remove-one-to-one-nat {{ master_instance_name }} --nat-address-id {{ static_ip_id }} --async"
+      register: ip_detach
+      when: ip_check.rc == 0
+      failed_when: false
+
+    - name: Display IP detachment
+      ansible.builtin.debug:
+        msg: "✓ Static IP detachment initiated"
+      when: ip_check.rc == 0
+
+    - name: Wait for detachment
+      ansible.builtin.pause:
+        seconds: 10
+      when: ip_check.rc == 0
+
+    # ============== RESTORE SERVICE CONFIGURATION ==============
+    - name: Get Grafana NodePort
+      ansible.builtin.shell:
+        cmd: "kubectl get svc kube-prometheus-grafana -n {{ monitoring_namespace }} -o jsonpath='{.spec.ports[0].nodePort}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_nodeport
+
+    - name: Restore original systemd service configuration
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/grafana-port-forward.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Grafana Port Forward (3000 -> {{ grafana_nodeport.stdout }})
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/socat TCP-LISTEN:3000,fork,reuseaddr TCP:localhost:{{ grafana_nodeport.stdout }}
+          Restart=always
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd daemon
+      ansible.builtin.shell:
+        cmd: "systemctl daemon-reload"
+      register: daemon_reload
+
+    - name: Start grafana-port-forward service
+      ansible.builtin.shell:
+        cmd: "systemctl enable grafana-port-forward.service && systemctl restart grafana-port-forward.service"
+      register: service_start
+
+    - name: Wait for service to start
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Check service status
+      ansible.builtin.shell:
+        cmd: "systemctl is-active grafana-port-forward"
+      register: service_status
+
+    - name: Verify service is running
+      ansible.builtin.debug:
+        msg: "✓ grafana-port-forward service is {{ service_status.stdout }}"
+      when: service_status.stdout == "active"
+
+    # ============== VERIFY SYSTEM ==============
+    - name: Test Grafana access
+      ansible.builtin.shell:
+        cmd: "curl -sL -o /dev/null -w '%{http_code}' -m 10 http://localhost:3000/login"
+      register: access_test
+      failed_when: access_test.stdout != "200"
+
+    - name: Display access test
+      ansible.builtin.debug:
+        msg: "✓ Grafana access: HTTP {{ access_test.stdout }}"
+
+    # ============== SUMMARY ==============
+    - name: Display rollback summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ROLLBACK COMPLETE"
+          - "================================================================"
+          - ""
+          - "What was done:"
+          - "  ✓ Detached static IP {{ static_ip }}"
+          - "  ✓ Restored original service configuration"
+          - "  ✓ Restarted grafana-port-forward service"
+          - "  ✓ Verified Grafana is accessible"
+          - ""
+          - "Grafana is still accessible via:"
+          - "  - NodePort 30743 on any node"
+          - "  - Port 3000 on master node (via primary IP)"
+          - "  - Port forwarding if configured"
+          - ""
+          - "To re-bind static IP:"
+          - "  ansible-playbook -i inventory.ini 60-bind-static-ip.yml"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ROLLBACK SUCCESSFUL"
+          - "================================================================"
+          - ""
+          - "Static IP 89.169.188.248 has been detached."
+          - ""
+          - "To re-bind the static IP:"
+          - "  ansible-playbook -i inventory.ini 60-bind-static-ip.yml"
+          - ""
+          - "================================================================"

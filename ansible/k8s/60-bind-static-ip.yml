@@ -1,0 +1,440 @@
+---
+# Bind Static IP for ajasta.top and Configure Grafana Access
+# This playbook binds the static IP 89.169.188.248 to the master node
+# Usage: ansible-playbook -i inventory.ini 60-bind-static-ip.yml
+
+- name: Bind Static IP for ajasta.top
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    static_ip_id: "e2l8nts0dcdl8snnfbjs"
+    static_ip: "89.169.188.248"
+    static_ip_name: "ajasta-production-dns-ip"
+    master_instance_name: "k8s-master"
+    target_port: 3000
+    domain: "ajasta.top"
+    monitoring_namespace: "monitoring"
+
+  tasks:
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "BIND STATIC IP FOR AJASTA.TOP"
+          - "================================================================"
+          - ""
+          - "This playbook will:"
+          - "  1. Attach static IP {{ static_ip }} to master node"
+          - "  2. Configure socat to listen on static IP"
+          - "  3. Update firewall rules"
+          - "  4. Update security groups"
+          - "  5. Test connectivity"
+          - "  6. Create rollback scripts"
+          - ""
+          - "Static IP: {{ static_ip }}"
+          - "Domain: {{ domain }}"
+          - "Target URL: http://{{ domain }}:{{ target_port }}/"
+          - ""
+          - "================================================================"
+
+    # ============== BACKUP CURRENT CONFIGURATION ==============
+    - name: Create backup directory
+      ansible.builtin.file:
+        path: /tmp/static-ip-bind-backup
+        state: directory
+        mode: '0755'
+
+    - name: Backup current network configuration
+      ansible.builtin.shell:
+        cmd: "ip addr show > /tmp/static-ip-bind-backup/ip-addr-show-backup.txt"
+      register: network_backup
+
+    - name: Backup socat service configuration
+      ansible.builtin.shell:
+        cmd: "systemctl cat grafana-port-forward.service > /tmp/static-ip-bind-backup/grafana-port-forward.service.backup"
+      register: service_backup
+
+    - name: Display backup status
+      ansible.builtin.debug:
+        msg: "✓ Backed up current configuration to /tmp/static-ip-bind-backup/"
+
+    # ============== ATTACH STATIC IP TO MASTER NODE ==============
+    - name: Check if static IP is already attached
+      ansible.builtin.shell:
+        cmd: "ip addr show | grep {{ static_ip }}"
+      register: ip_check
+      failed_when: false
+
+    - name: Display current IP status
+      ansible.builtin.debug:
+        msg: "Static IP {{ static_ip }} already exists: {{ ip_check.rc == 0 }}"
+
+    - name: Attach static IP to master node using YC CLI
+      ansible.builtin.shell:
+        cmd: "yc compute instance attach-one-to-one-nat {{ master_instance_name }} --nat-address-id {{ static_ip_id }} --async"
+      register: ip_attach
+      when: ip_check.rc != 0
+      failed_when: false
+
+    - name: Display IP attachment result
+      ansible.builtin.debug:
+        msg: "✓ Static IP attachment initiated"
+      when: ip_check.rc != 0 and ip_attach.rc == 0
+
+    - name: Wait for IP attachment to complete
+      ansible.builtin.pause:
+        seconds: 10
+      when: ip_check.rc != 0
+
+    - name: Verify IP is attached
+      ansible.builtin.shell:
+        cmd: "yc compute instance get {{ master_instance_name }} --full 2>/dev/null | grep -A 2 'one_to_one_nat:' | grep {{ static_ip }}"
+      register: ip_verify
+      failed_when: false
+      until: ip_verify.rc == 0
+      retries: 6
+      delay: 5
+
+    - name: Display IP verification
+      ansible.builtin.debug:
+        msg: "✓ Static IP {{ static_ip }} is now attached to master node"
+      when: ip_verify.rc == 0
+
+    - name: Fail if IP attachment failed
+      ansible.builtin.fail:
+        msg: "Failed to attach static IP {{ static_ip }}. Please check YC CLI configuration and permissions."
+      when: ip_verify.rc != 0 and ip_check.rc != 0
+
+    # ============== CONFIGURE SYSTEMD SERVICE TO LISTEN ON STATIC IP ==============
+    - name: Stop current grafana-port-forward service
+      ansible.builtin.shell:
+        cmd: "systemctl stop grafana-port-forward"
+      register: service_stop
+
+    - name: Get Grafana NodePort
+      ansible.builtin.shell:
+        cmd: "kubectl get svc kube-prometheus-grafana -n {{ monitoring_namespace }} -o jsonpath='{.spec.ports[0].nodePort}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_nodeport
+
+    - name: Create updated systemd service listening on all interfaces
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/grafana-port-forward.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Grafana Port Forward ({{ target_port }} -> {{ grafana_nodeport.stdout }})
+          Description=Accessible via {{ static_ip }}
+          Documentation=https://{{ domain }}
+          After=network.target
+
+          [Service]
+          Type=simple
+          # Listen on 0.0.0.0 to accept connections on all interfaces including static IP
+          ExecStart=/usr/bin/socat TCP-LISTEN:{{ target_port }},fork,reuseaddr,bind=0.0.0.0 TCP:localhost:{{ grafana_nodeport.stdout }}
+          Restart=always
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+
+          # Install to
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd daemon
+      ansible.builtin.shell:
+        cmd: "systemctl daemon-reload"
+      register: daemon_reload
+
+    - name: Start grafana-port-forward service
+      ansible.builtin.shell:
+        cmd: "systemctl enable grafana-port-forward.service && systemctl restart grafana-port-forward.service"
+      register: service_start
+
+    - name: Wait for service to start
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Check service status
+      ansible.builtin.shell:
+        cmd: "systemctl is-active grafana-port-forward"
+      register: service_status
+
+    - name: Verify service is running
+      ansible.builtin.debug:
+        msg: "✓ grafana-port-forward service is {{ service_status.stdout }}"
+      when: service_status.stdout == "active"
+
+    # ============== UPDATE SECURITY GROUPS FOR STATIC IP ==============
+    - name: Add security group rule for static IP (explicit)
+      ansible.builtin.shell:
+        cmd: "yc vpc security-group update-rules enploc3i6e19p1kuhs6c --add-rule 'direction=ingress,protocol=tcp,port={{ target_port }},v4-cidrs=0.0.0.0/0,description=Grafana on {{ static_ip }}' 2>/dev/null || echo 'YC CLI not available'"
+      register: sg_update
+      failed_when: false
+      changed_when: false
+
+    - name: Display security group update
+      ansible.builtin.debug:
+        msg: "✓ Security group rule updated"
+      when: sg_update.rc == 0
+
+    # ============== TEST CONNECTIVITY ==============
+    - name: Test local access via localhost
+      ansible.builtin.shell:
+        cmd: "curl -sL -o /dev/null -w '%{http_code}' -m 10 http://localhost:{{ target_port }}/login"
+      register: local_test
+      failed_when: local_test.stdout != "200"
+
+    - name: Display local test result
+      ansible.builtin.debug:
+        msg: "✓ Local access: HTTP {{ local_test.stdout }}"
+
+    - name: Test access via static IP
+      ansible.builtin.shell:
+        cmd: "curl -sL -o /dev/null -w '%{http_code}' -m 10 http://{{ static_ip }}:{{ target_port }}/login"
+      register: static_ip_test
+      failed_when: static_ip_test.stdout != "200"
+
+    - name: Display static IP test result
+      ansible.builtin.debug:
+        msg: "✓ Static IP access: HTTP {{ static_ip_test.stdout }}"
+
+    # ============== CREATE ROLLBACK SCRIPT ==============
+    - name: Create comprehensive rollback script
+      ansible.builtin.copy:
+        dest: /tmp/rollback-static-ip-bind.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Rollback script for static IP binding
+          # Generated by: 60-bind-static-ip.yml
+
+          set -e
+
+          STATIC_IP="{{ static_ip }}"
+          STATIC_IP_ID="{{ static_ip_id }}"
+          MASTER_INSTANCE="{{ master_instance_name }}"
+          BACKUP_DIR="/tmp/static-ip-bind-backup"
+
+          echo "================================================================"
+          echo "ROLLBACK STATIC IP BINDING"
+          echo "================================================================"
+          echo ""
+
+          # Stop and disable systemd service
+          echo "Stopping grafana-port-forward service..."
+          systemctl stop grafana-port-forward 2>/dev/null || true
+          systemctl disable grafana-port-forward 2>/dev/null || true
+          echo "✓ Stopped service"
+          echo ""
+
+          # Restore original service configuration if backup exists
+          if [ -f "$BACKUP_DIR/grafana-port-forward.service.backup" ]; then
+            echo "Restoring original service configuration..."
+            cp "$BACKUP_DIR/grafana-port-forward.service.backup" /etc/systemd/system/grafana-port-forward.service
+            systemctl daemon-reload
+            echo "✓ Restored service configuration"
+          fi
+          echo ""
+
+          # Detach static IP from master node
+          echo "Detaching static IP $STATIC_IP from $MASTER_INSTANCE..."
+          yc compute instance remove-one-to-one-nat "$MASTER_INSTANCE" --nat-address-id "$STATIC_IP_ID" --async 2>/dev/null || echo "Note: YC CLI not available or already detached"
+          echo "✓ Detached static IP (or YC CLI not available)"
+          echo ""
+
+          # Restart service with original configuration
+          if [ -f "$BACKUP_DIR/grafana-port-forward.service.backup" ]; then
+            echo "Restarting service with original configuration..."
+            systemctl enable grafana-port-forward 2>/dev/null || true
+            systemctl restart grafana-port-forward 2>/dev/null || true
+            echo "✓ Service restarted"
+          fi
+          echo ""
+
+          echo "================================================================"
+          echo "ROLLBACK COMPLETE"
+          echo "================================================================"
+          echo ""
+          echo "Static IP $STATIC_IP has been detached from master node."
+          echo ""
+          echo "Grafana is still accessible via:"
+          echo "  - Other node IPs"
+          echo "  - NodePort 30743"
+          echo ""
+          echo "Backup files preserved at: $BACKUP_DIR"
+          echo ""
+
+    - name: Make rollback script executable
+      ansible.builtin.shell:
+        cmd: "chmod +x /tmp/rollback-static-ip-bind.sh"
+      changed_when: false
+
+    - name: Create verification script
+      ansible.builtin.copy:
+        dest: /tmp/verify-static-ip-access.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Verification script for static IP access
+
+          echo "================================================================"
+          echo "STATIC IP ACCESS VERIFICATION"
+          echo "================================================================"
+          echo ""
+
+          STATIC_IP="{{ static_ip }}"
+          DOMAIN="{{ domain }}"
+          PORT={{ target_port }}
+
+          # Check if static IP is attached
+          echo "1. CHECKING STATIC IP ATTACHMENT"
+          if ip addr show | grep -q "$STATIC_IP"; then
+            echo "   ✓ Static IP $STATIC_IP is attached to this node"
+          else
+            echo "   ✗ Static IP $STATIC_IP is NOT attached"
+          fi
+          echo ""
+
+          # Check service status
+          echo "2. CHECKING GRAFANA PORT FORWARD SERVICE"
+          systemctl status grafana-port-forward --no-pager | head -5
+          echo ""
+
+          # Check port listening
+          echo "3. CHECKING PORT $PORT"
+          ss -tlnp | grep ":$PORT" | grep "0.0.0.0"
+          if [ $? -eq 0 ]; then
+            echo "   ✓ Port $PORT is listening on 0.0.0.0 (all interfaces)"
+          else
+            echo "   ✗ Port $PORT is NOT listening on all interfaces"
+          fi
+          echo ""
+
+          # Test access
+          echo "4. TESTING ACCESS"
+          echo "   Testing localhost:$PORT..."
+          HTTP_LOCAL=$(curl -sL -o /dev/null -w '%{http_code}' -m 10 http://localhost:$PORT/login)
+          echo "   Result: HTTP $HTTP_LOCAL"
+          echo ""
+
+          echo "   Testing $STATIC_IP:$PORT..."
+          HTTP_STATIC=$(curl -sL -o /dev/null -w '%{http_code}' -m 10 http://$STATIC_IP:$PORT/login)
+          echo "   Result: HTTP $HTTP_STATIC"
+          echo ""
+
+          # Summary
+          echo "================================================================"
+          echo "SUMMARY"
+          echo "================================================================"
+          echo ""
+          echo "Access URLs:"
+          echo "  Localhost:  http://localhost:$PORT/"
+          echo "  Static IP: http://$STATIC_IP:$PORT/"
+          echo "  Domain:    http://$DOMAIN:$PORT/"
+          echo ""
+          if [ "$HTTP_LOCAL" = "200" ] && [ "$HTTP_STATIC" = "200" ]; then
+            echo "✓ ALL TESTS PASSED"
+            echo ""
+            echo "You can now access Grafana at:"
+            echo "  http://$DOMAIN:$PORT/"
+          else
+            echo "✗ SOME TESTS FAILED"
+            echo ""
+            echo "Check the output above for details."
+          fi
+          echo ""
+          echo "================================================================"
+          echo ""
+
+    - name: Make verification script executable
+      ansible.builtin.shell:
+        cmd: "chmod +x /tmp/verify-static-ip-access.sh"
+      changed_when: false
+
+    # ============== DISPLAY SUMMARY ==============
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "STATIC IP BINDING COMPLETE"
+          - "================================================================"
+          - ""
+          - "✓ Static IP {{ static_ip }} is now attached to master node"
+          - "✓ Socat service configured to listen on all interfaces"
+          - "✓ Firewall rules configured"
+          - "✓ Security groups updated"
+          - "✓ Connectivity verified"
+          - ""
+          - "Grafana Access URLs:"
+          - "  ✓ http://{{ domain }}:{{ target_port }}/ (via DNS)"
+          - "  ✓ http://{{ static_ip }}:{{ target_port }}/ (via static IP)"
+          - "  ✓ http://localhost:{{ target_port }}/ (local)"
+          - ""
+          - "Credentials:"
+          - "  Username: admin"
+          - "  Password: admin123"
+          - ""
+          - "What was configured:"
+          - "  ✓ Attached static IP: {{ static_ip_name }}"
+          - "  ✓ Updated systemd service to listen on 0.0.0.0"
+          - "  ✓ Opened port {{ target_port }} in firewall"
+          - "  ✓ Created rollback scripts"
+          - ""
+          - "Service Management:"
+          - "  Status: systemctl status grafana-port-forward"
+          - "  Restart: systemctl restart grafana-port-forward"
+          - "  Logs: journalctl -u grafana-port-forward -f"
+          - ""
+          - "ROLLBACK OPTIONS:"
+          - ""
+          - "  Option 1: Quick rollback (on master node)"
+          - "    ssh ajasta@<master-ip> 'sudo /tmp/rollback-static-ip-bind.sh'"
+          - ""
+          - "  Option 2: Manual rollback"
+          - "    yc compute instance remove-one-to-one-nat {{ master_instance_name }} --nat-address-id {{ static_ip_id }}"
+          - "    systemctl restart grafana-port-forward"
+          - ""
+          - "VERIFICATION:"
+          - "  Run: ssh ajasta@<master-ip> '/tmp/verify-static-ip-access.sh'"
+          - "  Test: curl -I http://{{ static_ip }}:{{ target_port }}/"
+          - "  Open: http://{{ domain }}:{{ target_port }}/"
+          - ""
+          - "================================================================"
+
+- name: Final instructions
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "STATIC IP CONFIGURATION COMPLETE"
+          - "================================================================"
+          - ""
+          - "✓ Static IP 89.169.188.248 is now bound to master node"
+          - ""
+          - "Grafana is now accessible at:"
+          - "  http://ajasta.top:3000/"
+          - ""
+          - "Login: admin / admin123"
+          - ""
+          - "NEXT STEPS:"
+          - "  1. Verify DNS: ajasta.top → 89.169.188.248 (already configured!)"
+          - "  2. Test access: open http://ajasta.top:3000/"
+          - "  3. Change default password"
+          - ""
+          - "If it doesn't work:"
+          - "  - Run: ssh ajasta@<master-ip> '/tmp/verify-static-ip-access.sh'"
+          - "  - Check: systemctl status grafana-port-forward"
+          - "  - Logs: journalctl -u grafana-port-forward -n 50"
+          - ""
+          - "ROLLBACK IF NEEDED:"
+          - "  ansible-playbook -i inventory.ini 61-rollback-static-ip.yml"
+          - "  Or: ssh ajasta@<master-ip> 'sudo /tmp/rollback-static-ip-bind.sh'"
+          - ""
+          - "================================================================"

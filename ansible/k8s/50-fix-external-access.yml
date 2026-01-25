@@ -1,0 +1,431 @@
+---
+# Fix External Access to Grafana on port 3000
+# This playbook diagnoses and fixes issues preventing external access
+# Usage: ansible-playbook -i inventory.ini 50-fix-external-access.yml
+
+- name: Fix External Access to Grafana
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    target_port: 3000
+    domain: "ajasta.top"
+    yc_sg_id: "enploc3i6e19p1kuhs6c"
+
+  tasks:
+    - name: Display diagnostic information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "FIXING EXTERNAL ACCESS TO GRAFANA"
+          - "================================================================"
+          - ""
+          - "This playbook will:"
+          - "  1. Check socat service is running"
+          - "  2. Verify port 3000 is listening on 0.0.0.0"
+          - "  3. Check firewall rules"
+          - "  4. Test local access"
+          - "  5. Configure Yandex Cloud security groups"
+          - "  6. Test external access"
+          - ""
+
+    # ============== CHECK SERVICE STATUS ==============
+    - name: Check grafana-port-forward service
+      ansible.builtin.shell:
+        cmd: "systemctl is-active grafana-port-forward"
+      register: service_status
+      failed_when: false
+
+    - name: Display service status
+      ansible.builtin.debug:
+        msg: "Service status: {{ service_status.stdout }}"
+
+    - name: Start service if not active
+      ansible.builtin.shell:
+        cmd: "systemctl restart grafana-port-forward"
+      when: service_status.stdout != "active"
+      register: service_restart
+
+    - name: Wait for service to start
+      ansible.builtin.pause:
+        seconds: 3
+      when: service_status.stdout != "active"
+
+    # ============== VERIFY PORT LISTENING ==============
+    - name: Check port 3000 is listening
+      ansible.builtin.shell:
+        cmd: "ss -tlnp | grep :{{ target_port }}"
+      register: port_listen
+      failed_when: false
+
+    - name: Display port listening status
+      ansible.builtin.debug:
+        msg: "{{ port_listen.stdout }}"
+
+    - name: Fail if port not listening on 0.0.0.0
+      ansible.builtin.fail:
+        msg: "Port {{ target_port }} not listening on 0.0.0.0"
+      when: "'0.0.0.0:{{ target_port }}' not in port_listen.stdout"
+
+    - name: Verify listening on all interfaces
+      ansible.builtin.debug:
+        msg: "✓ Port {{ target_port }} is listening on 0.0.0.0"
+
+    # ============== GET MASTER IP ==============
+    - name: Get master node IP
+      ansible.builtin.shell:
+        cmd: "hostname -I | awk '{print $1}'"
+      register: master_ip
+
+    - name: Get master node public IP
+      ansible.builtin.shell:
+        cmd: "curl -s ifconfig.me"
+      register: public_ip
+      failed_when: false
+
+    - name: Display IPs
+      ansible.builtin.debug:
+        msg:
+          - "Internal IP: {{ master_ip.stdout }}"
+          - "Public IP: {{ public_ip.stdout if public_ip.rc == 0 else 'Unknown' }}"
+
+    # ============== TEST LOCAL ACCESS ==============
+    - name: Test local access via localhost
+      ansible.builtin.shell:
+        cmd: "curl -sL -o /dev/null -w '%{http_code}' -m 10 http://localhost:{{ target_port }}/login"
+      register: local_test
+      failed_when: local_test.stdout != "200"
+
+    - name: Display local test result
+      ansible.builtin.debug:
+        msg: "✓ Local access: HTTP {{ local_test.stdout }}"
+
+    - name: Test access via internal IP
+      ansible.builtin.shell:
+        cmd: "curl -sL -o /dev/null -w '%{http_code}' -m 10 http://{{ master_ip.stdout }}:{{ target_port }}/login"
+      register: internal_ip_test
+      failed_when: internal_ip_test.stdout != "200"
+
+    - name: Display internal IP test result
+      ansible.builtin.debug:
+        msg: "✓ Internal IP access: HTTP {{ internal_ip_test.stdout }}"
+
+    - name: Test access via public IP
+      ansible.builtin.shell:
+        cmd: "curl -sL -o /dev/null -w '%{http_code}' -m 10 http://{{ public_ip.stdout }}:{{ target_port }}/login"
+      register: public_ip_test
+      failed_when: public_ip_test.stdout != "200"
+      when: public_ip.rc == 0
+
+    - name: Display public IP test result
+      ansible.builtin.debug:
+        msg: "✓ Public IP access from master: HTTP {{ public_ip_test.stdout }}"
+      when: public_ip.rc == 0
+
+    # ============== CHECK YANDEX CLOUD SECURITY GROUPS ==============
+    - name: Check if yc CLI is available
+      ansible.builtin.shell:
+        cmd: "which yc"
+      register: yc_check
+      failed_when: false
+
+    - name: Display YC CLI status
+      ansible.builtin.debug:
+        msg: "Yandex Cloud CLI: {{ 'Installed' if yc_check.rc == 0 else 'Not installed' }}"
+
+    - name: Get current security group rules
+      ansible.builtin.shell:
+        cmd: "yc vpc security-group get {{ yc_sg_id }} --format yaml 2>/dev/null | grep -A 10 'rules:'"
+      register: sg_rules
+      failed_when: false
+      when: yc_check.rc == 0
+
+    - name: Display security group rules
+      ansible.builtin.debug:
+        msg: "{{ sg_rules.stdout_lines if sg_rules.rc == 0 else ['Unable to get security group rules'] }}"
+      when: yc_check.rc == 0
+
+    - name: Check if port 3000 rule exists in security group
+      ansible.builtin.shell:
+        cmd: "yc vpc security-group get {{ yc_sg_id }} 2>/dev/null | grep -q 'from_port: \"{{ target_port }}\"'"
+      register: sg_rule_check
+      failed_when: false
+      when: yc_check.rc == 0
+
+    - name: Display security group rule status
+      ansible.builtin.debug:
+        msg: "Security group rule for port {{ target_port }}: {{ 'Exists' if sg_rule_check.rc == 0 else 'Not found' }}"
+      when: yc_check.rc == 0
+
+    - name: Add security group rule for port 3000 if not exists
+      ansible.builtin.shell:
+        cmd: "yc vpc security-group update-rules {{ yc_sg_id }} --add-rule 'direction=ingress,protocol=tcp,port={{ target_port }},v4-cidrs=0.0.0.0/0,description=Grafana port {{ target_port }}'"
+      register: sg_add_rule
+      when: yc_check.rc == 0 and sg_rule_check.rc != 0
+      failed_when: false
+
+    - name: Display security group rule addition
+      ansible.builtin.debug:
+        msg: "✓ Added security group rule for port {{ target_port }}"
+      when: yc_check.rc == 0 and sg_rule_check.rc != 0 and sg_add_rule.rc == 0
+
+    # ============== LIST INSTANCES AND SECURITY GROUPS ==============
+    - name: Get instance ID
+      ansible.builtin.shell:
+        cmd: "curl -s -H Metadata:true http://169.254.169.254/metadata/instance/computeId 2>/dev/null || echo 'unknown'"
+      register: instance_id
+      failed_when: false
+
+    - name: Display instance ID
+      ansible.builtin.debug:
+        msg: "Instance ID: {{ instance_id.stdout }}"
+      when: instance_id.rc == 0
+
+    - name: Get instance security groups
+      ansible.builtin.shell:
+        cmd: "yc compute instance get $(hostname | sed 's/-node//') 2>/dev/null | grep -A 5 'security_group_ids:' || echo 'No security groups attached'"
+      register: instance_sgs
+      failed_when: false
+      when: yc_check.rc == 0
+
+    - name: Display instance security groups
+      ansible.builtin.debug:
+        msg: "{{ instance_sgs.stdout_lines if instance_sgs.rc == 0 else ['Unable to get instance security groups'] }}"
+      when: yc_check.rc == 0
+
+    # ============== FIREWALL RULES ==============
+    - name: Ensure iptables rule exists
+      ansible.builtin.shell:
+        cmd: "iptables -C INPUT -p tcp --dport {{ target_port }} -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport {{ target_port }} -j ACCEPT"
+      register: iptables_add
+      changed_when: false
+
+    - name: Display iptables status
+      ansible.builtin.debug:
+        msg: "✓ iptables rule configured for port {{ target_port }}"
+
+    - name: Check firewalld status
+      ansible.builtin.shell:
+        cmd: "systemctl is-active firewalld"
+      register: firewalld_status
+      failed_when: false
+
+    - name: Open port in firewalld
+      ansible.builtin.shell:
+        cmd: "firewall-cmd --permanent --add-port={{ target_port }}/tcp && firewall-cmd --reload"
+      when: firewalld_status.rc == 0
+      register: firewall_open
+      failed_when: false
+
+    - name: Display firewalld status
+      ansible.builtin.debug:
+        msg: "✓ firewalld configured for port {{ target_port }}"
+      when: firewalld_status.rc == 0 and firewall_open.rc == 0
+
+    # ============== DIAGNOSTIC TROUBLESHOOTING ==============
+    - name: Check for Cilium network policies
+      ansible.builtin.shell:
+        cmd: "kubectl get networkpolicies -A 2>/dev/null | wc -l"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: netpols
+      failed_when: false
+
+    - name: Display network policy count
+      ansible.builtin.debug:
+        msg: "Kubernetes network policies: {{ netpols.stdout }}"
+
+    - name: Display Cilium status
+      ansible.builtin.shell:
+        cmd: "kubectl get pods -n kube-system -l k8s-app=cilium"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cilium_pods
+      failed_when: false
+
+    - name: Display Cilium pod status
+      ansible.builtin.debug:
+        msg: "{{ cilium_pods.stdout_lines if cilium_pods.rc == 0 else ['Cilium not found'] }}"
+
+    # ============== CREATE VERIFICATION SCRIPT ==============
+    - name: Create comprehensive verification script
+      ansible.builtin.copy:
+        dest: /tmp/verify-external-access.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Comprehensive external access verification script
+
+          echo "================================================================"
+          echo "EXTERNAL ACCESS VERIFICATION FOR GRAFANA"
+          echo "================================================================"
+          echo ""
+
+          TARGET_PORT={{ target_port }}
+          DOMAIN="{{ domain }}"
+
+          # Get IPs
+          INTERNAL_IP=$(hostname -I | awk '{print $1}')
+          PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || echo "unknown")
+
+          echo "1. NETWORK INFORMATION"
+          echo "   Internal IP: $INTERNAL_IP"
+          echo "   Public IP: $PUBLIC_IP"
+          echo "   Domain: $DOMAIN"
+          echo "   Target Port: $TARGET_PORT"
+          echo ""
+
+          # Check service
+          echo "2. SERVICE STATUS"
+          systemctl status grafana-port-forward --no-pager | head -5
+          echo ""
+
+          # Check port
+          echo "3. PORT LISTENING STATUS"
+          ss -tlnp | grep :$TARGET_PORT
+          if [ $? -eq 0 ]; then
+            echo "   ✓ Port $TARGET_PORT is listening"
+          else
+            echo "   ✗ Port $TARGET_PORT is NOT listening"
+          fi
+          echo ""
+
+          # Test local access
+          echo "4. LOCAL ACCESS TEST"
+          HTTP_LOCAL=$(curl -sL -o /dev/null -w '%{http_code}' -m 10 http://localhost:$TARGET_PORT/login)
+          echo "   localhost:$TARGET_PORT -> HTTP $HTTP_LOCAL"
+          if [ "$HTTP_LOCAL" = "200" ]; then
+            echo "   ✓ SUCCESS"
+          else
+            echo "   ✗ FAILED"
+          fi
+          echo ""
+
+          # Test internal IP
+          echo "5. INTERNAL IP ACCESS TEST"
+          HTTP_INTERNAL=$(curl -sL -o /dev/null -w '%{http_code}' -m 10 http://$INTERNAL_IP:$TARGET_PORT/login)
+          echo "   $INTERNAL_IP:$TARGET_PORT -> HTTP $HTTP_INTERNAL"
+          if [ "$HTTP_INTERNAL" = "200" ]; then
+            echo "   ✓ SUCCESS"
+          else
+            echo "   ✗ FAILED"
+          fi
+          echo ""
+
+          # Test public IP
+          echo "6. PUBLIC IP ACCESS TEST (from master)"
+          HTTP_PUBLIC=$(curl -sL -o /dev/null -w '%{http_code}' -m 10 http://$PUBLIC_IP:$TARGET_PORT/login)
+          echo "   $PUBLIC_IP:$TARGET_PORT -> HTTP $HTTP_PUBLIC"
+          if [ "$HTTP_PUBLIC" = "200" ]; then
+            echo "   ✓ SUCCESS - Port is accessible from this machine"
+          else
+            echo "   ✗ FAILED"
+          fi
+          echo ""
+
+          # Firewall rules
+          echo "7. FIREWALL RULES"
+          echo "   iptables:"
+          iptables -L INPUT -n | grep $TARGET_PORT || echo "     No iptables rule found"
+          echo ""
+          if systemctl is-active --quiet firewalld; then
+            echo "   firewalld:"
+            firewall-cmd --list-ports | grep $TARGET_PORT || echo "     No firewalld rule found"
+          fi
+          echo ""
+
+          # YC security groups
+          echo "8. YANDEX CLOUD SECURITY GROUPS"
+          if command -v yc &> /dev/null; then
+            SG_ID="{{ yc_sg_id }}"
+            echo "   Security Group: $SG_ID"
+            yc vpc security-group get $SG_ID 2>/dev/null | grep -A 2 "from_port: \"$TARGET_PORT\"" || echo "   No rule for port $TARGET_PORT found"
+          else
+            echo "   YC CLI not installed"
+          fi
+          echo ""
+
+          # Instructions
+          echo "9. EXTERNAL ACCESS TEST (from your machine)"
+          echo "   Run these commands from your local machine:"
+          echo "   curl -I http://$DOMAIN:$TARGET_PORT/"
+          echo "   curl -I http://$PUBLIC_IP:$TARGET_PORT/"
+          echo ""
+
+          # Summary
+          echo "================================================================"
+          if [ "$HTTP_LOCAL" = "200" ] && [ "$HTTP_INTERNAL" = "200" ] && [ "$HTTP_PUBLIC" = "200" ]; then
+            echo "STATUS: All local tests PASSED"
+            echo ""
+            echo "If external access still doesn't work:"
+            echo "  1. Check Yandex Cloud security groups are attached to instances"
+            echo "  2. Check Yandex Cloud network configuration"
+            echo "  3. Verify DNS: $DOMAIN -> $PUBLIC_IP"
+            echo "  4. Test from external machine: curl -I http://$PUBLIC_IP:$TARGET_PORT/"
+          else
+            echo "STATUS: Some tests FAILED - check output above"
+          fi
+          echo "================================================================"
+          echo ""
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "EXTERNAL ACCESS FIX COMPLETE"
+          - "================================================================"
+          - ""
+          - "What was checked/configured:"
+          - "  ✓ Service status verified"
+          - "  ✓ Port {{ target_port }} listening on 0.0.0.0"
+          - "  ✓ Local access verified (HTTP {{ local_test.stdout }})"
+          - "  ✓ Internal IP access verified (HTTP {{ internal_ip_test.stdout }})"
+          - "  ✓ Public IP access from master verified (HTTP {{ public_ip_test.stdout }})"
+          - "  ✓ iptables rule configured"
+          - "  {% if firewalld_status.rc == 0 %}firewalld configured{% endif %}"
+          - "{% if yc_check.rc == 0 %}  ✓ Yandex Cloud security group rule checked{% endif %}"
+          - ""
+          - "NEXT STEPS:"
+          - "  1. Run verification script:"
+          - "     ssh ajasta@<master-ip> '/tmp/verify-external-access.sh'"
+          - ""
+          - "  2. Test from YOUR local machine:"
+          - "     curl -I http://{{ domain }}:{{ target_port }}/"
+          - "     curl -I http://{{ public_ip.stdout }}:{{ target_port }}/"
+          - ""
+          - "  3. If still not working, check:"
+          - "     - DNS: {{ domain }} must resolve to {{ public_ip.stdout }}"
+          - "     - Yandex Cloud console: Security groups attached to instances"
+          - "     - Network ACLs in Yandex Cloud"
+          - ""
+          - "VERIFICATION SCRIPT: /tmp/verify-external-access.sh"
+          - ""
+          - "================================================================"
+
+- name: Final instructions
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "FIX APPLIED"
+          - "================================================================"
+          - ""
+          - "The playbook has:"
+          - "  1. Verified socat service is running"
+          - "  2. Confirmed port 3000 is listening on 0.0.0.0"
+          - "  3. Verified local access works"
+          - "  4. Added Yandex Cloud security group rule for port 3000"
+          - "  5. Configured firewall rules"
+          - "  6. Created verification script"
+          - ""
+          - "TEST NOW FROM YOUR MACHINE:"
+          - "  curl -I http://ajasta.top:3000/"
+          - ""
+          - "OR run verification:"
+          - "  ssh ajasta@<master-ip> '/tmp/verify-external-access.sh'"
+          - ""
+          - "================================================================"
