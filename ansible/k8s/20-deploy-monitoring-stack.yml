@@ -328,7 +328,7 @@
               prometheus: true
               prometheusOperator: true
 
-    - name: Deploy kube-prometheus-stack via Helm
+    - name: Deploy kube-prometheus-stack via Helm with rollback capability
       ansible.builtin.shell:
         cmd: >
           KUBECONFIG=/etc/kubernetes/admin.conf
@@ -337,19 +337,34 @@
           --namespace {{ monitoring_namespace }}
           --create-namespace
           --values /tmp/kube-prometheus-values.yaml
-          --timeout 15m
+          --timeout 3m
+          --history-max 10
       register: helm_deploy
       when: not monitoring_installed
 
     - name: Display deployment status
       ansible.builtin.debug:
-        msg: "✓ kube-prometheus-stack deployed successfully"
+        msg: "✓ kube-prometheus-stack deployed successfully (Release: kube-prometheus)"
       when: not monitoring_installed
 
     - name: Display already installed message
       ansible.builtin.debug:
-        msg: "✓ kube-prometheus-stack already installed"
+        msg: "✓ kube-prometheus-stack already installed (Release: kube-prometheus)"
       when: monitoring_installed
+
+    - name: Get Helm release history
+      ansible.builtin.shell:
+        cmd: "/usr/local/bin/helm history kube-prometheus -n {{ monitoring_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: helm_history
+      changed_when: false
+      failed_when: false
+
+    - name: Display Helm release history
+      ansible.builtin.debug:
+        msg: "{{ helm_history.stdout_lines }}"
+      when: helm_history.rc == 0
 
     # ============== WAIT FOR DEPLOYMENTS ==============
     - name: Wait for Prometheus Operator to be ready
@@ -506,6 +521,24 @@
           - "  Alertmanager:"
           - "    - Port Forward: kubectl port-forward -n monitoring svc/alertmanager-operated 9093:9093"
           - ""
+          - "HELM ROLLBACK CAPABILITY:"
+          - "  Release name: kube-prometheus"
+          - "  Namespace: {{ monitoring_namespace }}"
+          - "  History retained: 10 revisions"
+          - ""
+          - "  Rollback commands:"
+          - "    helm history kube-prometheus -n {{ monitoring_namespace }}"
+          - "      # View all release revisions"
+          - ""
+          - "    helm rollback kube-prometheus -n {{ monitoring_namespace }}"
+          - "      # Rollback to previous revision"
+          - ""
+          - "    helm rollback kube-prometheus 2 -n {{ monitoring_namespace }}"
+          - "      # Rollback to specific revision (e.g., revision 2)"
+          - ""
+          - "    helm status kube-prometheus -n {{ monitoring_namespace }}"
+          - "      # Check current release status"
+          - ""
           - "Next Steps:"
           - "  1. Run: ansible-playbook -i inventory.ini 21-verify-monitoring.yml"
           - "  2. Access Grafana: http://grafana.local (add to /etc/hosts)"
@@ -531,5 +564,10 @@
           - "  kubectl get pods -n monitoring"
           - "  kubectl get svc -n monitoring"
           - "  kubectl port-forward -n monitoring svc/grafana 3000:3000"
+          - ""
+          - "Helm management:"
+          - "  helm status kube-prometheus -n monitoring"
+          - "  helm history kube-prometheus -n monitoring"
+          - "  helm rollback kube-prometheus -n monitoring"
           - ""
           - "================================================================"
