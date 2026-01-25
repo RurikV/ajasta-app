@@ -40,7 +40,7 @@ resource "yandex_compute_instance" "master" {
     initialize_params {
       image_id = data.yandex_compute_image.centos_stream9_oslogin.id
       size     = var.master_vm_disk_size
-      type     = "network-hdd"
+      type     = "network-ssd"
     }
   }
 
@@ -74,7 +74,7 @@ resource "yandex_compute_instance" "workers" {
     initialize_params {
       image_id = data.yandex_compute_image.centos_stream9_oslogin.id
       size     = var.worker_vm_disk_size
-      type     = "network-hdd"
+      type     = "network-ssd"
     }
   }
 
