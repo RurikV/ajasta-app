@@ -1,0 +1,108 @@
+---
+# Test Grafana Connectivity
+# Usage: ansible-playbook -i inventory.ini 31-test-grafana-connectivity.yml
+
+- name: Test Grafana Connectivity
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    grafana_service: "kube-prometheus-grafana"
+    monitoring_namespace: "monitoring"
+
+  tasks:
+    - name: Display test information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "TESTING GRAFANA CONNECTIVITY"
+          - "================================================================"
+          - ""
+          - "Service: {{ grafana_service }}"
+          - "Namespace: {{ monitoring_namespace }}"
+          - ""
+          - "================================================================"
+
+    - name: Test Grafana service endpoint
+      ansible.builtin.shell:
+        cmd: "curl -s -o /dev/null -w '%{http_code}' -m 10 http://{{ grafana_service }}.{{ monitoring_namespace }}.svc.cluster.local:3000/ || echo '000'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: service_test
+
+    - name: Display service test result
+      ansible.builtin.debug:
+        msg: "Grafana service response: {{ 'SUCCESS (HTTP ' ~ service_test.stdout ~ ')' if service_test.stdout == '200' else 'FAILED (HTTP ' ~ service_test.stdout ~ ')' }}"
+
+    - name: Get Grafana service NodePort
+      ansible.builtin.shell:
+        cmd: "kubectl get svc {{ grafana_service }} -n {{ monitoring_namespace }} -o jsonpath='{.spec.ports[0].nodePort}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: nodeport
+
+    - name: Display NodePort
+      ansible.builtin.debug:
+        msg: "Grafana NodePort: {{ nodeport.stdout }}"
+
+    - name: Get master node IP
+      ansible.builtin.shell:
+        cmd: "hostname -I | awk '{print $1}'"
+      register: master_ip
+
+    - name: Display master IP
+      ansible.builtin.debug:
+        msg: "Master node IP: {{ master_ip.stdout }}"
+
+    - name: Test Grafana via NodePort from master
+      ansible.builtin.shell:
+        cmd: "curl -s -o /dev/null -w '%{http_code}' -m 10 http://{{ master_ip.stdout }}:{{ nodeport.stdout }}/ || echo '000'"
+      register: nodeport_test
+      failed_when: false
+
+    - name: Display NodePort test result
+      ansible.builtin.debug:
+        msg: "NodePort access: {{ 'SUCCESS (HTTP ' ~ nodeport_test.stdout ~ ')' if nodeport_test.stdout == '200' else 'FAILED (HTTP ' ~ nodeport_test.stdout ~ ')' }}"
+
+    - name: Get Grafana service ClusterIP
+      ansible.builtin.shell:
+        cmd: "kubectl get svc {{ grafana_service }} -n {{ monitoring_namespace }} -o jsonpath='{.spec.clusterIP}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cluster_ip
+
+    - name: Display ClusterIP
+      ansible.builtin.debug:
+        msg: "Grafana ClusterIP: {{ cluster_ip.stdout }}"
+
+    - name: Test Grafana via ClusterIP
+      ansible.builtin.shell:
+        cmd: "curl -s -o /dev/null -w '%{http_code}' -m 10 http://{{ cluster_ip.stdout }}:3000/ || echo '000'"
+      register: clusterip_test
+      failed_when: false
+
+    - name: Display ClusterIP test result
+      ansible.builtin.debug:
+        msg: "ClusterIP access: {{ 'SUCCESS (HTTP ' ~ clusterip_test.stdout ~ ')' if clusterip_test.stdout == '200' else 'FAILED (HTTP ' ~ clusterip_test.stdout ~ ')' }}"
+
+    - name: Display access summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "CONNECTIVITY TEST RESULTS"
+          - "================================================================"
+          - ""
+          - "✓ Service DNS: {{ 'WORKING' if service_test.stdout == '200' else 'FAILED' }}"
+          - "✓ ClusterIP: {{ 'WORKING' if clusterip_test.stdout == '200' else 'FAILED' }}"
+          - "✓ NodePort: {{ 'WORKING' if nodeport_test.stdout == '200' else 'FAILED' }}"
+          - ""
+          - "Access URLs:"
+          - "  Via NodePort: http://{{ master_ip.stdout }}:{{ nodeport.stdout }}/"
+          - "  Via ClusterIP: http://{{ cluster_ip.stdout }}:3000/"
+          - ""
+          - "For external access (ajasta.top:3000):"
+          - "  1. Use NodePort: http://ajasta.top:{{ nodeport.stdout }}/"
+          - "  2. Or configure service to expose port 3000 directly"
+          - ""
+          - "================================================================"

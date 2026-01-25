@@ -1,0 +1,100 @@
+---
+# Quick diagnostic playbook to check monitoring deployment status
+# Usage: ansible-playbook -i inventory.ini 30-check-monitoring-status.yml
+
+- name: Check Monitoring Deployment Status
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Check monitoring namespace
+      ansible.builtin.shell:
+        cmd: "kubectl get namespace monitoring"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: namespace_check
+      failed_when: false
+
+    - name: Display namespace status
+      ansible.builtin.debug:
+        msg: "{{ namespace_check.stdout if namespace_check.rc == 0 else 'Namespace monitoring does not exist' }}"
+
+    - name: List all services in monitoring namespace
+      ansible.builtin.shell:
+        cmd: "kubectl get svc -n monitoring"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: services_check
+      failed_when: false
+
+    - name: Display services in monitoring namespace
+      ansible.builtin.debug:
+        msg: "{{ services_check.stdout_lines if services_check.rc == 0 else ['No services found'] }}"
+
+    - name: List all Helm releases
+      ansible.builtin.shell:
+        cmd: "helm list -n monitoring --all"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: helm_releases
+      failed_when: false
+
+    - name: Display Helm releases
+      ansible.builtin.debug:
+        msg: "{{ helm_releases.stdout_lines if helm_releases.rc == 0 else ['No Helm releases found'] }}"
+
+    - name: List all pods in monitoring namespace
+      ansible.builtin.shell:
+        cmd: "kubectl get pods -n monitoring"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: pods_check
+      failed_when: false
+
+    - name: Display pods in monitoring namespace
+      ansible.builtin.debug:
+        msg: "{{ pods_check.stdout_lines if pods_check.rc == 0 else ['No pods found'] }}"
+
+    - name: Check if kube-prometheus-stack Helm chart was deployed
+      ansible.builtin.shell:
+        cmd: "helm status kube-prometheus -n monitoring"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: helm_status
+      failed_when: false
+
+    - name: Display Helm status
+      ansible.builtin.debug:
+        msg: "{{ helm_status.stdout_lines if helm_status.rc == 0 else ['Helm release kube-prometheus not found'] }}"
+
+    - name: Show recent events from monitoring namespace
+      ansible.builtin.shell:
+        cmd: "kubectl get events -n monitoring --sort-by='.lastTimestamp' | tail -20"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: events
+      failed_when: false
+
+    - name: Display recent events
+      ansible.builtin.debug:
+        msg: "{{ events.stdout_lines if events.rc == 0 else ['No events found'] }}"
+
+    - name: Display summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "MONITORING DEPLOYMENT STATUS"
+          - "================================================================"
+          - ""
+          - "Namespace: {{ 'Exists' if namespace_check.rc == 0 else 'NOT FOUND' }}"
+          - "Services: {{ 'Found ' ~ services_check.stdout.split('\n') | length | string ~ ' services' if services_check.rc == 0 else 'None' }}"
+          - "Pods: {{ 'Found ' ~ pods_check.stdout.split('\n') | length | string ~ ' pods' if pods_check.rc == 0 else 'None' }}"
+          - "Helm Release: {{ 'Found' if helm_status.rc == 0 else 'NOT FOUND' }}"
+          - ""
+          - "If Grafana service is missing, check:"
+          - "  1. Did 20-deploy-monitoring-stack.yml complete successfully?"
+          - "  2. Were there any errors during Helm deployment?"
+          - "  3. Check the output above for issues"
+          - ""
+          - "================================================================"

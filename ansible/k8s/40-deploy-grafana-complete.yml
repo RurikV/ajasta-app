@@ -1,0 +1,371 @@
+---
+# Complete Grafana Deployment and Setup for ajasta.top
+# This playbook configures complete Grafana access on http://ajasta.top:3000/
+# Prerequisites: Monitoring stack already deployed (20-deploy-monitoring-stack.yml)
+# Usage: ansible-playbook -i inventory.ini 40-deploy-grafana-complete.yml
+
+- name: Complete Grafana Setup for ajasta.top
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    monitoring_namespace: "monitoring"
+    grafana_service: "kube-prometheus-grafana"
+    target_port: 3000
+    domain: "ajasta.top"
+
+  tasks:
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "COMPLETE GRAFANA SETUP FOR AJASTA.TOP"
+          - "================================================================"
+          - ""
+          - "This playbook will:"
+          - "  1. Verify Grafana service is running"
+          - "  2. Install socat for port forwarding"
+          - "  3. Create systemd service to forward port {{ target_port }}"
+          - "  4. Configure firewall rules"
+          - "  5. Test connectivity"
+          - "  6. Create rollback scripts"
+          - ""
+          - "Target URL: http://{{ domain }}:{{ target_port }}/"
+          - ""
+          - "================================================================"
+
+    # ============== VERIFY GRAFANA SERVICE ==============
+    - name: Check if Grafana service exists
+      ansible.builtin.shell:
+        cmd: "kubectl get svc {{ grafana_service }} -n {{ monitoring_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_service_check
+      failed_when: false
+
+    - name: Fail if Grafana service does not exist
+      ansible.builtin.fail:
+        msg: "Grafana service {{ grafana_service }} not found. Please deploy monitoring stack first: ansible-playbook -i inventory.ini 20-deploy-monitoring-stack.yml"
+      when: grafana_service_check.rc != 0
+
+    - name: Display Grafana service status
+      ansible.builtin.debug:
+        msg: "✓ Grafana service found"
+
+    - name: Get Grafana service ClusterIP
+      ansible.builtin.shell:
+        cmd: "kubectl get svc {{ grafana_service }} -n {{ monitoring_namespace }} -o jsonpath='{.spec.clusterIP}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_cluster_ip
+
+    - name: Get Grafana NodePort
+      ansible.builtin.shell:
+        cmd: "kubectl get svc {{ grafana_service }} -n {{ monitoring_namespace }} -o jsonpath='{.spec.ports[0].nodePort}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_nodeport
+
+    - name: Display Grafana service details
+      ansible.builtin.debug:
+        msg:
+          - "Grafana ClusterIP: {{ grafana_cluster_ip.stdout }}"
+          - "Grafana NodePort: {{ grafana_nodeport.stdout }}"
+
+    # ============== INSTALL SOCAT ==============
+    - name: Check if socat is installed
+      ansible.builtin.shell:
+        cmd: "which socat"
+      register: socat_check
+      failed_when: false
+
+    - name: Install socat
+      ansible.builtin.shell:
+        cmd: "yum install -y socat || apt-get install -y socat"
+      register: socat_install
+      when: socat_check.rc != 0
+
+    - name: Verify socat installation
+      ansible.builtin.shell:
+        cmd: "socat -V | head -1"
+      register: socat_version
+      changed_when: false
+
+    - name: Display socat version
+      ansible.builtin.debug:
+        msg: "✓ Socat installed: {{ socat_version.stdout }}"
+
+    # ============== CREATE SYSTEMD SERVICE ==============
+    - name: Get master node IP
+      ansible.builtin.shell:
+        cmd: "hostname -I | awk '{print $1}'"
+      register: master_ip
+
+    - name: Create systemd service for Grafana port forward
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/grafana-port-forward.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Grafana Port Forward ({{ target_port }} -> {{ grafana_nodeport.stdout }})
+          Documentation=https://ajasta.top
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/socat TCP-LISTEN:{{ target_port }},fork,reuseaddr TCP:localhost:{{ grafana_nodeport.stdout }}
+          Restart=always
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd daemon
+      ansible.builtin.shell:
+        cmd: "systemctl daemon-reload"
+      register: daemon_reload
+
+    - name: Enable and start grafana-port-forward service
+      ansible.builtin.shell:
+        cmd: "systemctl enable grafana-port-forward.service && systemctl restart grafana-port-forward.service"
+      register: service_start
+
+    - name: Wait for service to start
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Check service status
+      ansible.builtin.shell:
+        cmd: "systemctl is-active grafana-port-forward.service"
+      register: service_status
+
+    - name: Verify service is running
+      ansible.builtin.debug:
+        msg: "✓ grafana-port-forward service is {{ service_status.stdout }}"
+      when: service_status.stdout == "active"
+
+    - name: Fail if service is not running
+      ansible.builtin.fail:
+        msg: "grafana-port-forward service failed to start. Check with: journalctl -u grafana-port-forward -n 50"
+      when: service_status.stdout != "active"
+
+    # ============== CONFIGURE FIREWALL ==============
+    - name: Check if firewalld is running
+      ansible.builtin.shell:
+        cmd: "systemctl is-active firewalld"
+      register: firewalld_status
+      failed_when: false
+
+    - name: Open port in firewalld
+      ansible.builtin.shell:
+        cmd: "firewall-cmd --permanent --add-port={{ target_port }}/tcp && firewall-cmd --reload"
+      when: firewalld_status.rc == 0
+      register: firewall_open
+
+    - name: Display firewalld status
+      ansible.builtin.debug:
+        msg: "✓ Opened port {{ target_port }} in firewalld"
+      when: firewalld_status.rc == 0 and firewall_open.rc == 0
+
+    - name: Add iptables rule
+      ansible.builtin.shell:
+        cmd: "iptables -C INPUT -p tcp --dport {{ target_port }} -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport {{ target_port }} -j ACCEPT"
+      register: iptables_add
+      changed_when: false
+
+    - name: Display iptables status
+      ansible.builtin.debug:
+        msg: "✓ Added iptables rule for port {{ target_port }}"
+
+    # ============== TEST CONNECTIVITY ==============
+    - name: Test Grafana on port 3000
+      ansible.builtin.shell:
+        cmd: "curl -sL -o /dev/null -w '%{http_code}' -m 10 http://localhost:{{ target_port }}/login"
+      register: port_test
+      failed_when: port_test.stdout != "200"
+
+    - name: Display connectivity test
+      ansible.builtin.debug:
+        msg: "✓ Grafana on port {{ target_port }}: SUCCESS (HTTP {{ port_test.stdout }})"
+
+    # ============== CREATE ROLLBACK SCRIPT ==============
+    - name: Create rollback script
+      ansible.builtin.copy:
+        dest: /tmp/rollback-grafana-complete.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Rollback script for complete Grafana setup
+          # Generated by: 40-deploy-grafana-complete.yml
+
+          set -e
+
+          echo "================================================================"
+          echo "ROLLBACK GRAFANA COMPLETE SETUP"
+          echo "================================================================"
+          echo ""
+
+          # Stop and disable systemd service
+          echo "Stopping grafana-port-forward service..."
+          systemctl stop grafana-port-forward.service 2>/dev/null || true
+          systemctl disable grafana-port-forward.service 2>/dev/null || true
+          echo "✓ Stopped service"
+          echo ""
+
+          # Remove service file
+          echo "Removing service file..."
+          rm -f /etc/systemd/system/grafana-port-forward.service
+          systemctl daemon-reload
+          echo "✓ Removed service file"
+          echo ""
+
+          # Remove firewall rules
+          if systemctl is-active --quiet firewalld 2>/dev/null; then
+            echo "Removing firewalld rule..."
+            firewall-cmd --permanent --remove-port={{ target_port }}/tcp 2>/dev/null || true
+            firewall-cmd --reload 2>/dev/null || true
+            echo "✓ Removed firewalld rule"
+          fi
+          echo ""
+
+          # Remove iptables rule
+          echo "Removing iptables rule..."
+          iptables -D INPUT -p tcp --dport {{ target_port }} -j ACCEPT 2>/dev/null || true
+          echo "✓ Removed iptables rule"
+          echo ""
+
+          echo "================================================================"
+          echo "ROLLBACK COMPLETE"
+          echo "================================================================"
+          echo ""
+          echo "Grafana is still accessible via:"
+          echo "  - NodePort: http://{{ domain }}:{{ grafana_nodeport.stdout }}/"
+          echo "  - Via ClusterIP: http://{{ grafana_cluster_ip.stdout }}:{{ target_port }}/"
+          echo ""
+
+    - name: Create verification script
+      ansible.builtin.copy:
+        dest: /tmp/verify-grafana-access.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Verification script for Grafana access
+          # Generated by: 40-deploy-grafana-complete.yml
+
+          echo "================================================================"
+          echo "GRAFANA ACCESS VERIFICATION"
+          echo "================================================================"
+          echo ""
+
+          # Check service status
+          echo "1. Checking grafana-port-forward service..."
+          systemctl status grafana-port-forward.service --no-pager | head -5
+          echo ""
+
+          # Check port is listening
+          echo "2. Checking port {{ target_port }}..."
+          ss -tlnp | grep :{{ target_port }} || echo "Port not listening"
+          echo ""
+
+          # Test HTTP response
+          echo "3. Testing HTTP access..."
+          HTTP_CODE=$(curl -sL -o /dev/null -w '%{http_code}' -m 10 http://localhost:{{ target_port }}/login)
+          echo "HTTP Response: $HTTP_CODE"
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✓ SUCCESS"
+          else
+            echo "✗ FAILED"
+          fi
+          echo ""
+
+          # Show access URLs
+          echo "4. Access URLs:"
+          MASTER_IP=$(hostname -I | awk '{print $1}')
+          echo "  Local: http://localhost:{{ target_port }}/"
+          echo "  Master: http://${MASTER_IP}:{{ target_port }}/"
+          echo "  Domain: http://{{ domain }}:{{ target_port }}/"
+          echo ""
+
+          echo "================================================================"
+
+    # ============== SUMMARY ==============
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "GRAFANA SETUP COMPLETE"
+          - "================================================================"
+          - ""
+          - "Grafana is now accessible via:"
+          - "  URL: http://{{ domain }}:{{ target_port }}/"
+          - "  URL: http://{{ master_ip.stdout }}:{{ target_port }}/"
+          - ""
+          - "Credentials:"
+          - "  Username: admin"
+          - "  Password: admin123"
+          - ""
+          - "What was configured:"
+          - "  ✓ Grafana service verified: {{ grafana_service }}"
+          - "  ✓ Socat installed for port forwarding"
+          - "  ✓ Systemd service created: grafana-port-forward"
+          - "  ✓ Port {{ target_port }} → NodePort {{ grafana_nodeport.stdout }}"
+          - "  ✓ Firewall rules configured"
+          - "  ✓ Service enabled to start on boot"
+          - "  ✓ Connectivity verified (HTTP {{ port_test.stdout }})"
+          - ""
+          - "Service Management:"
+          - "  Check status: systemctl status grafana-port-forward"
+          - "  Restart: systemctl restart grafana-port-forward"
+          - "  View logs: journalctl -u grafana-port-forward -f"
+          - "  Verify: /tmp/verify-grafana-access.sh"
+          - ""
+          - "Alternative Access Methods:"
+          - "  - NodePort: http://{{ domain }}:{{ grafana_nodeport.stdout }}/"
+          - "  - ClusterIP: http://{{ grafana_cluster_ip.stdout }}:{{ target_port }}/"
+          - ""
+          - "ROLLBACK:"
+          - "  Quick rollback: /tmp/rollback-grafana-complete.sh"
+          - ""
+          - "NEXT STEPS:"
+          - "  1. Test access: open http://{{ domain }}:{{ target_port }}/"
+          - "  2. Login with admin/admin123"
+          - "  3. Change default password"
+          - "  4. Explore dashboards"
+          - ""
+          - "================================================================"
+
+- name: Final summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYMENT SUCCESSFUL"
+          - "================================================================"
+          - ""
+          - "✓ Grafana is now accessible at: http://ajasta.top:3000/"
+          - ""
+          - "Login Credentials:"
+          - "  Username: admin"
+          - "  Password: admin123"
+          - ""
+          - "What To Do Next:"
+          - "  1. Open browser: http://ajasta.top:3000/"
+          - "  2. Login and change password"
+          - "  3. Explore pre-configured dashboards"
+          - ""
+          - "If Something Doesn't Work:"
+          - "  - Check firewall on master node"
+          - "  - Verify DNS: ajasta.top"
+          - "  - Run: ssh ajasta@<master-ip> '/tmp/verify-grafana-access.sh'"
+          - "  - Check logs: journalctl -u grafana-port-forward -n 50"
+          - ""
+          - "Rollback If Needed:"
+          - "  ssh ajasta@<master-ip> 'sudo /tmp/rollback-grafana-complete.sh'"
+          - ""
+          - "================================================================"

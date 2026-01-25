@@ -1,0 +1,444 @@
+---
+# Verify Grafana LoadBalancer Access for ajasta.top
+# This playbook verifies Grafana is accessible via LoadBalancer on port 3000
+# Usage:
+#   ansible-playbook -i inventory.ini 22-verify-grafana-loadbalancer.yml
+
+- name: Verify Grafana LoadBalancer Access
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    monitoring_namespace: "monitoring"
+    domain: "ajasta.top"
+    grafana_port: 3000
+
+  tasks:
+    - name: Display verification information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "VERIFY GRAFANA LOADBALANCER ACCESS"
+          - "================================================================"
+          - ""
+          - "This playbook will:"
+          - "  1. Verify Grafana LoadBalancer service is running"
+          - "  2. Get external access information"
+          - "  3. Test connectivity"
+          - "  4. Document access details"
+          - ""
+          - "Expected access: http://{{ domain }}:{{ grafana_port }}/"
+          - "Namespace: {{ monitoring_namespace }}"
+          - ""
+          - "================================================================"
+
+    # ============== CHECK GRAFANA SERVICE ==============
+    - name: Check if Grafana service exists
+      ansible.builtin.shell:
+        cmd: "kubectl get svc grafana -n {{ monitoring_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_service_check
+      failed_when: false
+
+    - name: Check if monitoring namespace exists
+      ansible.builtin.shell:
+        cmd: "kubectl get namespace {{ monitoring_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: namespace_check
+      failed_when: false
+
+    - name: Display helpful message if monitoring not deployed
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "MONITORING STACK NOT FOUND"
+          - "================================================================"
+          - ""
+          - "The Grafana service doesn't exist yet."
+          - ""
+          - "You need to deploy the monitoring stack first:"
+          - ""
+          - "  ansible-playbook -i inventory.ini 20-deploy-monitoring-stack.yml"
+          - ""
+          - "This will install:"
+          - "  - Prometheus Operator"
+          - "  - Grafana"
+          - "  - Alertmanager"
+          - "  - Node Exporter"
+          - "  - Kube-State-Metrics"
+          - ""
+          - "After deploying, run this playbook again to verify access:"
+          - "  ansible-playbook -i inventory.ini 22-verify-grafana-loadbalancer.yml"
+          - ""
+          - "================================================================"
+      when: grafana_service_check.rc != 0 or namespace_check.rc != 0
+
+    - name: Fail if Grafana service does not exist
+      ansible.builtin.fail:
+        msg: "Monitoring stack not deployed. Please run: ansible-playbook -i inventory.ini 20-deploy-monitoring-stack.yml"
+      when: grafana_service_check.rc != 0 or namespace_check.rc != 0
+
+    - name: Display Grafana service status
+      ansible.builtin.debug:
+        msg: "✓ Grafana service exists"
+
+    - name: Get detailed Grafana service information
+      ansible.builtin.shell:
+        cmd: "kubectl get svc grafana -n {{ monitoring_namespace }} -o yaml"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_service_yaml
+      changed_when: false
+
+    - name: Get Grafana service status in table format
+      ansible.builtin.shell:
+        cmd: "kubectl get svc grafana -n {{ monitoring_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_service
+      changed_when: false
+
+    - name: Display Grafana service details
+      ansible.builtin.debug:
+        msg: "{{ grafana_service.stdout_lines }}"
+
+    # ============== EXTRACT SERVICE TYPE AND PORTS ==============
+    - name: Get service type
+      ansible.builtin.shell:
+        cmd: "kubectl get svc grafana -n {{ monitoring_namespace }} -o jsonpath='{.spec.type}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: service_type
+      changed_when: false
+
+    - name: Display service type
+      ansible.builtin.debug:
+        msg: "Service Type: {{ service_type.stdout }}"
+
+    - name: Get service ports
+      ansible.builtin.shell:
+        cmd: "kubectl get svc grafana -n {{ monitoring_namespace }} -o jsonpath='{.spec.ports[0].port}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: service_port
+      changed_when: false
+
+    - name: Display service port
+      ansible.builtin.debug:
+        msg: "Service Port: {{ service_port.stdout }}"
+
+    # ============== CHECK LOADBALANCER STATUS ==============
+    - name: Check if service is LoadBalancer type
+      ansible.builtin.debug:
+        msg: "✓ Grafana is configured as LoadBalancer (ideal for external access)"
+      when: service_type.stdout == "LoadBalancer"
+
+    - name: Get LoadBalancer external IP
+      ansible.builtin.shell:
+        cmd: "kubectl get svc grafana -n {{ monitoring_namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: external_ip
+      changed_when: false
+      failed_when: false
+
+    - name: Get LoadBalancer external hostname
+      ansible.builtin.shell:
+        cmd: "kubectl get svc grafana -n {{ monitoring_namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: external_hostname
+      changed_when: false
+      failed_when: false
+
+    - name: Set external access endpoint
+      ansible.builtin.set_fact:
+        external_endpoint: "{{ external_ip.stdout if external_ip.stdout else external_hostname.stdout if external_hostname.stdout else 'pending' }}"
+
+    - name: Display LoadBalancer endpoint
+      ansible.builtin.debug:
+        msg: "LoadBalancer Endpoint: {{ external_endpoint }}"
+
+    - name: Check if external IP is assigned
+      ansible.builtin.debug:
+        msg: "⚠️ WARNING: LoadBalancer IP not yet assigned. This may take a few minutes."
+      when: external_endpoint == "pending"
+
+    # ============== GET NODE IPs ==============
+    - name: Get cluster nodes
+      ansible.builtin.shell:
+        cmd: "kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type==\"ExternalIP\")].address}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: node_external_ips
+      changed_when: false
+      failed_when: false
+
+    - name: Get node internal IPs
+      ansible.builtin.shell:
+        cmd: "kubectl get nodes -o jsonpath='{.items[*].status.addresses[?(@.type==\"InternalIP\")].address}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: node_internal_ips
+      changed_when: false
+      failed_when: false
+
+    - name: Display node IPs
+      ansible.builtin.debug:
+        msg:
+          - "Node External IPs: {{ node_external_ips.stdout if node_external_ips.stdout else 'None configured' }}"
+          - "Node Internal IPs: {{ node_internal_ips.stdout if node_internal_ips.stdout else 'None found' }}"
+
+    # ============== GET MASTER NODE IP ==============
+    - name: Get master node internal IP
+      ansible.builtin.shell:
+        cmd: "hostname -I | awk '{print $1}'"
+      register: master_ip
+      changed_when: false
+
+    - name: Display master node IP
+      ansible.builtin.debug:
+        msg: "Master Node IP: {{ master_ip.stdout }}"
+
+    # ============== CHECK GRAFANA PODS ==============
+    - name: Get Grafana pods
+      ansible.builtin.shell:
+        cmd: "kubectl get pods -n {{ monitoring_namespace }} -l app.kubernetes.io/name=grafana"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_pods
+      changed_when: false
+
+    - name: Display Grafana pods
+      ansible.builtin.debug:
+        msg: "{{ grafana_pods.stdout_lines }}"
+
+    - name: Check if Grafana pods are running
+      ansible.builtin.shell:
+        cmd: "kubectl get pods -n {{ monitoring_namespace }} -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].status.phase}'"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_pod_status
+      changed_when: false
+      failed_when: false
+
+    - name: Verify Grafana pods are running
+      ansible.builtin.debug:
+        msg: "✓ Grafana pod is running"
+      when: grafana_pod_status.stdout == "Running"
+
+    - name: Warn if Grafana pods are not running
+      ansible.builtin.debug:
+        msg: "⚠️ WARNING: Grafana pod status is {{ grafana_pod_status.stdout }}"
+      when: grafana_pod_status.stdout != "Running"
+
+    # ============== TEST CONNECTIVITY ==============
+    - name: Test local connectivity to Grafana service
+      ansible.builtin.shell:
+        cmd: "curl -s -o /dev/null -w '%{http_code}' -m 5 http://localhost:{{ grafana_port }}/ || echo '000'"
+      register: local_connectivity
+      changed_when: false
+      failed_when: false
+
+    - name: Display local connectivity test
+      ansible.builtin.debug:
+        msg: "Local connectivity test: {{ '✓ SUCCESS' if local_connectivity.stdout == '200' else '⚠️ FAILED (HTTP ' ~ local_connectivity.stdout ~ ')' }}"
+
+    - name: Test connectivity to Grafana via service
+      ansible.builtin.shell:
+        cmd: "curl -s -o /dev/null -w '%{http_code}' -m 5 http://{{ master_ip.stdout }}:{{ grafana_port }}/ || echo '000'"
+      register: service_connectivity
+      changed_when: false
+      failed_when: false
+
+    - name: Display service connectivity test
+      ansible.builtin.debug:
+        msg: "Service connectivity test (via master IP): {{ '✓ SUCCESS' if service_connectivity.stdout == '200' else '⚠️ FAILED (HTTP ' ~ service_connectivity.stdout ~ ')' }}"
+
+    # ============== CHECK FIREWALL/PORT ACCESS ==============
+    - name: Check if port 3000 is listening
+      ansible.builtin.shell:
+        cmd: "ss -tlnp | grep :{{ grafana_port }} || netstat -tlnp | grep :{{ grafana_port }} || echo 'Port not found'"
+      register: port_listen
+      changed_when: false
+      failed_when: false
+
+    - name: Display port listening status
+      ansible.builtin.debug:
+        msg: "Port {{ grafana_port }} status: {{ port_listen.stdout if port_listen.rc == 0 else 'Not listening locally (expected for LoadBalancer)' }}"
+
+    # ============== DOCUMENT ACCESS INFORMATION ==============
+    - name: Create access information file
+      ansible.builtin.copy:
+        dest: /tmp/grafana-access-info.txt
+        mode: '0644'
+        content: |
+          GRAFANA ACCESS INFORMATION
+          ==========================
+          Generated: {{ ansible_date_time.iso8601 }}
+
+          Access Methods:
+          ---------------
+
+          1. Via Domain (Recommended):
+             URL: http://{{ domain }}:{{ grafana_port }}/
+             Requirements:
+               - DNS: {{ domain }} must point to your cluster IP
+               - Port: {{ grafana_port }} must be open in firewall
+
+          2. Via Master Node IP:
+             URL: http://{{ master_ip.stdout }}:{{ grafana_port }}/
+             Requirements:
+               - Port {{ grafana_port }} must be accessible from your location
+
+          3. Via Node External IP (if configured):
+             URL: http://<node-external-ip>:{{ grafana_port }}/
+
+          4. Via LoadBalancer (if IP assigned):
+             LoadBalancer Endpoint: {{ external_endpoint }}
+             {% if external_endpoint != 'pending' %}
+             URL: http://{{ external_endpoint }}:{{ grafana_port }}/
+             {% endif %}
+
+          5. Via Port Forwarding (Always works):
+             From master: kubectl port-forward -n {{ monitoring_namespace }} svc/grafana {{ grafana_port }}:{{ grafana_port }}
+             Then access: http://localhost:{{ grafana_port }}/
+
+          Credentials:
+          -----------
+          Username: admin
+          Password: admin123
+
+          Service Information:
+          --------------------
+          Namespace: {{ monitoring_namespace }}
+          Service Name: grafana
+          Service Type: {{ service_type.stdout }}
+          Service Port: {{ service_port.stdout }}
+
+          Troubleshooting:
+          ---------------
+          If you can't access Grafana:
+
+          1. Check service status:
+             kubectl get svc -n {{ monitoring_namespace }} grafana
+
+          2. Check pod status:
+             kubectl get pods -n {{ monitoring_namespace }} -l app.kubernetes.io/name=grafana
+
+          3. Check service endpoints:
+             kubectl get endpoints -n {{ monitoring_namespace }} grafana
+
+          4. Check LoadBalancer status:
+             kubectl describe svc -n {{ monitoring_namespace }} grafana
+
+          5. Test from cluster:
+             kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- curl -s http://grafana.{{ monitoring_namespace }}.svc.cluster.local:{{ grafana_port }}/
+
+          6. Check firewall rules:
+             sudo iptables -L -n | grep {{ grafana_port }}
+             sudo firewall-cmd --list-ports 2>/dev/null || echo "firewalld not running"
+
+          7. Check node port forwarding:
+             kubectl get svc -n {{ monitoring_namespace }} grafana -o jsonpath='{.spec.ports[0].nodePort}'
+
+          DNS Configuration:
+          -----------------
+          Ensure your DNS ({{ domain }}) points to one of these IPs:
+          {% if external_endpoint != 'pending' and external_endpoint != external_endpoint %}
+          - LoadBalancer IP: {{ external_endpoint }}
+          {% endif %}
+          {% if node_external_ips.stdout != '' %}
+          - Node External IPs: {{ node_external_ips.stdout }}
+          {% endif %}
+          - Node Internal IP: {{ master_ip.stdout }}
+
+          Next Steps:
+          ----------
+          1. Access Grafana: http://{{ domain }}:{{ grafana_port }}/
+          2. Login with admin/admin123
+          3. Change default password
+          4. Explore pre-configured dashboards
+
+      register: access_info_file
+
+    - name: Display access file creation
+      ansible.builtin.debug:
+        msg: "✓ Created access information file: /tmp/grafana-access-info.txt"
+
+    # ============== DISPLAY SUMMARY ==============
+    - name: Display verification summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "GRAFANA LOADBALANCER VERIFICATION COMPLETE"
+          - "================================================================"
+          - ""
+          - "Service Status:"
+          - "  Name: grafana"
+          - "  Namespace: {{ monitoring_namespace }}"
+          - "  Type: {{ service_type.stdout }}"
+          - "  Port: {{ service_port.stdout }}"
+          - "  Pod Status: {{ grafana_pod_status.stdout if grafana_pod_status.stdout else 'Unknown' }}"
+          - ""
+          - "Access Information:"
+          - "  Primary URL: http://{{ domain }}:{{ grafana_port }}/"
+          - "  Master Node: http://{{ master_ip.stdout }}:{{ grafana_port }}/"
+          - "  LoadBalancer: {{ 'http://' + external_endpoint + ':' + grafana_port + '/' if external_endpoint != 'pending' else 'Not assigned (use master node IP)' }}"
+          - ""
+          - "Credentials:"
+          - "  Username: admin"
+          - "  Password: admin123"
+          - ""
+          - "Requirements for http://{{ domain }}:{{ grafana_port }}/:"
+          - "  1. DNS: {{ domain }} → cluster IP ({{ master_ip.stdout }})"
+          - "  2. Firewall: Port {{ grafana_port }} open"
+          - "  3. Service: LoadBalancer running"
+          - ""
+          - "Quick Test Commands:"
+          - "  # From master node:"
+          - "  curl -I http://localhost:{{ grafana_port }}/"
+          - ""
+          - "  # From your local machine:"
+          - "  curl -I http://{{ domain }}:{{ grafana_port }}/"
+          - "  curl -I http://{{ master_ip.stdout }}:{{ grafana_port }}/"
+          - ""
+          - "If you can't access Grafana, try port forwarding:"
+          - "  kubectl port-forward -n {{ monitoring_namespace }} svc/grafana {{ grafana_port }}:{{ grafana_port }}"
+          - "  Then access: http://localhost:{{ grafana_port }}/"
+          - ""
+          - "Full access information saved to:"
+          - "  /tmp/grafana-access-info.txt (on master node)"
+          - ""
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "VERIFICATION COMPLETE"
+          - "================================================================"
+          - ""
+          - "Grafana is configured as LoadBalancer and ready for access."
+          - ""
+          - "Access Grafana at:"
+          - "  http://{{ domain }}:3000/"
+          - ""
+          - "Login: admin / admin123"
+          - ""
+          - "If it doesn't work:"
+          - "  1. Check DNS: {{ domain }} should point to cluster IP"
+          - "  2. Check firewall: Port 3000 must be open"
+          - "  3. Use port forward: kubectl port-forward -n monitoring svc/grafana 3000:3000"
+          - ""
+          - "For detailed info, SSH to master and view:"
+          - "  cat /tmp/grafana-access-info.txt"
+          - ""
+          - "================================================================"
