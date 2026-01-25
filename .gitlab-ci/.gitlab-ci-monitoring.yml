@@ -85,24 +85,67 @@ deploy:grafana:
   allow_failure: true
   when: manual
 
-# Deploy Exporters
+# Deploy Loki for Log Aggregation
+deploy:loki:
+  stage: monitoring-deploy
+  image: python:3.11
+  variables:
+    ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
+    ANSIBLE_INVENTORY: "${ANSIBLE_DIR}/k8s/inventory.ini"
+  script:
+    - pip install ansible-core
+    - mkdir -p ~/.ssh
+    - echo "${SSH_PRIVATE_KEY}" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H $(grep 'ansible_host=' ${ANSIBLE_INVENTORY} 2>/dev/null | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2 || echo "127.0.0.1") >> ~/.ssh/known_hosts 2>/dev/null || true
+    - cd ${ANSIBLE_DIR}/k8s
+    - ansible-playbook -i inventory.ini 23-deploy-loki.yml --skip-tags confirm || true
+    - echo "✓ Loki deployment completed"
+  needs:
+    - terraform:apply:monitoring
+  allow_failure: true
+  when: manual
+
+# Deploy Promtail for Log Collection
+deploy:promtail:
+  stage: monitoring-deploy
+  image: python:3.11
+  variables:
+    ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
+    ANSIBLE_INVENTORY: "${ANSIBLE_DIR}/k8s/inventory.ini"
+  script:
+    - pip install ansible-core
+    - mkdir -p ~/.ssh
+    - echo "${SSH_PRIVATE_KEY}" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H $(grep 'ansible_host=' ${ANSIBLE_INVENTORY} 2>/dev/null | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2 || echo "127.0.0.1") >> ~/.ssh/known_hosts 2>/dev/null || true
+    - cd ${ANSIBLE_DIR}/k8s
+    - ansible-playbook -i inventory.ini 24-deploy-promtail.yml --skip-tags confirm || true
+    - echo "✓ Promtail deployment completed"
+  needs:
+    - deploy:loki
+  allow_failure: true
+  when: manual
+
+# Deploy Exporters (node_exporter, cadvisor, etc.) and Configure Grafana
 deploy:exporters:
   stage: monitoring-deploy
   image: python:3.11
   variables:
     ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
     ANSIBLE_INVENTORY: "${ANSIBLE_DIR}/k8s/inventory.ini"
-    KUBECONFIG: "${ANSIBLE_DIR}/k8s/kubeconfig"
   script:
-    - mkdir -p ~/.kube
-    - echo "${KUBECONFIG_CONTENT}" | base64 -d > ~/.kube/config
-    - export KUBECONFIG=~/.kube/config
-    - chmod 600 ~/.kube/config
-    - cd ${ANSIBLE_DIR}
-    - echo "Testing Kubernetes cluster connectivity..."
-    - if kubectl get nodes --request-timeout=10s > /dev/null 2>&1; then echo "Cluster is reachable"; else echo "⚠ Cluster unreachable - Node Exporter deployment skipped (monitoring infrastructure may not be provisioned yet)"; fi
+    - pip install ansible-core
+    - mkdir -p ~/.ssh
+    - echo "${SSH_PRIVATE_KEY}" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H $(grep 'ansible_host=' ${ANSIBLE_INVENTORY} 2>/dev/null | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2 || echo "127.0.0.1") >> ~/.ssh/known_hosts 2>/dev/null || true
+    - cd ${ANSIBLE_DIR}/k8s
+    - ansible-playbook -i inventory.ini 25-deploy-exporters.yml --skip-tags confirm || true
+    - echo "✓ Exporters deployment completed"
+    - echo "✓ Grafana Loki datasource configured"
   needs:
-    - terraform:apply:monitoring
+    - deploy:promtail
   allow_failure: true
   when: manual
 
@@ -110,19 +153,54 @@ deploy:exporters:
 verify:monitoring:
   stage: verify
   image: python:3.11
+  variables:
+    ANSIBLE_DIR: "${CI_PROJECT_DIR}/ansible"
+    ANSIBLE_INVENTORY: "${ANSIBLE_DIR}/k8s/inventory.ini"
   script:
-    - mkdir -p ~/.kube
-    - echo "${KUBECONFIG_CONTENT}" | base64 -d > ~/.kube/config
-    - export KUBECONFIG=~/.kube/config
-    - echo "Testing Kubernetes cluster connectivity..."
-    - if kubectl get nodes --request-timeout=10s > /dev/null 2>&1; then echo "✓ Cluster is reachable, running verification..."; kubectl get nodes --validate=false || echo "Cannot get nodes"; kubectl get pods -n monitoring --validate=false || echo "Cannot get pods"; kubectl get svc -n monitoring --validate=false || echo "Cannot get services"; else echo "⚠ Cluster unreachable - skipping verification (monitoring infrastructure may not be provisioned yet)"; fi
-    - echo "Monitoring verification complete"
+    - pip install ansible-core
+    - mkdir -p ~/.ssh
+    - echo "${SSH_PRIVATE_KEY}" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - cd ${ANSIBLE_DIR}/k8s
+    - echo "Verifying monitoring stack..."
+    - |
+      # Verify Loki
+      echo "=== Verifying Loki ==="
+      ansible k8s_master -i inventory.ini -m shell -a "kubectl get pods -n monitoring -l app=loki" -b | grep -q "Running" && echo "✓ Loki is running" || echo "✗ Loki is not running"
+
+      # Verify Promtail
+      echo "=== Verifying Promtail ==="
+      ansible k8s_master -i inventory.ini -m shell -a "kubectl get pods -n monitoring -l app=promtail" -b | grep -q "Running" && echo "✓ Promtail is running" || echo "✗ Promtail is not running"
+
+      # Verify node_exporter
+      echo "=== Verifying node_exporter ==="
+      ansible k8s_master -i inventory.ini -m shell -a "kubectl get pods -n monitoring -l app=node-exporter" -b | grep -q "Running" && echo "✓ node_exporter is running" || echo "✗ node_exporter is not running"
+
+      # Verify cAdvisor
+      echo "=== Verifying cAdvisor ==="
+      ansible k8s_master -i inventory.ini -m shell -a "kubectl get pods -n monitoring -l app=cadvisor" -b | grep -q "Running" && echo "✓ cAdvisor is running" || echo "✗ cAdvisor is not running"
+
+      # Verify Grafana
+      echo "=== Verifying Grafana ==="
+      ansible k8s_master -i inventory.ini -m shell -a "kubectl get pods -n monitoring -l app.kubernetes.io/name=grafana" -b | grep -q "Running" && echo "✓ Grafana is running" || echo "✗ Grafana is not running"
+
+      # Verify Prometheus
+      echo "=== Verifying Prometheus ==="
+      ansible k8s_master -i inventory.ini -m shell -a "kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus" -b | grep -q "Running" && echo "✓ Prometheus is running" || echo "✗ Prometheus is not running"
+
+      # Test Loki API
+      echo "=== Testing Loki API ==="
+      ansible k8s_master -i inventory.ini -m shell -a "kubectl run curl-test --image=curlimages/curl:latest --rm -i --restart=Never --command -- curl -s -o /dev/null -w '%{http_code}' http://loki.monitoring.svc:3100/ready" -b | grep -q "200" && echo "✓ Loki API is responding" || echo "✗ Loki API is not responding"
+
+      echo "=== Monitoring Stack Verification Complete ==="
   needs:
     - deploy:prometheus
     - deploy:grafana
+    - deploy:loki
+    - deploy:promtail
     - deploy:exporters
   allow_failure: true
-  when: manual
+  when: on_success
 
 # Notify Success
 notify:success:

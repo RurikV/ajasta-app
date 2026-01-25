@@ -1,0 +1,371 @@
+---
+# Deploy Promtail for Log Collection
+# Collects logs from all nodes and sends to Loki
+# Universal - works with any dynamically assigned master IP
+# FULL ROLLBACK CAPABILITY
+# Usage: ansible-playbook -i inventory.ini 24-deploy-promtail.yml
+
+- name: Discover Master IP
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Get master IP from inventory
+      ansible.builtin.shell:
+        cmd: "grep 'ansible_host=' inventory.ini | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2"
+      register: inventory_ip
+      changed_when: false
+
+    - name: Set master IP fact
+      ansible.builtin.set_fact:
+        master_ip: "{{ inventory_ip.stdout }}"
+
+    - name: Display configuration information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOY PROMTAIL LOG COLLECTOR"
+          - "================================================================"
+          - ""
+          - "This will deploy:"
+          - "  - Promtail as DaemonSet (runs on all nodes)"
+          - "  - Automatic log collection from all pods"
+          - "  - Integration with Loki"
+          - ""
+          - "Features:"
+          - "  - Collects all container logs"
+          - "  - Adds Kubernetes metadata labels"
+          - "  - Sends logs to Loki"
+          - "  - Automatic service discovery"
+          - ""
+          - "================================================================"
+
+    - name: Confirm action
+      ansible.builtin.pause:
+        prompt: |
+          This will deploy Promtail log collector.
+
+          Press Enter to continue or Ctrl+C to cancel.
+
+- name: Deploy Promtail
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    loki_namespace: "monitoring"
+
+  tasks:
+    - name: Display deployment configuration
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYING PROMTAIL"
+          - "================================================================"
+          - ""
+          - "Namespace: {{ loki_namespace }}"
+          - "Mode: DaemonSet (all nodes)"
+          - "Target: Loki service"
+          - ""
+
+    # ============== CREATE PROMTAIL CONFIG ==============
+    - name: Create Promtail configuration
+      ansible.builtin.copy:
+        dest: /tmp/promtail-config.yaml
+        mode: '0644'
+        content: |
+          # Promtail Configuration
+          server:
+            http_listen_port: 3101
+
+          clients:
+            - url: http://loki.{{ loki_namespace }}.svc:3100/loki/api/v1/push
+
+          # Scrape configs
+          scrape_configs:
+            # Job for scraping Kubernetes pods
+            - job_name: kubernetes-pods
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - source_labels:
+                    - __meta_kubernetes_pod_controller_name
+                  regex: ([0-9a-z-.]+?)(-[0-9a-f]{8,10})?
+                  action: labelmap
+                  replacement: $1
+                - source_labels:
+                    - __meta_kubernetes_pod_label_app
+                  target_label: app
+                  action: replace
+                - source_labels:
+                    - __meta_kubernetes_pod_label_component
+                  target_label: component
+                  action: replace
+                - source_labels:
+                    - __meta_kubernetes_pod_name
+                  target_label: pod
+                  action: replace
+                - source_labels:
+                    - __meta_kubernetes_pod_namespace
+                  target_label: namespace
+                  action: replace
+                - source_labels:
+                    - __meta_kubernetes_pod_node_name
+                  target_label: node
+                  action: replace
+                - source_labels:
+                    - __meta_kubernetes_pod_container_name
+                  target_label: container
+                  action: replace
+                - source_labels:
+                    - __meta_kubernetes_pod_uid
+                  target_label: pod_uid
+                  action: replace
+                - replacement: /var/log/pods/*$1/*.log
+                  separator: /
+                  source_labels:
+                    - __meta_kubernetes_pod_uid
+                    - __meta_kubernetes_pod_container_name
+                  action: replace
+                  target_label: __path__
+
+            # Job for scraping systemd journals (optional)
+            - job_name: systemd-journal
+              journal:
+                path: /var/log/journal
+                labels:
+                  job: systemd-journal
+                  node: ${HOSTNAME}
+              relabel_configs:
+                - source_labels:
+                    - __journal__systemd_unit
+                  target_label: unit
+                  action: replace
+                - source_labels:
+                    - __journal__hostname
+                  target_label: hostname
+                  action: replace
+                - source_labels:
+                    - __journal__transport
+                  target_label: transport
+                  action: replace
+
+    - name: Display config creation status
+      ansible.builtin.debug:
+        msg: "✓ Promtail configuration created"
+
+    # ============== CREATE PROMTAIL VALUES FILE ==============
+    - name: Create Promtail values file
+      ansible.builtin.copy:
+        dest: /tmp/promtail-values.yaml
+        mode: '0644'
+        content: |
+          # Promtail Configuration
+          promtail:
+            # Use the custom config created above
+            config:
+              enabled: true
+              file: /etc/promtail/config.yml
+
+            # Enable Promtail
+            enabled: true
+
+            # Enable monitoring
+            serviceMonitor:
+              enabled: true
+
+            # Resources
+            resources:
+              limits:
+                cpu: 200m
+                memory: 128Mi
+              requests:
+                cpu: 100m
+                memory: 64Mi
+
+          # Network policy
+          networkPolicy:
+            enabled: false
+
+          # RBAC
+          rbac:
+            create: true
+            pspEnabled: false
+
+    - name: Display values file creation
+      ansible.builtin.debug:
+        msg: "✓ Promtail values file created"
+
+    # ============== CREATE CONFIGMAP ==============
+    - name: Create Promtail ConfigMap from file
+      ansible.builtin.shell:
+        cmd: "kubectl create configmap promtail-config -n {{ loki_namespace }} --from-file=config.yml=/tmp/promtail-config.yaml --dry-run=client -o yaml | kubectl apply -f -"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: configmap_create
+
+    - name: Display ConfigMap creation
+      ansible.builtin.debug:
+        msg: "✓ Promtail ConfigMap created"
+
+    # ============== DEPLOY PROMTAIL ==============
+    - name: Deploy Promtail via Helm
+      ansible.builtin.shell:
+        cmd: >
+          KUBECONFIG=/etc/kubernetes/admin.conf
+          /usr/local/bin/helm upgrade --install promtail grafana/loki-stack
+          --version 2.10.2
+          --namespace {{ loki_namespace }}
+          --values /tmp/promtail-values.yaml
+          --timeout 3m
+          --set loki.enabled=false
+          --set promtail.enabled=true
+          --set promtail.configMapName=promtail-config
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+      register: promtail_deploy
+      async: 180
+      poll: 10
+
+    - name: Display Promtail deployment status
+      ansible.builtin.debug:
+        msg: "✓ Promtail deployed via Helm"
+
+    # ============== VERIFY PROMTAIL DEPLOYMENT ==============
+    - name: Pause for Promtail to start
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: Check Promtail pods
+      ansible.builtin.shell:
+        cmd: "kubectl get pods -n {{ loki_namespace }} -l app=promtail"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: promtail_pods
+
+    - name: Display Promtail pods
+      ansible.builtin.debug:
+        msg: "{{ promtail_pods.stdout_lines }}"
+
+    - name: Check Promtail logs
+      ansible.builtin.shell:
+        cmd: "kubectl logs -n {{ loki_namespace }} -l app=promtail --tail=10 --prefix=true"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: promtail_logs
+      failed_when: false
+
+    - name: Display Promtail logs
+      ansible.builtin.debug:
+        msg: "{{ promtail_logs.stdout_lines }}"
+
+    # ============== CREATE ROLLBACK SCRIPT ==============
+    - name: Create rollback script
+      ansible.builtin.copy:
+        dest: /tmp/rollback-promtail.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Rollback script for Promtail deployment
+          # Generated by: 24-deploy-promtail.yml
+
+          set -e
+
+          NAMESPACE="{{ loki_namespace }}"
+
+          echo "================================================================"
+          echo "ROLLBACK PROMTAIL DEPLOYMENT"
+          echo "================================================================"
+          echo ""
+
+          # Confirm rollback
+          echo "This will:"
+          echo "  Uninstall Promtail via Helm"
+          echo "  Delete Promtail ConfigMap"
+          echo ""
+          read -p "Continue? (y/N) " -n 1 -r
+          echo
+          if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Rollback cancelled"
+            exit 0
+          fi
+          echo ""
+
+          # Uninstall Promtail
+          echo "Uninstalling Promtail..."
+          helm uninstall promtail -n "$NAMESPACE" 2>/dev/null || true
+          echo "✓ Promtail uninstalled"
+          echo ""
+
+          # Delete ConfigMap
+          echo "Deleting ConfigMap..."
+          kubectl delete configmap promtail-config -n "$NAMESPACE" 2>/dev/null || true
+          echo "✓ ConfigMap deleted"
+          echo ""
+
+          echo "================================================================"
+          echo "ROLLBACK COMPLETE"
+          echo "================================================================"
+          echo ""
+          echo "To re-deploy:"
+          echo "  ansible-playbook -i inventory.ini 24-deploy-promtail.yml"
+          echo ""
+
+    - name: Make rollback script executable
+      ansible.builtin.shell:
+        cmd: "chmod +x /tmp/rollback-promtail.sh"
+      changed_when: false
+
+    # ============== DISPLAY SUMMARY ==============
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PROMTAIL DEPLOYMENT COMPLETE"
+          - "================================================================"
+          - ""
+          - "✓ Promtail deployed successfully"
+          - "✓ Running as DaemonSet on all nodes"
+          - "✓ Collecting logs from all pods"
+          - "✓ Sending logs to Loki"
+          - ""
+          - "LOG FLOW:"
+          - "  Pods → Promtail → Loki → Grafana"
+          - ""
+          - "NEXT STEPS:"
+          - "  1. Deploy exporters: ansible-playbook -i inventory.ini 25-deploy-exporters.yml"
+          - "  2. Configure Grafana datasource"
+          - "  3. View logs in Grafana"
+          - ""
+          - "USEFUL COMMANDS:"
+          - "  kubectl get pods -n {{ loki_namespace }} -l app=promtail"
+          - "  kubectl logs -n {{ loki_namespace }} -l app=promtail -f"
+          - "  kubectl get configmap promtail-config -n {{ loki_namespace }} -o yaml"
+          - ""
+          - "ROLLBACK IF NEEDED:"
+          - "  /tmp/rollback-promtail.sh (on master node)"
+          - ""
+          - "================================================================"
+
+- name: Final Instructions
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "PROMTAIL LOG COLLECTOR READY"
+          - "================================================================"
+          - ""
+          - "Promtail is now collecting logs from all pods!"
+          - ""
+          - "Next steps:"
+          - ""
+          - "1. Deploy exporters (node_exporter, cadvisor, etc.):"
+          - "   ansible-playbook -i inventory.ini 25-deploy-exporters.yml"
+          - ""
+          - "2. Configure Grafana Loki datasource (will be done in step 1)"
+          - ""
+          - "3. View logs in Grafana → Explore"
+          - ""
+          - "================================================================"

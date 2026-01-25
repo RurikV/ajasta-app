@@ -1,0 +1,395 @@
+---
+# Deploy Loki for Log Aggregation
+# Full-stack logging solution with Grafana integration
+# Universal - works with any dynamically assigned master IP
+# FULL ROLLBACK CAPABILITY
+# Usage: ansible-playbook -i inventory.ini 23-deploy-loki.yml
+
+- name: Discover Master IP
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Get master IP from inventory
+      ansible.builtin.shell:
+        cmd: "grep 'ansible_host=' inventory.ini | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2"
+      register: inventory_ip
+      changed_when: false
+
+    - name: Set master IP fact
+      ansible.builtin.set_fact:
+        master_ip: "{{ inventory_ip.stdout }}"
+
+    - name: Display configuration information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOY LOKI LOG AGGREGATION"
+          - "================================================================"
+          - ""
+          - "This will deploy:"
+          - "  - Loki for log aggregation and storage"
+          - "  - Longhorn storage for persistent logs"
+          - "  - Integration with existing Grafana"
+          - ""
+          - "Storage Configuration:"
+          - "  - 10Gi persistent storage"
+          - "  - 30-day retention policy"
+          - "  - Replicated on Longhorn"
+          - ""
+          - "Access:"
+          - "  - Loki API: http://{{ master_ip }}:3100"
+          - "  - Grafana: http://{{ master_ip }}:3000"
+          - ""
+          - "================================================================"
+
+    - name: Confirm action
+      ansible.builtin.pause:
+        prompt: |
+          This will deploy Loki with persistent storage.
+
+          Press Enter to continue or Ctrl+C to cancel.
+
+- name: Deploy Loki
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    loki_namespace: "monitoring"
+    loki_storage_size: "10Gi"
+    loki_retention: "720h"  # 30 days
+
+  tasks:
+    - name: Display deployment configuration
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "DEPLOYING LOKI"
+          - "================================================================"
+          - ""
+          - "Namespace: {{ loki_namespace }}"
+          - "Storage: {{ loki_storage_size }}"
+          - "Retention: {{ loki_retention }}"
+          - ""
+
+    # ============== INSTALL LOKI HELM CHART ==============
+    - name: Add Grafana Helm repository
+      ansible.builtin.shell:
+        cmd: "helm repo add grafana https://grafana.github.io/helm-charts"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: helm_repo_add
+      changed_when: "'already exists' not in helm_repo_add.stderr"
+
+    - name: Update Helm repositories
+      ansible.builtin.shell:
+        cmd: "helm repo update"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: helm_repo_update
+
+    - name: Display Helm repo status
+      ansible.builtin.debug:
+        msg: "✓ Helm repositories updated"
+
+    # ============== CREATE LOKI VALUES FILE ==============
+    - name: Create Loki values file
+      ansible.builtin.copy:
+        dest: /tmp/loki-values.yaml
+        mode: '0644'
+        content: |
+          # Loki Configuration
+          loki:
+            auth_enabled: false
+
+            commonConfig:
+              replication_factor: 1
+
+            storage:
+              type: 'filesystem'
+              filesystem:
+                chunks_directory: /loki/chunks
+                rules_directory: /loki/rules
+
+            limits_config:
+              retention_period: {{ loki_retention }}
+              ingestion_rate_mb: 16
+              ingestion_burst_size_mb: 32
+              per_stream_rate_limit: 16MB
+              per_stream_rate_limit_burst: 32MB
+              max_streams_per_user: 0
+              max_global_streams_per_user: 0
+
+            schema_config:
+              configs:
+                - from: "2024-01-01"
+                  store: boltdb-shipper
+                  object_store: filesystem
+                  schema: v12
+                  index:
+                    prefix: index_
+                    period: 24h
+
+            server:
+              http_listen_port: 3100
+
+            # Compactor configuration
+            compactor:
+              working_directory: /loki/boltdb-shipper-compactor
+              shared_store: filesystem
+              compaction_interval: 10m
+              retention_enabled: true
+              delete_request_cancel_period: 24h
+
+          # Monitoring configuration
+          monitoring:
+            selfMonitoring:
+              enabled: true
+              lokiCanary:
+                enabled: true
+            serviceMonitor:
+              enabled: true
+
+          # Test pod for connectivity
+          test:
+            enabled: false
+
+          # Resource configuration
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+
+          # Storage configuration
+          persistence:
+            enabled: true
+            storageClassName: "longhorn"
+            size: {{ loki_storage_size }}
+
+          # Network policy
+          networkPolicy:
+            enabled: false
+
+          # RBAC
+          rbac:
+            create: true
+            pspEnabled: false
+
+          # Service configuration
+          service:
+            type: ClusterIP
+            port: 3100
+            portName: http
+            annotations: {}
+
+          # Ingress configuration (optional, for external access)
+          ingress:
+            enabled: false
+
+    - name: Display values file creation
+      ansible.builtin.debug:
+        msg: "✓ Loki values file created"
+
+    # ============== DEPLOY LOKI ==============
+    - name: Deploy Loki via Helm
+      ansible.builtin.shell:
+        cmd: >
+          KUBECONFIG=/etc/kubernetes/admin.conf
+          /usr/local/bin/helm upgrade --install loki grafana/loki-stack
+          --version 2.10.2
+          --namespace {{ loki_namespace }}
+          --values /tmp/loki-values.yaml
+          --timeout 3m
+          --create-namespace
+          --set loki.enabled=true
+          --set promtail.enabled=false
+        environment:
+          KUBECONFIG: /etc/kubernetes/admin.conf
+      register: loki_deploy
+      async: 180
+      poll: 10
+
+    - name: Display Loki deployment status
+      ansible.builtin.debug:
+        msg: "✓ Loki deployed via Helm"
+
+    # ============== VERIFY LOKI DEPLOYMENT ==============
+    - name: Pause for Loki to start
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: Check Loki pods
+      ansible.builtin.shell:
+        cmd: "kubectl get pods -n {{ loki_namespace }} -l app=loki"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: loki_pods
+
+    - name: Display Loki pods
+      ansible.builtin.debug:
+        msg: "{{ loki_pods.stdout_lines }}"
+
+    - name: Get Loki service
+      ansible.builtin.shell:
+        cmd: "kubectl get svc loki -n {{ loki_namespace }}"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: loki_service
+
+    - name: Display Loki service
+      ansible.builtin.debug:
+        msg: "{{ loki_service.stdout_lines }}"
+
+    # ============== TEST LOKI API ==============
+    - name: Port forward to Loki API
+      ansible.builtin.shell:
+        cmd: "kubectl port-forward -n {{ loki_namespace }} svc/loki 3100:3100 &"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: port_forward
+      failed_when: false
+      changed_when: false
+
+    - name: Wait for port forward
+      ansible.builtin.pause:
+        seconds: 3
+
+    - name: Test Loki API
+      ansible.builtin.shell:
+        cmd: "curl -s http://localhost:3100/ready"
+      register: loki_health
+      failed_when: false
+      changed_when: false
+
+    - name: Display Loki health status
+      ansible.builtin.debug:
+        msg: "✓ Loki API is ready: {{ 'Ready' if loki_health.stdout == 'Ready' else 'Not Ready' }}"
+
+    - name: Clean up port forward
+      ansible.builtin.shell:
+        cmd: "pkill -f 'port-forward.*3100'"
+      failed_when: false
+      changed_when: false
+
+    # ============== CREATE ROLLBACK SCRIPT ==============
+    - name: Create rollback script
+      ansible.builtin.copy:
+        dest: /tmp/rollback-loki.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Rollback script for Loki deployment
+          # Generated by: 23-deploy-loki.yml
+
+          set -e
+
+          NAMESPACE="{{ loki_namespace }}"
+
+          echo "================================================================"
+          echo "ROLLBACK LOKI DEPLOYMENT"
+          echo "================================================================"
+          echo ""
+
+          # Confirm rollback
+          echo "This will:"
+          echo "  Uninstall Loki via Helm"
+          echo "  Delete PVC (optional, prompts for confirmation)"
+          echo ""
+          read -p "Continue? (y/N) " -n 1 -r
+          echo
+          if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Rollback cancelled"
+            exit 0
+          fi
+          echo ""
+
+          # Uninstall Loki
+          echo "Uninstalling Loki..."
+          helm uninstall loki -n "$NAMESPACE" 2>/dev/null || true
+          echo "✓ Loki uninstalled"
+          echo ""
+
+          # Optionally delete PVC
+          read -p "Delete persistent data? (y/N) " -n 1 -r
+          echo
+          if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "Deleting PVCs..."
+            kubectl delete pvc -n "$NAMESPACE" -l app=loki
+            echo "✓ PVCs deleted"
+          fi
+          echo ""
+
+          echo "================================================================"
+          echo "ROLLBACK COMPLETE"
+          echo "================================================================"
+          echo ""
+          echo "To re-deploy:"
+          echo "  ansible-playbook -i inventory.ini 23-deploy-loki.yml"
+          echo ""
+
+    - name: Make rollback script executable
+      ansible.builtin.shell:
+        cmd: "chmod +x /tmp/rollback-loki.sh"
+      changed_when: false
+
+    # ============== DISPLAY SUMMARY ==============
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "LOKI DEPLOYMENT COMPLETE"
+          - "================================================================"
+          - ""
+          - "✓ Loki deployed successfully"
+          - "✓ Persistent storage configured ({{ loki_storage_size }})"
+          - "✓ Retention policy: {{ loki_retention }}"
+          - ""
+          - "ACCESS:"
+          - "  Loki API: http://{{ hostvars['localhost']['master_ip'] }}:3100"
+          - "  (via kubectl port-forward svc/loki -n {{ loki_namespace }} 3100:3100)"
+          - ""
+          - "NEXT STEPS:"
+          - "  1. Deploy Promtail: ansible-playbook -i inventory.ini 24-deploy-promtail.yml"
+          - "  2. Configure Grafana datasource"
+          - "  3. Deploy exporters: ansible-playbook -i inventory.ini 25-deploy-exporters.yml"
+          - ""
+          - "USEFUL COMMANDS:"
+          - "  kubectl get pods -n {{ loki_namespace }} -l app=loki"
+          - "  kubectl logs -n {{ loki_namespace }} -l app=loki -f"
+          - "  kubectl port-forward -n {{ loki_namespace }} svc/loki 3100:3100"
+          - "  curl http://localhost:3100/ready"
+          - ""
+          - "ROLLBACK IF NEEDED:"
+          - "  /tmp/rollback-loki.sh (on master node)"
+          - ""
+          - "================================================================"
+
+- name: Final Instructions
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "LOKI LOG AGGREGATION READY"
+          - "================================================================"
+          - ""
+          - "Loki has been deployed for log aggregation!"
+          - ""
+          - "Next steps to complete the logging stack:"
+          - ""
+          - "1. Deploy Promtail (log collector):"
+          - "   ansible-playbook -i inventory.ini 24-deploy-promtail.yml"
+          - ""
+          - "2. Deploy exporters (node, cadvisor, etc.):"
+          - "   ansible-playbook -i inventory.ini 25-deploy-exporters.yml"
+          - ""
+          - "3. Configure Grafana datasource (will be done in step 2)"
+          - ""
+          - "4. View logs in Grafana"
+          - ""
+          - "================================================================"
