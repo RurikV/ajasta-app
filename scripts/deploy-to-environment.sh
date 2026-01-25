@@ -17,13 +17,12 @@
 #   2. Setup Kubernetes cluster (k8s-cluster-setup.sh)
 #   3. Deploy CloudNativePG operator and PostgreSQL cluster
 #   4. Deploy Ajasta application (deploy-ajasta.sh)
-#   5. Fix connection timeout issues
 #
 # Playbook Mode (--playbook <NN>):
 #   - Starts from playbook <NN>
 #   - Executes playbook <NN> and ALL subsequent playbooks in sequence
 #   - Continues even if a playbook fails (tracks errors)
-#   - Example: --playbook 03 runs: 03, 04, 05, 06, 09, 10, 13, 14, 19, 31
+#   - Example: --playbook 03 runs: 03, 04, 05, 06, 09, 10, 13, 14, 19
 #
 # Playbook Execution Order:
 #   00  → Refresh local kubeconfig (fetch latest from master)
@@ -38,7 +37,6 @@
 #   13  → Deploy Ingress NGINX Controller
 #   14  → Deploy Longhorn Storage
 #   19  → Deploy CloudNativePG and PostgreSQL
-#   31  → Fix connection timeout issues
 
 # NOTE: Script continues on error to allow partial deployment
 
@@ -59,7 +57,6 @@ PLAYBOOKS[10]="10-deploy-kubernetes-dashboard.yml"
 PLAYBOOKS[13]="13-deploy-ingress-nginx-controller.yml"
 PLAYBOOKS[14]="14-deploy-longhorn-storage.yml"
 PLAYBOOKS[19]="19-deploy-cloudnativepg.yml"
-PLAYBOOKS[31]="31-fix-connection-timeout-complete.yml"
 
 # Playbook execution order (sorted by numeric key)
 PLAYBOOK_ORDER=(
@@ -75,7 +72,6 @@ PLAYBOOK_ORDER=(
     "13"
     "14"
     "19"
-    "31"
 )
 
 # Colors for output
@@ -285,7 +281,6 @@ ${GREEN}Deployment Steps:${NC}
   2. Setup Kubernetes cluster (components, networking, storage)
   3. Deploy CloudNativePG operator and PostgreSQL cluster
   4. Deploy Ajasta application (backend, frontend, ingress)
-  5. Fix connection timeout issues
 
 ${GREEN}Available Playbooks:${NC}
   00  → Refresh local kubeconfig (fetch latest from master)
@@ -300,22 +295,21 @@ ${GREEN}Available Playbooks:${NC}
   13  → Deploy Ingress NGINX Controller
   14  → Deploy Longhorn Storage
   19  → Deploy CloudNativePG and PostgreSQL
-  31  → Fix connection timeout issues
 
 ${GREEN}Playbook Mode:${NC}
   When using --playbook <NN>, the script will:
   - Start from playbook <NN>
   - Execute playbook <NN> and ALL subsequent playbooks in sequence
   - Continue even if a playbook fails (tracks errors)
-  - Example: --playbook 03 runs: 03, 04, 05, 06, 09, 10, 13, 14, 19, 31
+  - Example: --playbook 03 runs: 03, 04, 05, 06, 09, 10, 13, 14, 19
 
 ${GREEN}Examples:${NC}
   $0 staging                                    # Deploy all steps to staging
   $0 production -vv                             # Deploy to production with verbose output
   $0 staging --step 3                           # Start from step 3 (skip 1-2)
-  $0 staging --playbook 03                      # Run playbooks 03→04→05→...→31 (all from 03)
-  $0 production --playbook 19 -vv               # Run playbooks 19→31 with verbose output
-  $0 staging --playbook 10 --yes                # Run playbooks 10→13→14→19→31 without prompts
+  $0 staging --playbook 03                      # Run playbooks 03→04→05→...→19 (all from 03)
+  $0 production --playbook 19 -vv               # Run playbooks 19 with verbose output
+  $0 staging --playbook 10 --yes                # Run playbooks 10→13→14→19 without prompts
   $0 production --step 4 -vvv --yes             # Start from step 4, verbose, no prompts
 
 ${GREEN}Environment Configuration:${NC}
@@ -542,11 +536,7 @@ else
     echo "  ${CYAN}⊘${NC} Step 4: Deploy Ajasta application (skipped)"
 fi
 
-if [ "$START_STEP" -le 5 ]; then
-    echo "  ${GREEN}✓${NC} Step 5: Fix connection timeout issues"
-else
-    echo "  ${CYAN}⊘${NC} Step 5: Fix connection timeout (skipped)"
-fi
+# Step 5 removed - connection timeout fix playbook excluded
 
 echo ""
 
@@ -582,9 +572,6 @@ if [ "$DRY_RUN" = true ]; then
     echo ""
     print_step 4 "Deploy Ajasta application"
     echo "  Command: ${ANSIBLE_APP_DIR}/deploy-ajasta.sh ${START_STEP} ${VERBOSITY}"
-    echo ""
-    print_step 5 "Fix connection timeout issues"
-    echo "  Command: cd ${ANSIBLE_APP_DIR} && ansible-playbook -i ../k8s/inventory.ini 31-fix-connection-timeout-complete.yml ${VERBOSITY}"
     echo ""
     print_success "Dry run complete"
     exit 0
@@ -690,26 +677,6 @@ if [ "$START_STEP" -le 4 ]; then
 else
     print_step 4 "Deploy Ajasta application"
     print_info "Skipping (step 4 < START_STEP)"
-fi
-
-# ==============================================================
-# STEP 5: Fix connection timeout issues
-# ==============================================================
-if [ "$START_STEP" -le 5 ]; then
-    print_step 5 "Fix connection timeout issues"
-
-    print_info "Running connection timeout fix playbook..."
-    cd "${ANSIBLE_APP_DIR}"
-
-    if ansible-playbook -i ../k8s/inventory.ini 31-fix-connection-timeout-complete.yml ${VERBOSITY}; then
-        print_success "Connection timeout issues resolved"
-    else
-        print_warning "Connection timeout fix completed with warnings"
-        echo "This is often non-critical. Check the output above."
-    fi
-else
-    print_step 5 "Fix connection timeout issues"
-    print_info "Skipping (step 5 < START_STEP)"
 fi
 
 # ==============================================================

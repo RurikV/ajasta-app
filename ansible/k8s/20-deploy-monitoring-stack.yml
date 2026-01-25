@@ -287,6 +287,9 @@
 
           # Prometheus Operator
           prometheusOperator:
+            # Disable TLS to fix probe mismatch - operator expects HTTPS but probes use HTTP
+            tls:
+              enabled: false
             resources:
               requests:
                 cpu: 50m
