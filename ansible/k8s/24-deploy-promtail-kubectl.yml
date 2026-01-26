@@ -96,6 +96,8 @@
                 - job_name: kubernetes-pods
                   kubernetes_sd_configs:
                     - role: pod
+                  pipeline_stages:
+                    - cri: {}
                   relabel_configs:
                     - source_labels:
                         - __meta_kubernetes_pod_controller_name
@@ -290,9 +292,19 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: promtail_deploy
 
+    - name: Delete corrupted Promtail positions files
+      ansible.builtin.shell:
+        cmd: |
+          kubectl delete pod -n monitoring -l app=promtail --grace-period=5 --force
+          sleep 5
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cleanup_positions
+      failed_when: false
+
     - name: Display Promtail deployment status
       ansible.builtin.debug:
-        msg: "✓ Promtail deployed via kubectl"
+        msg: "✓ Promtail deployed via kubectl and positions files cleared"
 
     # ============== VERIFY PROMTAIL DEPLOYMENT ==============
     - name: Pause for Promtail to start
