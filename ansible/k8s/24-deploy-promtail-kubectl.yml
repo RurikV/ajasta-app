@@ -99,6 +99,10 @@
                   pipeline_stages:
                     - cri: {}
                   relabel_configs:
+                    # HELPER: Use stdout/stderr to debug relabel_config
+                    # Uncomment to see what labels are available:
+                    # - action: labelmap
+                    #   regex: __meta_kubernetes_(.*)
                     - source_labels:
                         - __meta_kubernetes_pod_controller_name
                       regex: ([0-9a-z-.]+?)(-[0-9a-f]{8,10})?
