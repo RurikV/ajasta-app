@@ -1,10 +1,10 @@
 ---
-# Deploy Monitoring Exporters
-# Deploys node_exporter, cadvisor, and other monitoring agents
-# Configures Grafana datasources for Loki and metrics
+# Configure Grafana Loki Datasource & Deploy cAdvisor
+# Works with existing kube-prometheus-stack Grafana
+# Deploys cAdvisor for container metrics (node_exporter already exists)
 # Universal - works with any dynamically assigned master IP
 # FULL ROLLBACK CAPABILITY
-# Usage: ansible-playbook -i inventory.ini 25-deploy-exporters.yml
+# Usage: ansible-playbook -i inventory.ini 25-configure-grafana-loki.yml
 
 - name: Discover Master IP
   hosts: localhost
@@ -24,30 +24,26 @@
       ansible.builtin.debug:
         msg:
           - "================================================================"
-          - "DEPLOY MONITORING EXPORTERS & GRAFANA CONFIG"
+          - "CONFIGURE GRAFANA & DEPLOY CADVISOR"
           - "================================================================"
           - ""
-          - "This will deploy:"
-          - "  - node_exporter (system metrics)"
-          - "  - kube-state-metrics (Kubernetes metrics)"
-          - "  - cadvisor (container metrics)"
-          - "  - Grafana Loki datasource"
+          - "This will:"
+          - "  - Configure Grafana Loki datasource"
+          - "  - Deploy cAdvisor for container metrics"
+          - "  - Restart Grafana to load datasource"
           - ""
-          - "Exporters:"
-          - "  - node_exporter: CPU, memory, disk, network"
-          - "  - kube-state-metrics: Kubernetes objects"
-          - "  - cadvisor: Container resource usage"
+          - "Note: node_exporter already deployed with kube-prometheus-stack"
           - ""
           - "================================================================"
 
     - name: Confirm action
       ansible.builtin.pause:
         prompt: |
-          This will deploy monitoring exporters and configure Grafana.
+          This will configure Grafana and deploy cAdvisor.
 
           Press Enter to continue or Ctrl+C to cancel.
 
-- name: Deploy Exporters and Configure Grafana
+- name: Configure Grafana & Deploy cAdvisor
   hosts: k8s_master
   become: yes
   gather_facts: yes
@@ -60,123 +56,16 @@
       ansible.builtin.debug:
         msg:
           - "================================================================"
-          - "DEPLOYING EXPORTERS & CONFIGURING GRAFANA"
+          - "CONFIGURING GRAFANA & DEPLOYING CADVISOR"
           - "================================================================"
           - ""
           - "Namespace: {{ loki_namespace }}"
           - ""
 
-    # ============== DEPLOY NODE EXPORTER ==============
-    - name: Create node_exporter manifests
-      ansible.builtin.copy:
-        dest: /tmp/node-exporter.yaml
-        mode: '0644'
-        content: |
-          apiVersion: apps/v1
-          kind: DaemonSet
-          metadata:
-            name: node-exporter
-            namespace: {{ loki_namespace }}
-            labels:
-              app: node-exporter
-          spec:
-            selector:
-              matchLabels:
-                app: node-exporter
-            template:
-              metadata:
-                labels:
-                  app: node-exporter
-              spec:
-                hostNetwork: true
-                hostPID: true
-                containers:
-                - name: node-exporter
-                  image: prom/node-exporter:v1.7.0
-                  args:
-                    - '--path.procfs=/host/proc'
-                    - '--path.sysfs=/host/sys'
-                    - '--path.rootfs=/host/root'
-                    - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
-                  ports:
-                  - name: metrics
-                    containerPort: 9100
-                    hostPort: 9100
-                  resources:
-                    requests:
-                      cpu: 100m
-                      memory: 100Mi
-                    limits:
-                      cpu: 200m
-                      memory: 200Mi
-                  volumeMounts:
-                  - name: proc
-                    mountPath: /host/proc
-                  - name: sys
-                    mountPath: /host/sys
-                  - name: root
-                    mountPath: /host/root
-                    mountPropagation: HostToContainer
-                    readOnly: true
-                tolerations:
-                - effect: NoSchedule
-                  operator: Exists
-                volumes:
-                - name: proc
-                  hostPath:
-                    path: /proc
-                - name: sys
-                  hostPath:
-                    path: /sys
-                - name: root
-                  hostPath:
-                    path: /
-          ---
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: node-exporter
-            namespace: {{ loki_namespace }}
-            labels:
-              app: node-exporter
-          spec:
-            type: ClusterIP
-            ports:
-            - name: metrics
-              port: 9100
-              targetPort: 9100
-            selector:
-              app: node-exporter
-
-    - name: Deploy node_exporter
-      ansible.builtin.shell:
-        cmd: "kubectl apply -f /tmp/node-exporter.yaml"
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      register: node_exporter_deploy
-
-    - name: Display node_exporter deployment
-      ansible.builtin.debug:
-        msg: "✓ node_exporter deployed"
-
-    # ============== DEPLOY KUBE-STATE-METRICS ==============
-    - name: Deploy kube-state-metrics
-      ansible.builtin.shell:
-        cmd: >
-          kubectl apply -f https://github.com/kubernetes/kube-state-metrics/releases/download/v2.11.0/kube-state-metrics-1.14.yaml
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      register: ksm_deploy
-      failed_when: false
-
-    - name: Display kube-state-metrics deployment
-      ansible.builtin.debug:
-        msg: "✓ kube-state-metrics deployed"
-
     # ============== DEPLOY CADVISOR ==============
-    - name: Create cAdvisor manifests
+    - name: Create cAdvisor DaemonSet manifest
       ansible.builtin.copy:
-        dest: /tmp/cadvisor.yaml
+        dest: /tmp/cadvisor-daemonset.yaml
         mode: '0644'
         content: |
           apiVersion: apps/v1
@@ -215,18 +104,14 @@
                     hostPort: 8080
                   resources:
                     requests:
-                      cpu: 200m
-                      memory: 200Mi
+                      cpu: 100m
+                      memory: 100Mi
                     limits:
-                      cpu: 400m
-                      memory: 400Mi
+                      cpu: 300m
+                      memory: 300Mi
                   volumeMounts:
-                  - name: rootfs
-                    mountPath: /rootfs
-                    readOnly: true
                   - name: varrun
                     mountPath: /var/run
-                    readOnly: true
                   - name: varlibdocker
                     mountPath: /var/lib/docker
                     readOnly: true
@@ -234,9 +119,6 @@
                     mountPath: /sys
                     readOnly: true
                 volumes:
-                - name: rootfs
-                  hostPath:
-                    path: /
                 - name: varrun
                   hostPath:
                     path: /var/run
@@ -265,7 +147,7 @@
 
     - name: Deploy cAdvisor
       ansible.builtin.shell:
-        cmd: "kubectl apply -f /tmp/cadvisor.yaml"
+        cmd: "kubectl apply -f /tmp/cadvisor-daemonset.yaml"
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: cadvisor_deploy
@@ -275,7 +157,7 @@
         msg: "✓ cAdvisor deployed"
 
     # ============== CONFIGURE GRAFANA LOKI DATASOURCE ==============
-    - name: Create Grafana Loki datasource
+    - name: Create Grafana Loki datasource ConfigMap
       ansible.builtin.copy:
         dest: /tmp/grafana-loki-datasource.yaml
         mode: '0644'
@@ -318,6 +200,24 @@
       ansible.builtin.debug:
         msg: "✓ Grafana Loki datasource created"
 
+    - name: Patch Grafana deployment to use ConfigMap datasource
+      ansible.builtin.shell:
+        cmd: |
+          kubectl patch deployment kube-prometheus-grafana -n {{ loki_namespace }} --type='json' \
+          -p='[
+            {
+              "op": "add",
+              "path": "/spec/template/metadata/annotations",
+              "value": {
+                "grafana_datasources": "1"
+              }
+            }
+          ]' || true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: grafana_patch
+      failed_when: false
+
     - name: Restart Grafana to load datasource
       ansible.builtin.shell:
         cmd: "kubectl rollout restart deployment kube-prometheus-grafana -n {{ loki_namespace }}"
@@ -334,47 +234,53 @@
       ansible.builtin.pause:
         seconds: 20
 
-    - name: Check all exporter pods
+    - name: Check all monitoring pods
       ansible.builtin.shell:
         cmd: |
-          echo "=== node_exporter ==="
-          kubectl get pods -n {{ loki_namespace }} -l app=node-exporter
+          echo "=== Loki ==="
+          kubectl get pods -n {{ loki_namespace }} -l app=loki
           echo ""
-          echo "=== cadvisor ==="
+          echo "=== Promtail ==="
+          kubectl get pods -n {{ loki_namespace }} -l app=promtail
+          echo ""
+          echo "=== cAdvisor ==="
           kubectl get pods -n {{ loki_namespace }} -l app=cadvisor
           echo ""
-          echo "=== kube-state-metrics ==="
-          kubectl get pods -n {{ loki_namespace }} -l app.kubernetes.io/name=kube-state-metrics
+          echo "=== node_exporter (from kube-prometheus) ==="
+          kubectl get pods -n {{ loki_namespace }} -l app.kubernetes.io/name=node-exporter
+          echo ""
+          echo "=== Grafana ==="
+          kubectl get pods -n {{ loki_namespace }} -l app.kubernetes.io/name=grafana
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
-      register: exporter_pods
+      register: monitoring_pods
 
-    - name: Display exporter pods
+    - name: Display monitoring pods
       ansible.builtin.debug:
-        msg: "{{ exporter_pods.stdout_lines }}"
+        msg: "{{ monitoring_pods.stdout_lines }}"
 
     # ============== CREATE ROLLBACK SCRIPT ==============
     - name: Create rollback script
       ansible.builtin.copy:
-        dest: /tmp/rollback-exporters.sh
+        dest: /tmp/rollback-grafana-cadvisor.sh
         mode: '0755'
         content: |
           #!/bin/bash
-          # Rollback script for exporters and Grafana config
-          # Generated by: 25-deploy-exporters.yml
+          # Rollback script for Grafana config and cAdvisor
+          # Generated by: 25-configure-grafana-loki.yml
 
           set -e
 
           NAMESPACE="{{ loki_namespace }}"
 
           echo "================================================================"
-          echo "ROLLBACK EXPORTERS & GRAFANA CONFIG"
+          echo "ROLLBACK GRAFANA CONFIG & CADVISOR"
           echo "================================================================"
           echo ""
 
           # Confirm rollback
           echo "This will:"
-          echo "  Delete all exporters"
+          echo "  Delete cAdvisor DaemonSet"
           echo "  Delete Grafana Loki datasource"
           echo "  Restart Grafana"
           echo ""
@@ -386,14 +292,11 @@
           fi
           echo ""
 
-          # Delete exporters
-          echo "Deleting exporters..."
-          kubectl delete daemonset node-exporter -n "$NAMESPACE" 2>/dev/null || true
-          kubectl delete service node-exporter -n "$NAMESPACE" 2>/dev/null || true
+          # Delete cAdvisor
+          echo "Deleting cAdvisor..."
           kubectl delete daemonset cadvisor -n "$NAMESPACE" 2>/dev/null || true
           kubectl delete service cadvisor -n "$NAMESPACE" 2>/dev/null || true
-          kubectl delete -f https://github.com/kubernetes/kube-state-metrics/releases/download/v2.11.0/kube-state-metrics-1.14.yaml 2>/dev/null || true
-          echo "✓ Exporters deleted"
+          echo "✓ cAdvisor deleted"
           echo ""
 
           # Delete datasource
@@ -413,12 +316,12 @@
           echo "================================================================"
           echo ""
           echo "To re-deploy:"
-          echo "  ansible-playbook -i inventory.ini 25-deploy-exporters.yml"
+          echo "  ansible-playbook -i inventory.ini 25-configure-grafana-loki.yml"
           echo ""
 
     - name: Make rollback script executable
       ansible.builtin.shell:
-        cmd: "chmod +x /tmp/rollback-exporters.sh"
+        cmd: "chmod +x /tmp/rollback-grafana-cadvisor.sh"
       changed_when: false
 
     # ============== DISPLAY SUMMARY ==============
@@ -426,19 +329,17 @@
       ansible.builtin.debug:
         msg:
           - "================================================================"
-          - "EXPORTERS & GRAFANA CONFIG DEPLOYMENT COMPLETE"
+          - "GRAFANA CONFIG & CADVISOR DEPLOYMENT COMPLETE"
           - "================================================================"
           - ""
-          - "✓ node_exporter deployed (system metrics)"
-          - "✓ kube-state-metrics deployed (K8s metrics)"
           - "✓ cAdvisor deployed (container metrics)"
           - "✓ Grafana Loki datasource configured"
           - "✓ Grafana restarted"
           - ""
           - "EXPORTER ENDPOINTS:"
-          - "  - node_exporter: :9100/metrics"
-          - "  - cAdvisor: :8080/metrics"
-          - "  - kube-state-metrics: :8080/metrics"
+          - "  - node_exporter: :9100/metrics (already deployed)"
+          - "  - cAdvisor: :8080/metrics (newly deployed)"
+          - "  - kube-state-metrics: :8080/metrics (already deployed)"
           - ""
           - "GRAFANA:"
           - "  URL: http://{{ hostvars['localhost']['master_ip'] }}:3000"
@@ -455,10 +356,9 @@
           - "  kubectl get pods -n {{ loki_namespace }}"
           - "  kubectl logs -n {{ loki_namespace }} -l app=promtail -f"
           - "  kubectl port-forward -n {{ loki_namespace }} svc/loki 3100:3100"
-          - "  curl http://localhost:3100/ready"
           - ""
           - "ROLLBACK IF NEEDED:"
-          - "  /tmp/rollback-exporters.sh (on master node)"
+          - "  /tmp/rollback-grafana-cadvisor.sh (on master node)"
           - ""
           - "================================================================"
 
@@ -479,9 +379,9 @@
           - "  ✓ Loki (log aggregation)"
           - "  ✓ Promtail (log collection)"
           - "  ✓ Grafana (visualization)"
-          - "  ✓ node_exporter (system metrics)"
-          - "  ✓ kube-state-metrics (K8s metrics)"
-          - "  ✓ cAdvisor (container metrics)"
+          - "  ✓ node_exporter (system metrics) - from kube-prometheus"
+          - "  ✓ kube-state-metrics (K8s metrics) - from kube-prometheus"
+          - "  ✓ cAdvisor (container metrics) - newly deployed"
           - ""
           - "Access Grafana:"
           - "  http://{{ master_ip }}:3000"
@@ -496,6 +396,6 @@
           - "Next:"
           - "  1. Create custom dashboards"
           - "  2. Set up alerts"
-          - "  3. Integrate with GitLab CI/CD"
+          - "  3. Import community dashboards"
           - ""
           - "================================================================"
