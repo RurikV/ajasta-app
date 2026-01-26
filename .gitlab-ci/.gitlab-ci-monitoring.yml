@@ -99,7 +99,7 @@ deploy:loki:
     - chmod 600 ~/.ssh/id_rsa
     - ssh-keyscan -H $(grep 'ansible_host=' ${ANSIBLE_INVENTORY} 2>/dev/null | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2 || echo "127.0.0.1") >> ~/.ssh/known_hosts 2>/dev/null || true
     - cd ${ANSIBLE_DIR}/k8s
-    - ansible-playbook -i inventory.ini 23-deploy-loki.yml --skip-tags confirm || true
+    - ansible-playbook -i inventory.ini 23-deploy-loki-kubectl.yml --skip-tags confirm || true
     - echo "✓ Loki deployment completed"
   needs:
     - terraform:apply:monitoring
@@ -120,7 +120,7 @@ deploy:promtail:
     - chmod 600 ~/.ssh/id_rsa
     - ssh-keyscan -H $(grep 'ansible_host=' ${ANSIBLE_INVENTORY} 2>/dev/null | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2 || echo "127.0.0.1") >> ~/.ssh/known_hosts 2>/dev/null || true
     - cd ${ANSIBLE_DIR}/k8s
-    - ansible-playbook -i inventory.ini 24-deploy-promtail.yml --skip-tags confirm || true
+    - ansible-playbook -i inventory.ini 24-deploy-promtail-kubectl.yml --skip-tags confirm || true
     - echo "✓ Promtail deployment completed"
   needs:
     - deploy:loki
@@ -141,8 +141,8 @@ deploy:exporters:
     - chmod 600 ~/.ssh/id_rsa
     - ssh-keyscan -H $(grep 'ansible_host=' ${ANSIBLE_INVENTORY} 2>/dev/null | grep 'master-node' | awk '{print $2}' | cut -d'=' -f2 || echo "127.0.0.1") >> ~/.ssh/known_hosts 2>/dev/null || true
     - cd ${ANSIBLE_DIR}/k8s
-    - ansible-playbook -i inventory.ini 25-deploy-exporters.yml --skip-tags confirm || true
-    - echo "✓ Exporters deployment completed"
+    - ansible-playbook -i inventory.ini 25-configure-grafana-loki.yml --skip-tags confirm || true
+    - echo "✓ cAdvisor deployment completed"
     - echo "✓ Grafana Loki datasource configured"
   needs:
     - deploy:promtail

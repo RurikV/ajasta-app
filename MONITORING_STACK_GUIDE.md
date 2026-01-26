@@ -61,11 +61,11 @@ This guide covers the complete implementation of a production-ready monitoring a
 
 ```bash
 cd ansible/k8s
-ansible-playbook -i inventory.ini 23-deploy-loki.yml
+ansible-playbook -i inventory.ini 23-deploy-loki-kubectl.yml
 ```
 
 **What this does:**
-- Deploys Loki via Helm chart
+- Deploys Loki using kubectl manifests (no Helm required)
 - Configures 10Gi persistent storage on Longhorn
 - Sets 30-day log retention policy
 - Exposes Loki API on port 3100
@@ -84,7 +84,7 @@ kubectl logs -n monitoring -l app=loki -f
 #### Step 2: Deploy Promtail (Log Collection)
 
 ```bash
-ansible-playbook -i inventory.ini 24-deploy-promtail.yml
+ansible-playbook -i inventory.ini 24-deploy-promtail-kubectl.yml
 ```
 
 **What this does:**
@@ -107,7 +107,7 @@ kubectl logs -n monitoring -l app=promtail -f
 #### Step 3: Deploy Exporters & Configure Grafana
 
 ```bash
-ansible-playbook -i inventory.ini 25-deploy-exporters.yml
+ansible-playbook -i inventory.ini 25-configure-grafana-loki.yml
 ```
 
 **What this does:**
@@ -276,20 +276,30 @@ Password: prom-operator
 
 ### Loki Configuration
 
-**Location:** `/tmp/loki-values.yaml` (generated during deployment)
+**Location:** ConfigMap `loki-config` in `monitoring` namespace
 
 **Key Settings:**
 ```yaml
-loki:
+common:
+  path_prefix: /loki
+  replication_factor: 1
   storage:
-    type: filesystem
-  limits_config:
-    retention_period: 720h  # 30 days
-    ingestion_rate_mb: 16
-    per_stream_rate_limit: 16MB
-  schema_config:
+    filesystem:
+      chunks_directory: /loki/chunks
+  ring:
+    kvstore:
+      store: inmemory
+
+limits_config:
+  retention_period: 720h  # 30 days
+  ingestion_rate_mb: 16
+  per_stream_rate_limit: 16MB
+
+schema_config:
+  configs:
     - from: "2024-01-01"
       store: boltdb-shipper
+      object_store: filesystem
       schema: v12
 ```
 
@@ -483,13 +493,13 @@ Each playbook creates a rollback script:
 
 ```bash
 # Rollback Loki
-ssh ajasta@master-ip "sudo bash /tmp/rollback-loki.sh"
+ssh ajasta@master-ip "sudo bash /tmp/rollback-loki-kubectl.sh"
 
 # Rollback Promtail
-ssh ajasta@master-ip "sudo bash /tmp/rollback-promtail.sh"
+ssh ajasta@master-ip "sudo bash /tmp/rollback-promtail-kubectl.sh"
 
-# Rollback Exporters
-ssh ajasta@master-ip "sudo bash /tmp/rollback-exporters.sh"
+# Rollback cAdvisor & Grafana config
+ssh ajasta@master-ip "sudo bash /tmp/rollback-grafana-cadvisor.sh"
 ```
 
 ### GitLab CI/CD Rollback

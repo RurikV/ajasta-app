@@ -85,6 +85,9 @@
               server:
                 http_listen_port: 3101
 
+              positions:
+                filename: /tmp/positions.yaml
+
               clients:
                 - url: http://loki.{{ loki_namespace }}.svc:3100/loki/api/v1/push
 
@@ -127,13 +130,23 @@
                         - __meta_kubernetes_pod_uid
                       target_label: pod_uid
                       action: replace
-                    - replacement: /var/log/pods/*$1/*.log
-                      separator: /
-                      source_labels:
-                        - __meta_kubernetes_pod_uid
+                    # Keep only the pods from namespaces we care about (optional)
+                    - source_labels:
+                        - __meta_kubernetes_namespace
+                      regex: (ajasta|monitoring|kube-system)
+                      action: keep
+                    # Fix __path__ to match actual Kubernetes log directory structure
+                    # Structure: /var/log/pods/NAMESPACE_PODNAME_UID/CONTAINER/0.log
+                    - source_labels:
+                        - __meta_kubernetes_pod_name
                         - __meta_kubernetes_pod_container_name
-                      action: replace
+                        - __meta_kubernetes_namespace
+                        - __meta_kubernetes_pod_uid
+                      separator: /
+                      regex: (.*)/(.*)/(.*)/(.*)
+                      replacement: /var/log/pods/${3}_${1}_${4}/${2}/0.log
                       target_label: __path__
+                      action: replace
 
     - name: Display config creation status
       ansible.builtin.debug:

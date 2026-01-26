@@ -165,7 +165,7 @@
                     runAsGroup: 0
                   args:
                     - "-config.file=/etc/loki/loki-config.yaml"
-                    - "-target=read,write,ingester,querier,query-frontend,compactor"
+                    - "-target=all"
                   ports:
                   - containerPort: 3100
                     name: http
