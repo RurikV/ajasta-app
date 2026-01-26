@@ -1,0 +1,212 @@
+---
+# Rollback Tempo Distributed Tracing Platform
+# Removes all Tempo components from the cluster
+# Usage:
+#   ansible-playbook -i inventory.ini 24-rollback-tempo-kubectl.yml
+
+- name: Rollback Tempo Distributed Tracing
+  hosts: k8s_master
+  become: yes
+  gather_facts: yes
+
+  vars:
+    observability_namespace: "observability"
+
+  tasks:
+    - name: Display rollback information
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "ROLLING BACK TEMPO DISTRIBUTED TRACING PLATFORM"
+          - "================================================================"
+          - ""
+          - "This playbook will remove:"
+          - "  - Tempo deployment and pods"
+          - "  - Tempo Query deployment and pods"
+          - "  - Tempo services"
+          - "  - Tempo ingress"
+          - "  - Tempo ConfigMaps"
+          - "  - Tempo PVCs"
+          - "  - S3 credentials secret"
+          - ""
+          - "⚠ WARNING: This action cannot be undone!"
+          - ""
+          - "Note: Traces stored in S3 will NOT be deleted."
+          - "You can safely redeploy Tempo later and it will reconnect to S3."
+          - ""
+          - "================================================================"
+
+    - name: Confirm rollback
+      ansible.builtin.pause:
+        prompt: "Are you sure you want to rollback Tempo? (yes/no)"
+      register: confirm_rollback
+
+    - name: Abort if not confirmed
+      ansible.builtin.fail:
+        msg: "Rollback cancelled by user"
+      when: confirm_rollback.user_input | lower != "yes"
+
+    # ============== DELETE INGRESS ==============
+    - name: Delete Tempo Query Ingress
+      ansible.builtin.shell:
+        cmd: "KUBECONFIG=/etc/kubernetes/admin.conf kubectl delete ingress tempo-query-ingress -n {{ observability_namespace }} --ignore-not-found=true"
+      register: delete_ingress
+      ignore_errors: yes
+
+    - name: Display ingress deletion
+      ansible.builtin.debug:
+        msg: "✓ Deleted Tempo Query Ingress"
+      when: delete_ingress.rc == 0
+
+    # ============== DELETE SERVICES ==============
+    - name: Delete Tempo Query Service
+      ansible.builtin.shell:
+        cmd: "KUBECONFIG=/etc/kubernetes/admin.conf kubectl delete service tempo-query -n {{ observability_namespace }} --ignore-not-found=true"
+      register: delete_query_service
+      ignore_errors: yes
+
+    - name: Display Tempo Query service deletion
+      ansible.builtin.debug:
+        msg: "✓ Deleted Tempo Query Service"
+      when: delete_query_service.rc == 0
+
+    - name: Delete Tempo Service
+      ansible.builtin.shell:
+        cmd: "KUBECONFIG=/etc/kubernetes/admin.conf kubectl delete service tempo -n {{ observability_namespace }} --ignore-not-found=true"
+      register: delete_tempo_service
+      ignore_errors: yes
+
+    - name: Display Tempo service deletion
+      ansible.builtin.debug:
+        msg: "✓ Deleted Tempo Service"
+      when: delete_tempo_service.rc == 0
+
+    # ============== DELETE DEPLOYMENTS ==============
+    - name: Delete Tempo Query Deployment
+      ansible.builtin.shell:
+        cmd: "KUBECONFIG=/etc/kubernetes/admin.conf kubectl delete deployment tempo-query -n {{ observability_namespace }} --ignore-not-found=true"
+      register: delete_query_deploy
+      ignore_errors: yes
+
+    - name: Display Tempo Query deployment deletion
+      ansible.builtin.debug:
+        msg: "✓ Deleted Tempo Query Deployment"
+      when: delete_query_deploy.rc == 0
+
+    - name: Delete Tempo Deployment
+      ansible.builtin.shell:
+        cmd: "KUBECONFIG=/etc/kubernetes/admin.conf kubectl delete deployment tempo -n {{ observability_namespace }} --ignore-not-found=true"
+      register: delete_tempo_deploy
+      ignore_errors: yes
+
+    - name: Display Tempo deployment deletion
+      ansible.builtin.debug:
+        msg: "✓ Deleted Tempo Deployment"
+      when: delete_tempo_deploy.rc == 0
+
+    # ============== DELETE CONFIGMAPS ==============
+    - name: Delete Tempo Query ConfigMap
+      ansible.builtin.shell:
+        cmd: "KUBECONFIG=/etc/kubernetes/admin.conf kubectl delete configmap tempo-query-config -n {{ observability_namespace }} --ignore-not-found=true"
+      register: delete_query_config
+      ignore_errors: yes
+
+    - name: Display Tempo Query ConfigMap deletion
+      ansible.builtin.debug:
+        msg: "✓ Deleted Tempo Query ConfigMap"
+      when: delete_query_config.rc == 0
+
+    - name: Delete Tempo ConfigMap
+      ansible.builtin.shell:
+        cmd: "KUBECONFIG=/etc/kubernetes/admin.conf kubectl delete configmap tempo-config -n {{ observability_namespace }} --ignore-not-found=true"
+      register: delete_tempo_config
+      ignore_errors: yes
+
+    - name: Display Tempo ConfigMap deletion
+      ansible.builtin.debug:
+        msg: "✓ Deleted Tempo ConfigMap"
+      when: delete_tempo_config.rc == 0
+
+    # ============== DELETE SECRETS ==============
+    - name: Delete S3 credentials secret
+      ansible.builtin.shell:
+        cmd: "KUBECONFIG=/etc/kubernetes/admin.conf kubectl delete secret tempo-s3 -n {{ observability_namespace }} --ignore-not-found=true"
+      register: delete_s3_secret
+      ignore_errors: yes
+
+    - name: Display S3 secret deletion
+      ansible.builtin.debug:
+        msg: "✓ Deleted S3 credentials secret"
+      when: delete_s3_secret.rc == 0
+
+    # ============== DELETE PVCS ==============
+    - name: Delete Tempo PVC
+      ansible.builtin.shell:
+        cmd: "KUBECONFIG=/etc/kubernetes/admin.conf kubectl delete pvc tempo-pvc -n {{ observability_namespace }} --ignore-not-found=true"
+      register: delete_pvc
+      ignore_errors: yes
+
+    - name: Display Tempo PVC deletion
+      ansible.builtin.debug:
+        msg: "✓ Deleted Tempo PVC"
+      when: delete_pvc.rc == 0
+
+    # ============== VERIFY CLEANUP ==============
+    - name: Verify Tempo resources are deleted
+      ansible.builtin.shell:
+        cmd: "kubectl get all -n {{ observability_namespace }} -l component=distributed-tracing"
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: verify_cleanup
+      changed_when: false
+      failed_when: false
+
+    - name: Display verification result
+      ansible.builtin.debug:
+        msg: "{{ verify_cleanup.stdout_lines if verify_cleanup.rc == 0 else ['No resources found'] }}"
+
+    # ============== SUMMARY ==============
+    - name: Display rollback summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "TEMPO ROLLBACK COMPLETED"
+          - "================================================================"
+          - ""
+          - "The following components have been removed:"
+          - "  ✓ Tempo Query Ingress"
+          - "  ✓ Tempo Services"
+          - "  ✓ Tempo Deployments"
+          - "  ✓ Tempo ConfigMaps"
+          - "  ✓ S3 credentials secret"
+          - "  ✓ Tempo PVCs"
+          - ""
+          - "Important Notes:"
+          - "  - The observability namespace has NOT been deleted"
+          - "  - Traces stored in S3 are preserved"
+          - "  - You can redeploy Tempo at any time using:"
+          - "    ansible-playbook -i inventory.ini 23-deploy-tempo-kubectl.yml"
+          - ""
+          - "To completely clean up:"
+          - "  kubectl delete namespace {{ observability_namespace }}"
+          - ""
+          - "To delete S3 traces (manual):"
+          - "  aws s3 rm s3://{{ tempo_storage_s3_bucket }} --recursive"
+          - ""
+          - "================================================================"
+
+- name: Overall summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg:
+          - "================================================================"
+          - "TEMPO ROLLBACK COMPLETE"
+          - "================================================================"
+          - ""
+          - "Tempo distributed tracing has been removed from the cluster."
+          - "S3 traces are preserved and can be accessed by redeploying Tempo."
+          - ""
+          - "================================================================"
