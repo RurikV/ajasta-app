@@ -14,7 +14,7 @@
     tempo_version: "2.5.0"
     tempo_storage_s3_bucket: "{{ lookup('env', 'TEMPO_S3_BUCKET') | default('ajasta-tempo-traces') }}"
     tempo_storage_s3_region: "{{ lookup('env', 'AWS_REGION') | default('us-east-2') }}"
-    tempo_storage_s3_endpoint: "{{ lookup('env', 'TEMPO_S3_ENDPOINT') | default('s3.' + tempo_storage_s3_region + '.amazonaws.com') }}"
+    tempo_storage_s3_endpoint: "{{ lookup('env', 'TEMPO_S3_ENDPOINT') | default('') }}"
     tempo_retention_days: 30
 
   tasks:
@@ -108,15 +108,13 @@
 
               ingester:
                 trace_idle_period: 10s
-                trace_read_timeout: 10s
                 max_block_bytes: 1048576
                 max_block_duration: 5m
 
               compactor:
                 compaction:
-                  block_retention: {{ tempo_retention_days }}d
-                  compacted_block_retention: {{ tempo_retention_days }}d
-                  retention_delete_delay: 2h
+                  block_retention: 720h
+                  compacted_block_retention: 720h
 
               metrics_generator:
                 registry:
@@ -125,35 +123,16 @@
                           cluster: kubernetes
                 storage:
                   path: /tmp/tempo/generator/wal
-                remote_write:
-                  - url: http://prometheus-operated.{{ lookup('env', 'MONITORING_NAMESPACE') | default('monitoring') }}.svc.cluster.local:9090/api/v1/write
-                    send_exemplars: true
                 traces_storage:
                   path: /tmp/tempo/generator/traces
 
               storage:
                 trace:
-                  backend: s3
-                  s3:
-                    bucket: {{ tempo_storage_s3_bucket }}
-                    region: {{ tempo_storage_s3_region }}
-                    endpoint: {{ tempo_storage_s3_endpoint }}
-                    insecure: false
-                  block:
-                    version: parquet
+                  backend: local
                   wal:
                     path: /var/tempo/wal
                   local:
                     path: /var/tempo/blocks
-
-              querier:
-                frontend_worker:
-                  frontend_address: {{ observability_namespace }}-frontend:9095
-
-              query_frontend:
-                search:
-                  external_endpoints:
-                    - {{ observability_namespace }}-querier:9095
           EOF
       register: tempo_config
 
@@ -193,6 +172,7 @@
                       - "/tempo"
                       - "-config.file=/etc/tempo/tempo.yml"
                       - "-mem-ballast-size-mbs=512"
+                      - "-target=all"
                     ports:
                       - name: grpc-otlp
                         containerPort: 4317
@@ -242,6 +222,9 @@
                         mountPath: /var/tempo/wal
                       - name: blocks
                         mountPath: /var/tempo/blocks
+                    securityContext:
+                      runAsUser: 0
+                      runAsGroup: 0
                     livenessProbe:
                       httpGet:
                         path: /status

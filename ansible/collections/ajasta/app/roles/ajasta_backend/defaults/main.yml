@@ -160,3 +160,10 @@ jvm_gc_opts: "-XX:+UseG1GC -XX:MaxGCPauseMillis=200"
 feature_s3_enabled: false
 feature_stripe_enabled: false
 feature_email_enabled: false
+
+# OpenTelemetry Tracing
+opentelemetry_enabled: true
+otel_exporter_otlp_endpoint: "http://tempo.observability.svc.cluster.local:4317"
+otel_service_name: "ajasta-backend"
+otel_traces_sampler_ratio: "1.0"
+otel_traces_exporter_timeout: "30000"

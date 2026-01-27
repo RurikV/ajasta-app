@@ -123,6 +123,16 @@
                     valueFrom:
                       fieldRef:
                         fieldPath: metadata.namespace
+                  {{- if opentelemetry_enabled | bool }}
+                  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                    value: "{{ otel_exporter_otlp_endpoint }}"
+                  - name: OTEL_SERVICE_NAME
+                    value: "{{ otel_service_name }}"
+                  - name: OTEL_TRACES_SAMPLER_RATIO
+                    value: "{{ otel_traces_sampler_ratio }}"
+                  - name: OTEL_TRACES_EXPORTER_TIMEOUT
+                    value: "{{ otel_traces_exporter_timeout }}"
+                  {{- end }}
                 envFrom: "{{ app_env_from }}"
                 env: "{{ app_env_vars + jvm_env_vars }}"
                 resources: "{{ app_resources }}"
