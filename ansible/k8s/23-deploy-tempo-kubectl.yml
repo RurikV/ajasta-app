@@ -105,6 +105,8 @@
                         endpoint: 0.0.0.0:4317
                       http:
                         endpoint: 0.0.0.0:4318
+                  zipkin:
+                    endpoint: 0.0.0.0:9411
 
               ingester:
                 trace_idle_period: 10s
@@ -179,6 +181,9 @@
                         protocol: TCP
                       - name: http-otlp
                         containerPort: 4318
+                        protocol: TCP
+                      - name: zipkin
+                        containerPort: 9411
                         protocol: TCP
                       - name: tempo-http
                         containerPort: 3100
@@ -307,6 +312,10 @@
               - name: http-otlp
                 port: 4318
                 targetPort: 4318
+                protocol: TCP
+              - name: zipkin
+                port: 9411
+                targetPort: 9411
                 protocol: TCP
               - name: tempo-http
                 port: 3100
