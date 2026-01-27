@@ -11,7 +11,7 @@
 
   vars:
     observability_namespace: "observability"
-    tempo_version: "1.16.0"
+    tempo_version: "2.5.0"
     tempo_storage_s3_bucket: "{{ lookup('env', 'TEMPO_S3_BUCKET') | default('ajasta-tempo-traces') }}"
     tempo_storage_s3_region: "{{ lookup('env', 'AWS_REGION') | default('us-east-2') }}"
     tempo_storage_s3_endpoint: "{{ lookup('env', 'TEMPO_S3_ENDPOINT') | default('s3.' + tempo_storage_s3_region + '.amazonaws.com') }}"
@@ -59,7 +59,7 @@
           metadata:
             name: tempo-s3
             namespace: {{ observability_namespace }}
-            type: Opaque
+          type: Opaque
           stringData:
             accessKeyId: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') | default('') }}"
             secretAccessKey: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') | default('') }}"
@@ -97,7 +97,7 @@
                 log_level: info
                 log_format: json
 
-              distributors:
+              distributor:
                 receivers:
                   otlp:
                     protocols:
@@ -138,8 +138,6 @@
                     bucket: {{ tempo_storage_s3_bucket }}
                     region: {{ tempo_storage_s3_region }}
                     endpoint: {{ tempo_storage_s3_endpoint }}
-                    access_key_id: \${AWS_ACCESS_KEY_ID}
-                    secret_access_key: \${AWS_SECRET_ACCESS_KEY}
                     insecure: false
                   block:
                     version: parquet
@@ -147,6 +145,15 @@
                     path: /var/tempo/wal
                   local:
                     path: /var/tempo/blocks
+
+              querier:
+                frontend_worker:
+                  frontend_address: {{ observability_namespace }}-frontend:9095
+
+              query_frontend:
+                search:
+                  external_endpoints:
+                    - {{ observability_namespace }}-querier:9095
           EOF
       register: tempo_config
 
@@ -154,8 +161,8 @@
       ansible.builtin.debug:
         msg: "✓ Created Tempo ConfigMap with S3 backend configuration"
 
-    # ============== DEPLOY TEMPO ==============
-    - name: Deploy Tempo Deployment
+    # ============== DEPLOY TEMPO (ALL-IN-ONE) ==============
+    - name: Deploy Tempo all-in-one with query server
       ansible.builtin.shell:
         cmd: |
           cat <<EOF | KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f -
@@ -182,8 +189,10 @@
                   - name: tempo
                     image: grafana/tempo:{{ tempo_version }}
                     imagePullPolicy: IfNotPresent
-                    args:
+                    command:
+                      - "/tempo"
                       - "-config.file=/etc/tempo/tempo.yml"
+                      - "-mem-ballast-size-mbs=512"
                     ports:
                       - name: grpc-otlp
                         containerPort: 4317
@@ -193,6 +202,9 @@
                         protocol: TCP
                       - name: tempo-http
                         containerPort: 3100
+                        protocol: TCP
+                      - name: tempo-query
+                        containerPort: 16686
                         protocol: TCP
                     env:
                       - name: AWS_ACCESS_KEY_ID
@@ -213,6 +225,12 @@
                             name: tempo-s3
                             key: region
                             optional: true
+                      - name: AWS_ENDPOINT
+                        valueFrom:
+                          secretKeyRef:
+                            name: tempo-s3
+                            key: endpoint
+                            optional: true
                     envFrom:
                       - secretRef:
                           name: tempo-s3
@@ -224,13 +242,25 @@
                         mountPath: /var/tempo/wal
                       - name: blocks
                         mountPath: /var/tempo/blocks
+                    livenessProbe:
+                      httpGet:
+                        path: /status
+                        port: tempo-http
+                      initialDelaySeconds: 30
+                      periodSeconds: 30
+                    readinessProbe:
+                      httpGet:
+                        path: /ready
+                        port: tempo-http
+                      initialDelaySeconds: 10
+                      periodSeconds: 10
                     resources:
                       requests:
-                        cpu: 100m
-                        memory: 256Mi
+                        cpu: 200m
+                        memory: 512Mi
                       limits:
-                        cpu: 500m
-                        memory: 1Gi
+                        cpu: 1000m
+                        memory: 2Gi
                 volumes:
                   - name: config
                     configMap:
@@ -245,7 +275,7 @@
 
     - name: Display Tempo deployment
       ansible.builtin.debug:
-        msg: "✓ Deployed Tempo with OTLP receiver"
+        msg: "✓ Deployed Tempo all-in-one with query server"
 
     # ============== CREATE TEMPO PVC ==============
     - name: Create PVC for Tempo local storage
@@ -271,85 +301,7 @@
       ansible.builtin.debug:
         msg: "✓ Created PVC for Tempo local storage"
 
-    # ============== DEPLOY TEMPO QUERY ==============
-    - name: Deploy Tempo Query (Web UI)
-      ansible.builtin.shell:
-        cmd: |
-          cat <<EOF | KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f -
-          apiVersion: apps/v1
-          kind: Deployment
-          metadata:
-            name: tempo-query
-            namespace: {{ observability_namespace }}
-            labels:
-              app: tempo-query
-              component: distributed-tracing
-          spec:
-            replicas: 1
-            selector:
-              matchLabels:
-                app: tempo-query
-            template:
-              metadata:
-                labels:
-                  app: tempo-query
-                  component: distributed-tracing
-              spec:
-                containers:
-                  - name: tempo-query
-                    image: grafana/tempo-query:{{ tempo_version }}
-                    imagePullPolicy: IfNotPresent
-                    args:
-                      - "--grpc-storage-plugin.configuration=file:///etc/tempo-query/config.yaml"
-                    ports:
-                      - name: http
-                        containerPort: 16686
-                        protocol: TCP
-                      - name: grpc
-                        containerPort: 16685
-                        protocol: TCP
-                    volumeMounts:
-                      - name: config
-                        mountPath: /etc/tempo-query
-                    resources:
-                      requests:
-                        cpu: 50m
-                        memory: 128Mi
-                      limits:
-                        cpu: 200m
-                        memory: 256Mi
-                volumes:
-                  - name: config
-                    configMap:
-                      name: tempo-query-config
-          EOF
-      register: tempo_query_deploy
-
-    - name: Display Tempo Query deployment
-      ansible.builtin.debug:
-        msg: "✓ Deployed Tempo Query Web UI"
-
-    # ============== CREATE TEMPO QUERY CONFIG ==============
-    - name: Create Tempo Query configuration
-      ansible.builtin.shell:
-        cmd: |
-          cat <<EOF | KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f -
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: tempo-query-config
-            namespace: {{ observability_namespace }}
-          data:
-            config.yaml: |
-              backend: localhost:9095
-          EOF
-      register: tempo_query_config
-
-    - name: Display Tempo Query configuration
-      ansible.builtin.debug:
-        msg: "✓ Created Tempo Query ConfigMap"
-
-    # ============== CREATE TEMPO SERVICES ==============
+    # ============== CREATE TEMPO SERVICE ==============
     - name: Create Tempo Service
       ansible.builtin.shell:
         cmd: |
@@ -377,9 +329,9 @@
                 port: 3100
                 targetPort: 3100
                 protocol: TCP
-              - name: tempo-memberlist
-                port: 7946
-                targetPort: 7946
+              - name: tempo-query
+                port: 16686
+                targetPort: 16686
                 protocol: TCP
             selector:
               app: tempo
@@ -388,42 +340,10 @@
 
     - name: Display Tempo service creation
       ansible.builtin.debug:
-        msg: "✓ Created Tempo Service with OTLP endpoints"
-
-    - name: Create Tempo Query Service
-      ansible.builtin.shell:
-        cmd: |
-          cat <<EOF | KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f -
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: tempo-query
-            namespace: {{ observability_namespace }}
-            labels:
-              app: tempo-query
-              component: distributed-tracing
-          spec:
-            type: ClusterIP
-            ports:
-              - name: http
-                port: 16686
-                targetPort: 16686
-                protocol: TCP
-              - name: grpc
-                port: 16685
-                targetPort: 16685
-                protocol: TCP
-            selector:
-              app: tempo-query
-          EOF
-      register: tempo_query_service
-
-    - name: Display Tempo Query service creation
-      ansible.builtin.debug:
-        msg: "✓ Created Tempo Query Service"
+        msg: "✓ Created Tempo Service with OTLP and Query endpoints"
 
     # ============== CREATE INGRESS FOR TEMPO QUERY ==============
-    - name: Create Ingress for Tempo Query
+    - name: Create Ingress for Tempo Query UI
       ansible.builtin.shell:
         cmd: |
           cat <<EOF | KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f -
@@ -445,7 +365,7 @@
                       pathType: Prefix
                       backend:
                         service:
-                          name: tempo-query
+                          name: tempo
                           port:
                             number: 16686
           EOF
@@ -453,7 +373,7 @@
 
     - name: Display Tempo Query ingress creation
       ansible.builtin.debug:
-        msg: "✓ Created Tempo Query Ingress (tempo.local)"
+        msg: "✓ Created Tempo Query UI Ingress (tempo.local)"
 
     # ============== WAIT FOR DEPLOYMENTS ==============
     - name: Wait for Tempo to be ready
@@ -463,17 +383,6 @@
         KUBECONFIG: /etc/kubernetes/admin.conf
       register: tempo_wait
       until: tempo_wait.rc == 0
-      retries: 30
-      delay: 10
-      failed_when: false
-
-    - name: Wait for Tempo Query to be ready
-      ansible.builtin.shell:
-        cmd: "kubectl wait --for=condition=ready pod -l app=tempo-query -n {{ observability_namespace }} --timeout=300s"
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      register: tempo_query_wait
-      until: tempo_query_wait.rc == 0
       retries: 30
       delay: 10
       failed_when: false
@@ -518,9 +427,9 @@
           - "  - S3 storage backend"
           - ""
           - "Access Information:"
-          - "  Tempo Query UI:"
+          - "  Tempo Query UI (built-in):"
           - "    - Ingress: http://tempo.local"
-          - "    - Port Forward: kubectl port-forward -n {{ observability_namespace }} svc/tempo-query 16686:16686"
+          - "    - Port Forward: kubectl port-forward -n {{ observability_namespace }} svc/tempo 16686:16686"
           - ""
           - "  OTLP Endpoints:"
           - "    - gRPC: tempo.{{ observability_namespace }}.svc.cluster.local:4317"
@@ -557,7 +466,7 @@
           - "Quick commands:"
           - "  kubectl get pods -n {{ observability_namespace }}"
           - "  kubectl get svc -n {{ observability_namespace }}"
-          - "  kubectl port-forward -n {{ observability_namespace }} svc/tempo-query 16686:16686"
+          - "  kubectl port-forward -n {{ observability_namespace }} svc/tempo 16686:16686"
           - ""
           - "OTLP Configuration for applications:"
           - "  OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo.observability.svc.cluster.local:4317"
