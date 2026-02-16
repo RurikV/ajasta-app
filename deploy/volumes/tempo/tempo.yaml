@@ -1,0 +1,52 @@
+# Tempo Configuration for Ajasta App
+# Distributed tracing backend with OTLP support
+
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9096
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  trace_idle_period: 10s
+  max_block_bytes: 1_000_000
+  max_block_duration: 5m
+  complete_block_timeout: 30m
+
+compactor:
+  compaction:
+    block_retention: 168h  # 7 days
+    compaction_window: 1h
+    max_compaction_objects: 1000000
+    chunk_size_bytes: 1_000_000
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+querier:
+  frontend_worker:
+    frontend_address: tempo:9096
+
+query_frontend:
+  search:
+    duration_slo: 5s
+    throughput_bytes_slo: 1.073741824e+09
+  trace_by_id:
+    duration_slo: 5s
+
+limits:
+  max_global_bytes_per_user: 1_073_741_824  # 1GB
+  max_traces_per_user: 10000
+  max_bytes_per_trace: 5000000  # 5MB

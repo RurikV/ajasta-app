@@ -1,0 +1,62 @@
+# Prometheus Configuration for Ajasta App
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'ajasta-local'
+    environment: 'development'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files: []
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+
+  # Spring Boot Backend
+  - job_name: 'ajasta-backend'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['ajasta-backend:8090']
+        labels:
+          service: 'backend'
+          application: 'ajasta-app'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'backend'
+
+  # PostgreSQL Exporter (if added)
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']
+
+  # Tempo
+  - job_name: 'tempo'
+    static_configs:
+      - targets: ['tempo:3200']
+        labels:
+          service: 'tempo'
+
+  # OpenSearch
+  - job_name: 'opensearch'
+    metrics_path: '/_plugins/_prometheus/metrics'
+    static_configs:
+      - targets: ['opensearch:9200']
+        labels:
+          service: 'opensearch'
+    basic_auth:
+      username: 'admin'
+      password: 'AjastaAdmin123!'
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true

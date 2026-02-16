@@ -1,0 +1,47 @@
+# Grafana Datasources Provisioning
+
+apiVersion: 1
+
+datasources:
+  # Prometheus - Metrics
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: '15s'
+      httpMethod: 'POST'
+
+  # Tempo - Traces
+  - name: Tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      httpMethod: 'GET'
+      serviceMap:
+        datasourceUid: 'prometheus'
+      tracesToLogs:
+        datasourceUid: 'opensearch'
+
+  # OpenSearch - Logs
+  - name: OpenSearch
+    type: opensearch
+    access: proxy
+    url: https://opensearch:9200
+    database: 'ajasta-app-*'
+    editable: false
+    basicAuth: true
+    basicAuthUser: admin
+    jsonData:
+      esVersion: '2.15.0'
+      timeField: '@timestamp'
+      logMessageField: message
+      logLevelField: level
+      version: '2.15.0'
+      flavor: 'opensearch'
+    secureJsonData:
+      basicAuthPassword: 'AjastaAdmin123!'
