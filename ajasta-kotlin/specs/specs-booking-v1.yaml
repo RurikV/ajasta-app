@@ -1,0 +1,998 @@
+openapi: 3.0.3
+info:
+  title: Ajasta Booking API
+  description: API for resource booking and scheduling platform
+  version: 1.0.0
+  contact:
+    name: Ajasta Team
+
+servers:
+  - url: http://localhost:8090/api/v1
+    description: Local development
+
+paths:
+  /bookings:
+    post:
+      summary: Create a new booking
+      operationId: createBooking
+      tags:
+        - Bookings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingCreateRequest'
+      responses:
+        '200':
+          description: Booking created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingCreateResponse'
+
+  /bookings/search:
+    post:
+      summary: Search bookings
+      operationId: searchBookings
+      tags:
+        - Bookings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingSearchRequest'
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingSearchResponse'
+
+  /bookings/{bookingId}:
+    get:
+      summary: Get booking by ID
+      operationId: readBooking
+      tags:
+        - Bookings
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingReadRequest'
+      responses:
+        '200':
+          description: Booking found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingReadResponse'
+
+    put:
+      summary: Update booking
+      operationId: updateBooking
+      tags:
+        - Bookings
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingUpdateRequest'
+      responses:
+        '200':
+          description: Booking updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingUpdateResponse'
+
+    delete:
+      summary: Cancel booking
+      operationId: deleteBooking
+      tags:
+        - Bookings
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingDeleteRequest'
+      responses:
+        '200':
+          description: Booking cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingDeleteResponse'
+
+  /resources:
+    post:
+      summary: Create a new resource
+      operationId: createResource
+      tags:
+        - Resources
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceCreateRequest'
+      responses:
+        '200':
+          description: Resource created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceCreateResponse'
+
+  /resources/search:
+    post:
+      summary: Search resources
+      operationId: searchResources
+      tags:
+        - Resources
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceSearchRequest'
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceSearchResponse'
+
+  /resources/{resourceId}:
+    get:
+      summary: Get resource by ID
+      operationId: readResource
+      tags:
+        - Resources
+      parameters:
+        - name: resourceId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceReadRequest'
+      responses:
+        '200':
+          description: Resource found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceReadResponse'
+
+    put:
+      summary: Update resource
+      operationId: updateResource
+      tags:
+        - Resources
+      parameters:
+        - name: resourceId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceUpdateRequest'
+      responses:
+        '200':
+          description: Resource updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceUpdateResponse'
+
+    delete:
+      summary: Delete resource
+      operationId: deleteResource
+      tags:
+        - Resources
+      parameters:
+        - name: resourceId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceDeleteRequest'
+      responses:
+        '200':
+          description: Resource deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceDeleteResponse'
+
+  /resources/{resourceId}/availability:
+    post:
+      summary: Get resource availability
+      operationId: getAvailability
+      tags:
+        - Resources
+      parameters:
+        - name: resourceId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AvailabilityRequest'
+      responses:
+        '200':
+          description: Availability data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailabilityResponse'
+
+components:
+  schemas:
+    # === Debug ===
+    Debug:
+      type: object
+      properties:
+        mode:
+          $ref: '#/components/schemas/RequestDebugMode'
+        stub:
+          $ref: '#/components/schemas/RequestDebugStubs'
+
+    RequestDebugMode:
+      type: string
+      enum:
+        - PROD
+        - TEST
+        - STUB
+
+    RequestDebugStubs:
+      type: string
+      enum:
+        - SUCCESS
+        - NOT_FOUND
+        - VALIDATION_ERROR
+        - DELETE_ERROR
+        - SEARCH_ERROR
+
+    # === Error ===
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+        group:
+          type: string
+        field:
+          type: string
+        message:
+          type: string
+
+    # === Resource Types ===
+    ResourceType:
+      type: string
+      enum:
+        - TURF_COURT
+        - VOLLEYBALL_COURT
+        - PLAYGROUND
+        - HAIRDRESSING_CHAIR
+        - OTHER
+
+    ResourceObject:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/ResourceType'
+        location:
+          type: string
+        description:
+          type: string
+        imageUrl:
+          type: string
+        pricePerSlot:
+          type: number
+          format: double
+        unitsCount:
+          type: integer
+        openTime:
+          type: string
+        closeTime:
+          type: string
+        rating:
+          type: number
+          format: double
+        reviewCount:
+          type: integer
+        ownerId:
+          type: string
+        lock:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ResourceCreateObject:
+      type: object
+      required:
+        - name
+        - type
+        - pricePerSlot
+      properties:
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/ResourceType'
+        location:
+          type: string
+        description:
+          type: string
+        imageUrl:
+          type: string
+        pricePerSlot:
+          type: number
+          format: double
+        unitsCount:
+          type: integer
+          default: 1
+        openTime:
+          type: string
+        closeTime:
+          type: string
+
+    ResourceUpdateObject:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/ResourceType'
+        location:
+          type: string
+        description:
+          type: string
+        imageUrl:
+          type: string
+        pricePerSlot:
+          type: number
+          format: double
+        unitsCount:
+          type: integer
+        openTime:
+          type: string
+        closeTime:
+          type: string
+        lock:
+          type: string
+
+    ResourceFilter:
+      type: object
+      properties:
+        type:
+          $ref: '#/components/schemas/ResourceType'
+        location:
+          type: string
+        minPrice:
+          type: number
+          format: double
+        maxPrice:
+          type: number
+          format: double
+        minRating:
+          type: number
+          format: double
+        ownerId:
+          type: string
+
+    # === Booking Types ===
+    BookingStatus:
+      type: string
+      enum:
+        - PENDING
+        - CONFIRMED
+        - CANCELLED
+        - COMPLETED
+
+    PaymentStatus:
+      type: string
+      enum:
+        - PENDING
+        - COMPLETED
+        - FAILED
+        - REFUNDED
+
+    BookingSlot:
+      type: object
+      properties:
+        slotStart:
+          type: string
+          format: date-time
+        slotEnd:
+          type: string
+          format: date-time
+        price:
+          type: number
+          format: double
+
+    BookingObject:
+      type: object
+      properties:
+        id:
+          type: string
+        resourceId:
+          type: string
+        userId:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        slots:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookingSlot'
+        totalAmount:
+          type: number
+          format: double
+        bookingStatus:
+          $ref: '#/components/schemas/BookingStatus'
+        paymentStatus:
+          $ref: '#/components/schemas/PaymentStatus'
+        lock:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    BookingCreateObject:
+      type: object
+      required:
+        - resourceId
+        - slots
+      properties:
+        resourceId:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        slots:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookingSlot'
+
+    BookingUpdateObject:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        lock:
+          type: string
+
+    BookingFilter:
+      type: object
+      properties:
+        resourceId:
+          type: string
+        userId:
+          type: string
+        status:
+          $ref: '#/components/schemas/BookingStatus'
+        dateFrom:
+          type: string
+          format: date-time
+        dateTo:
+          type: string
+          format: date-time
+
+    AvailabilitySlot:
+      type: object
+      properties:
+        slotStart:
+          type: string
+          format: date-time
+        slotEnd:
+          type: string
+          format: date-time
+        available:
+          type: boolean
+        availableUnits:
+          type: integer
+        price:
+          type: number
+          format: double
+
+    # === Resource Requests (without allOf) ===
+    ResourceCreateRequest:
+      type: object
+      properties:
+        requestType:
+          type: string
+          default: createResource
+        requestId:
+          type: string
+        requestTime:
+          type: string
+          format: date-time
+        debug:
+          $ref: '#/components/schemas/Debug'
+        resource:
+          $ref: '#/components/schemas/ResourceCreateObject'
+
+    ResourceCreateResponse:
+      type: object
+      properties:
+        responseType:
+          type: string
+          default: createResource
+        requestId:
+          type: string
+        responseTime:
+          type: string
+          format: date-time
+        resource:
+          $ref: '#/components/schemas/ResourceObject'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+
+    ResourceReadRequest:
+      type: object
+      properties:
+        requestType:
+          type: string
+          default: readResource
+        requestId:
+          type: string
+        requestTime:
+          type: string
+          format: date-time
+        debug:
+          $ref: '#/components/schemas/Debug'
+        resourceId:
+          type: string
+
+    ResourceReadResponse:
+      type: object
+      properties:
+        responseType:
+          type: string
+          default: readResource
+        requestId:
+          type: string
+        responseTime:
+          type: string
+          format: date-time
+        resource:
+          $ref: '#/components/schemas/ResourceObject'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+
+    ResourceUpdateRequest:
+      type: object
+      properties:
+        requestType:
+          type: string
+          default: updateResource
+        requestId:
+          type: string
+        requestTime:
+          type: string
+          format: date-time
+        debug:
+          $ref: '#/components/schemas/Debug'
+        resource:
+          $ref: '#/components/schemas/ResourceUpdateObject'
+
+    ResourceUpdateResponse:
+      type: object
+      properties:
+        responseType:
+          type: string
+          default: updateResource
+        requestId:
+          type: string
+        responseTime:
+          type: string
+          format: date-time
+        resource:
+          $ref: '#/components/schemas/ResourceObject'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+
+    ResourceDeleteRequest:
+      type: object
+      properties:
+        requestType:
+          type: string
+          default: deleteResource
+        requestId:
+          type: string
+        requestTime:
+          type: string
+          format: date-time
+        debug:
+          $ref: '#/components/schemas/Debug'
+        resourceId:
+          type: string
+        lock:
+          type: string
+
+    ResourceDeleteResponse:
+      type: object
+      properties:
+        responseType:
+          type: string
+          default: deleteResource
+        requestId:
+          type: string
+        responseTime:
+          type: string
+          format: date-time
+        resourceId:
+          type: string
+        deleted:
+          type: boolean
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+
+    ResourceSearchRequest:
+      type: object
+      properties:
+        requestType:
+          type: string
+          default: searchResources
+        requestId:
+          type: string
+        requestTime:
+          type: string
+          format: date-time
+        debug:
+          $ref: '#/components/schemas/Debug'
+        filter:
+          $ref: '#/components/schemas/ResourceFilter'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    ResourceSearchResponse:
+      type: object
+      properties:
+        responseType:
+          type: string
+          default: searchResources
+        requestId:
+          type: string
+        responseTime:
+          type: string
+          format: date-time
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResourceObject'
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+
+    # === Booking Requests (without allOf) ===
+    BookingCreateRequest:
+      type: object
+      properties:
+        requestType:
+          type: string
+          default: createBooking
+        requestId:
+          type: string
+        requestTime:
+          type: string
+          format: date-time
+        debug:
+          $ref: '#/components/schemas/Debug'
+        booking:
+          $ref: '#/components/schemas/BookingCreateObject'
+
+    BookingCreateResponse:
+      type: object
+      properties:
+        responseType:
+          type: string
+          default: createBooking
+        requestId:
+          type: string
+        responseTime:
+          type: string
+          format: date-time
+        booking:
+          $ref: '#/components/schemas/BookingObject'
+        paymentLink:
+          type: string
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+
+    BookingReadRequest:
+      type: object
+      properties:
+        requestType:
+          type: string
+          default: readBooking
+        requestId:
+          type: string
+        requestTime:
+          type: string
+          format: date-time
+        debug:
+          $ref: '#/components/schemas/Debug'
+        bookingId:
+          type: string
+
+    BookingReadResponse:
+      type: object
+      properties:
+        responseType:
+          type: string
+          default: readBooking
+        requestId:
+          type: string
+        responseTime:
+          type: string
+          format: date-time
+        booking:
+          $ref: '#/components/schemas/BookingObject'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+
+    BookingUpdateRequest:
+      type: object
+      properties:
+        requestType:
+          type: string
+          default: updateBooking
+        requestId:
+          type: string
+        requestTime:
+          type: string
+          format: date-time
+        debug:
+          $ref: '#/components/schemas/Debug'
+        booking:
+          $ref: '#/components/schemas/BookingUpdateObject'
+
+    BookingUpdateResponse:
+      type: object
+      properties:
+        responseType:
+          type: string
+          default: updateBooking
+        requestId:
+          type: string
+        responseTime:
+          type: string
+          format: date-time
+        booking:
+          $ref: '#/components/schemas/BookingObject'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+
+    BookingDeleteRequest:
+      type: object
+      properties:
+        requestType:
+          type: string
+          default: deleteBooking
+        requestId:
+          type: string
+        requestTime:
+          type: string
+          format: date-time
+        debug:
+          $ref: '#/components/schemas/Debug'
+        bookingId:
+          type: string
+        lock:
+          type: string
+
+    BookingDeleteResponse:
+      type: object
+      properties:
+        responseType:
+          type: string
+          default: deleteBooking
+        requestId:
+          type: string
+        responseTime:
+          type: string
+          format: date-time
+        bookingId:
+          type: string
+        cancelled:
+          type: boolean
+        refundAmount:
+          type: number
+          format: double
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+
+    BookingSearchRequest:
+      type: object
+      properties:
+        requestType:
+          type: string
+          default: searchBookings
+        requestId:
+          type: string
+        requestTime:
+          type: string
+          format: date-time
+        debug:
+          $ref: '#/components/schemas/Debug'
+        filter:
+          $ref: '#/components/schemas/BookingFilter'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    BookingSearchResponse:
+      type: object
+      properties:
+        responseType:
+          type: string
+          default: searchBookings
+        requestId:
+          type: string
+        responseTime:
+          type: string
+          format: date-time
+        bookings:
+          type: array
+          items:
+            $ref: '#/components/schemas/BookingObject'
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+
+    # === Availability ===
+    AvailabilityRequest:
+      type: object
+      properties:
+        requestType:
+          type: string
+          default: getAvailability
+        requestId:
+          type: string
+        requestTime:
+          type: string
+          format: date-time
+        debug:
+          $ref: '#/components/schemas/Debug'
+        resourceId:
+          type: string
+        dateFrom:
+          type: string
+          format: date-time
+        dateTo:
+          type: string
+          format: date-time
+
+    AvailabilityResponse:
+      type: object
+      properties:
+        responseType:
+          type: string
+          default: getAvailability
+        requestId:
+          type: string
+        responseTime:
+          type: string
+          format: date-time
+        resourceId:
+          type: string
+        slots:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailabilitySlot'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+
+    ErrorResponse:
+      type: object
+      properties:
+        responseType:
+          type: string
+        requestId:
+          type: string
+        responseTime:
+          type: string
+          format: date-time
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
