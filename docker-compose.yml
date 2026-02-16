@@ -1,5 +1,12 @@
 ---
+# Docker Compose for Ajasta App
+# Includes: Application services + Monitoring (OpenSearch) + Authorization (Keycloak)
+
 services:
+  # ============================================
+  # Application Services
+  # ============================================
+
   # PostgreSQL Database
   ajasta-postgres:
     image: postgres:16-alpine
@@ -16,8 +23,7 @@ services:
     networks:
       - ajasta-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} \
-        -d ${POSTGRES_DB:-ajastadb}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} -d ${POSTGRES_DB:-ajastadb}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -25,8 +31,7 @@ services:
 
   # Spring Boot Backend API
   ajasta-backend:
-    image: >-
-      ${BACKEND_IMAGE:-${DOCKERHUB_USER:-vladimirryrik}/ajasta-backend:alpine}
+    image: ${BACKEND_IMAGE:-${DOCKERHUB_USER:-vladimirryrik}/ajasta-backend:alpine}
     container_name: ajasta-backend
     restart: unless-stopped
     depends_on:
@@ -37,27 +42,28 @@ services:
       DB_URL: jdbc:postgresql://ajasta-postgres:5432/${POSTGRES_DB:-ajastadb}
       DB_USERNAME: ${POSTGRES_USER:-admin}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-adminpw}
-
       # Application Configuration
       JWT_SECRET: ${JWT_SECRET:-change-me-production-secret-key}
-
       # Mail Configuration (optional)
       MAIL_USERNAME: ${MAIL_USERNAME:-}
       MAIL_PASSWORD: ${MAIL_PASSWORD:-}
-
       # AWS Configuration (optional)
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
-
       # Stripe Configuration (optional)
       STRIPE_PUBLIC_KEY: ${STRIPE_PUBLIC_KEY:-}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-
+      # Keycloak Configuration (optional - for future integration)
+      KEYCLOAK_ENABLED: ${KEYCLOAK_ENABLED:-false}
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ajasta
+      # OpenTelemetry Configuration
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
+      OTEL_SERVICE_NAME: ajasta-backend
       # JVM Configuration
-      JAVA_OPTS: ${JAVA_OPTS:--XX:+UseContainerSupport \
-        -XX:MaxRAMPercentage=75.0}
+      JAVA_OPTS: ${JAVA_OPTS:--XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0}
     ports:
       - "${BACKEND_PORT:-8090}:8090"
     networks:
@@ -68,11 +74,16 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: localhost:24224
+        fluentd-async: "true"
+        tag: ajasta.backend
 
   # React Frontend (Nginx)
   ajasta-frontend:
-    image: >-
-      ${FRONTEND_IMAGE:-${DOCKERHUB_USER:-vladimirryrik}/ajasta-frontend:alpine}
+    image: ${FRONTEND_IMAGE:-${DOCKERHUB_USER:-vladimirryrik}/ajasta-frontend:alpine}
     container_name: ajasta-frontend
     restart: unless-stopped
     depends_on:
@@ -83,19 +94,226 @@ services:
     networks:
       - ajasta-net
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider \
-        http://localhost/ || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 30s
 
-# Named volumes for data persistence
+  # ============================================
+  # Monitoring Stack (OpenSearch)
+  # ============================================
+
+  # Fluent Bit - Log collection agent
+  fluent-bit:
+    image: fluent/fluent-bit:3.1
+    container_name: ajasta-fluent-bit
+    restart: unless-stopped
+    volumes:
+      - ./deploy/volumes/fluent-bit-etc/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./deploy/volumes/fluent-bit-etc/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    networks:
+      - ajasta-net
+    depends_on:
+      opensearch:
+        condition: service_healthy
+
+  # OpenSearch - Log storage and search
+  opensearch:
+    image: opensearchproject/opensearch:2.15.0
+    container_name: ajasta-opensearch
+    restart: unless-stopped
+    environment:
+      - cluster.name=ajasta-cluster
+      - node.name=ajasta-opensearch
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - DISABLE_SECURITY_PLUGIN=false
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_PASSWORD:-AjastaAdmin123!}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    networks:
+      - ajasta-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -u admin:${OPENSEARCH_PASSWORD:-AjastaAdmin123!} https://localhost:9200/_cluster/health | grep -q 'green\\|yellow'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # OpenSearch Dashboards - Log visualization
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.15.0
+    container_name: ajasta-opensearch-dashboards
+    restart: unless-stopped
+    environment:
+      - OPENSEARCH_HOSTS=["https://opensearch:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=false
+    ports:
+      - "5601:5601"
+    networks:
+      - ajasta-net
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:5601/api/status | grep -q 'available'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ============================================
+  # Authorization (Keycloak)
+  # ============================================
+
+  # Keycloak - Identity and Access Management
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: ajasta-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://ajasta-postgres:5432/${KEYCLOAK_DB:-keycloakdb}
+      KC_DB_USERNAME: ${POSTGRES_USER:-admin}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-adminpw}
+      KC_HOSTNAME: ${KEYCLOAK_HOSTNAME:-localhost}
+      KC_HOSTNAME_PORT: ${KEYCLOAK_PORT:-8180}
+      KC_HOSTNAME_STRICT: false
+      KC_HOSTNAME_STRICT_HTTPS: false
+      KC_HTTP_ENABLED: true
+      KC_HEALTH_ENABLED: true
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./deploy/volumes/keycloak/import:/opt/keycloak/data/import:ro
+    ports:
+      - "${KEYCLOAK_PORT:-8180}:8080"
+    networks:
+      - ajasta-net
+    depends_on:
+      ajasta-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  # ============================================
+  # Distributed Tracing (Tempo)
+  # ============================================
+
+  # Tempo - Distributed tracing backend
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: ajasta-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./deploy/volumes/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "3200:3200"   # Tempo query frontend
+    networks:
+      - ajasta-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3200/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ============================================
+  # Metrics (Prometheus + Grafana)
+  # ============================================
+
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: ajasta-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./deploy/volumes/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - ajasta-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Grafana - Metrics visualization
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: ajasta-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: false
+      GF_SERVER_ROOT_URL: http://localhost:3001
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/volumes/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+    networks:
+      - ajasta-net
+    depends_on:
+      - prometheus
+      - tempo
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# ============================================
+# Named Volumes
+# ============================================
 volumes:
   postgres_data:
     driver: local
+  opensearch_data:
+    driver: local
+  tempo_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
 
-# Custom network for service communication
+# ============================================
+# Networks
+# ============================================
 networks:
   ajasta-net:
     driver: bridge
