@@ -25,3 +25,8 @@ include(":ajasta-api-v1-mappers")
 // Core Modules
 include(":ajasta-common")
 include(":ajasta-stubs")
+
+// App Modules
+include(":ajasta-app-common")
+include(":ajasta-app-spring")
+include(":ajasta-app-kafka")
