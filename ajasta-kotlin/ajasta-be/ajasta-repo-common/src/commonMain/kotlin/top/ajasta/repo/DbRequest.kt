@@ -1,5 +1,6 @@
 package top.ajasta.repo
 
+import top.ajasta.common.PaginationDefaults
 import top.ajasta.common.models.*
 
 /**
@@ -20,14 +21,16 @@ data class DbBookingIdRequest(
 }
 
 /**
- * Request for search bookings operation.
+ * Request for search bookings operation with pagination support.
  */
 data class DbBookingFilterRequest(
     val resourceId: AjastaResourceId = AjastaResourceId.NONE,
     val userId: AjastaUserId = AjastaUserId.NONE,
     val status: AjastaBookingStatus = AjastaBookingStatus.NONE,
     val dateFrom: kotlinx.datetime.Instant = kotlinx.datetime.Instant.DISTANT_PAST,
-    val dateTo: kotlinx.datetime.Instant = kotlinx.datetime.Instant.DISTANT_PAST
+    val dateTo: kotlinx.datetime.Instant = kotlinx.datetime.Instant.DISTANT_PAST,
+    val page: Int = PaginationDefaults.DEFAULT_PAGE,
+    val pageSize: Int = PaginationDefaults.DEFAULT_PAGE_SIZE
 )
 
 /**
@@ -48,7 +51,7 @@ data class DbResourceIdRequest(
 }
 
 /**
- * Request for search resources operation.
+ * Request for search resources operation with pagination support.
  */
 data class DbResourceFilterRequest(
     val type: AjastaResourceType = AjastaResourceType.NONE,
@@ -56,5 +59,7 @@ data class DbResourceFilterRequest(
     val minPrice: Double = 0.0,
     val maxPrice: Double = Double.MAX_VALUE,
     val minRating: Double = 0.0,
-    val ownerId: AjastaUserId = AjastaUserId.NONE
+    val ownerId: AjastaUserId = AjastaUserId.NONE,
+    val page: Int = PaginationDefaults.DEFAULT_PAGE,
+    val pageSize: Int = PaginationDefaults.DEFAULT_PAGE_SIZE
 )

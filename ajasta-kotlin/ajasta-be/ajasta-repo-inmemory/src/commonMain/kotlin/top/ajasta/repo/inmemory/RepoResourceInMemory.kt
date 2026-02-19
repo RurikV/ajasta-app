@@ -2,6 +2,7 @@ package top.ajasta.repo.inmemory
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import top.ajasta.common.PaginationDefaults
 import top.ajasta.common.models.*
 import top.ajasta.repo.*
 
@@ -109,7 +110,7 @@ class RepoResourceInMemory(
 
     override suspend fun searchResources(rq: DbResourceFilterRequest): IDbResourcesResponse {
         return mutex.withLock {
-            val results = resources.values.filter { resource ->
+            val allResults = resources.values.filter { resource ->
                 (rq.type == AjastaResourceType.NONE || resource.type == rq.type) &&
                 (rq.location.isEmpty() || resource.location.contains(rq.location, ignoreCase = true)) &&
                 (rq.minPrice <= resource.pricePerSlot) &&
@@ -117,7 +118,13 @@ class RepoResourceInMemory(
                 (rq.minRating <= resource.rating) &&
                 (rq.ownerId == AjastaUserId.NONE || resource.ownerId == rq.ownerId)
             }
-            IDbResourcesResponse.Ok(results)
+            val total = allResults.size
+            val pageSize = rq.pageSize.coerceAtMost(PaginationDefaults.MAX_PAGE_SIZE)
+            val offset = (rq.page - 1) * pageSize
+            val paginatedResults = allResults
+                .drop(offset)
+                .take(pageSize)
+            IDbResourcesResponse.Ok(data = paginatedResults, total = total)
         }
     }
 

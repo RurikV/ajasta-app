@@ -10,11 +10,15 @@ import top.ajasta.api.v1.mappers.toTransportReadBooking
 import top.ajasta.api.v1.mappers.toTransportUpdateBooking
 import top.ajasta.api.v1.mappers.toTransportDeleteBooking
 import top.ajasta.api.v1.mappers.toTransportSearchBookings
+import top.ajasta.repo.IRepoBooking
+import top.ajasta.repo.IRepoResource
 
 @RestController
 @RequestMapping("v1/bookings")
 class BookingControllerV1(
-    private val appSettings: AjastaAppSettings
+    private val appSettings: AjastaAppSettings,
+    private val repoBooking: IRepoBooking,
+    private val repoResource: IRepoResource
 ) {
 
     @PostMapping("create")
@@ -22,7 +26,9 @@ class BookingControllerV1(
         appSettings.controllerHelper(
             { fromTransport(request) },
             { toTransportCreateBooking() },
-            "booking-create"
+            "booking-create",
+            repoBooking,
+            repoResource
         )
 
     @PostMapping("read")
@@ -30,7 +36,9 @@ class BookingControllerV1(
         appSettings.controllerHelper(
             { fromTransport(request) },
             { toTransportReadBooking() },
-            "booking-read"
+            "booking-read",
+            repoBooking,
+            repoResource
         )
 
     @PostMapping("update")
@@ -38,7 +46,9 @@ class BookingControllerV1(
         appSettings.controllerHelper(
             { fromTransport(request) },
             { toTransportUpdateBooking() },
-            "booking-update"
+            "booking-update",
+            repoBooking,
+            repoResource
         )
 
     @PostMapping("delete")
@@ -46,7 +56,9 @@ class BookingControllerV1(
         appSettings.controllerHelper(
             { fromTransport(request) },
             { toTransportDeleteBooking() },
-            "booking-delete"
+            "booking-delete",
+            repoBooking,
+            repoResource
         )
 
     @PostMapping("search")
@@ -54,6 +66,8 @@ class BookingControllerV1(
         appSettings.controllerHelper(
             { fromTransport(request) },
             { toTransportSearchBookings() },
-            "booking-search"
+            "booking-search",
+            repoBooking,
+            repoResource
         )
 }

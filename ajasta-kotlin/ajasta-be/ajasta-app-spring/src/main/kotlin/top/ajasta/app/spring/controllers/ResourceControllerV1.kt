@@ -11,11 +11,15 @@ import top.ajasta.api.v1.mappers.toTransportUpdateResource
 import top.ajasta.api.v1.mappers.toTransportDeleteResource
 import top.ajasta.api.v1.mappers.toTransportSearchResources
 import top.ajasta.api.v1.mappers.toTransportAvailability
+import top.ajasta.repo.IRepoBooking
+import top.ajasta.repo.IRepoResource
 
 @RestController
 @RequestMapping("v1/resources")
 class ResourceControllerV1(
-    private val appSettings: AjastaAppSettings
+    private val appSettings: AjastaAppSettings,
+    private val repoBooking: IRepoBooking,
+    private val repoResource: IRepoResource
 ) {
 
     @PostMapping("create")
@@ -23,7 +27,9 @@ class ResourceControllerV1(
         appSettings.controllerHelper(
             { fromTransport(request) },
             { toTransportCreateResource() },
-            "resource-create"
+            "resource-create",
+            repoBooking,
+            repoResource
         )
 
     @PostMapping("read")
@@ -31,7 +37,9 @@ class ResourceControllerV1(
         appSettings.controllerHelper(
             { fromTransport(request) },
             { toTransportReadResource() },
-            "resource-read"
+            "resource-read",
+            repoBooking,
+            repoResource
         )
 
     @PostMapping("update")
@@ -39,7 +47,9 @@ class ResourceControllerV1(
         appSettings.controllerHelper(
             { fromTransport(request) },
             { toTransportUpdateResource() },
-            "resource-update"
+            "resource-update",
+            repoBooking,
+            repoResource
         )
 
     @PostMapping("delete")
@@ -47,7 +57,9 @@ class ResourceControllerV1(
         appSettings.controllerHelper(
             { fromTransport(request) },
             { toTransportDeleteResource() },
-            "resource-delete"
+            "resource-delete",
+            repoBooking,
+            repoResource
         )
 
     @PostMapping("search")
@@ -55,7 +67,9 @@ class ResourceControllerV1(
         appSettings.controllerHelper(
             { fromTransport(request) },
             { toTransportSearchResources() },
-            "resource-search"
+            "resource-search",
+            repoBooking,
+            repoResource
         )
 
     @PostMapping("availability")
@@ -63,6 +77,8 @@ class ResourceControllerV1(
         appSettings.controllerHelper(
             { fromTransport(request) },
             { toTransportAvailability() },
-            "resource-availability"
+            "resource-availability",
+            repoBooking,
+            repoResource
         )
 }

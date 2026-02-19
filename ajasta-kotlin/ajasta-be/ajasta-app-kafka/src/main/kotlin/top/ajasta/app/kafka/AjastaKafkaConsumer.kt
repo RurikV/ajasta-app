@@ -15,15 +15,19 @@ import top.ajasta.api.v1.mappers.fromTransport
 import top.ajasta.api.v1.mappers.toTransport
 import top.ajasta.api.v1.models.IRequest
 import top.ajasta.api.v1.models.IResponse
-import top.ajasta.app.common.AjastaStubProcessor
 import top.ajasta.app.common.IAjastaAppSettings
 import top.ajasta.biz.BizContext
+import top.ajasta.repo.IRepoBooking
+import top.ajasta.repo.IRepoResource
+import top.ajasta.repo.inmemory.RepoBookingInMemory
+import top.ajasta.repo.inmemory.RepoResourceInMemory
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Kafka consumer for processing Ajasta requests.
  * Uses POSTful API with polymorphic IRequest/IResponse interfaces.
+ * Maintains singleton repositories for data persistence across requests.
  */
 class AjastaKafkaConsumer(
     private val config: AjastaKafkaConfig,
@@ -34,6 +38,12 @@ class AjastaKafkaConsumer(
     private val log = LoggerFactory.getLogger(this::class.java)
     private val running = AtomicBoolean(true)
     override val processor = config.processor
+
+    /**
+     * Singleton repositories for data persistence across requests.
+     */
+    private val repoBooking: IRepoBooking = RepoBookingInMemory()
+    private val repoResource: IRepoResource = RepoResourceInMemory()
 
     /**
      * Blocking start of the consumer.
@@ -85,7 +95,11 @@ class AjastaKafkaConsumer(
     }
 
     private suspend fun processRequest(request: IRequest): IResponse {
-        val ctx = BizContext()
+        val ctx = BizContext().apply {
+            // Use singleton repositories (shared across all requests)
+            this.repoBooking = this@AjastaKafkaConsumer.repoBooking
+            this.repoResource = this@AjastaKafkaConsumer.repoResource
+        }
         ctx.fromTransport(request)
         processor.exec(ctx)
         return ctx.toTransport()

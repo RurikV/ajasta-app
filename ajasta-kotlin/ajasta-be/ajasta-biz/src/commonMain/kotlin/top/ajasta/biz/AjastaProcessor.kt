@@ -222,6 +222,11 @@ class AjastaProcessor {
                 stubNotFoundError("Not found case simulation")
                 stubNoCase("Error: requested stub is invalid")
             }
+            validation {
+                validateAvailabilityResourceIdNotEmpty("Check resourceId is provided")
+                validateAvailabilityDatesProvided("Check dates are provided")
+                validateAvailabilityDateRange("Check date range is valid")
+            }
             prepareResult("Prepare response")
         }
     }.build()
