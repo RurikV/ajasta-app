@@ -18,6 +18,9 @@ dependencyResolutionManagement {
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
+// Lib Modules
+include(":ajasta-lib-cor")
+
 // API Modules
 include(":ajasta-api-v1-jackson")
 include(":ajasta-api-v1-mappers")
@@ -25,6 +28,9 @@ include(":ajasta-api-v1-mappers")
 // Core Modules
 include(":ajasta-common")
 include(":ajasta-stubs")
+
+// Business Logic Module
+include(":ajasta-biz")
 
 // App Modules
 include(":ajasta-app-common")
