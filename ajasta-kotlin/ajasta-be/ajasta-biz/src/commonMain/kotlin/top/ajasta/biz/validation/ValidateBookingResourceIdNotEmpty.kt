@@ -2,10 +2,10 @@ package top.ajasta.biz.validation
 
 import top.ajasta.lib.cor.ICorChainDsl
 import top.ajasta.lib.cor.worker
-import top.ajasta.common.AjastaContext
+import top.ajasta.biz.BizContext
 import top.ajasta.common.models.AjastaResourceId
 
-fun ICorChainDsl<AjastaContext>.validateBookingResourceIdNotEmpty(title: String) = worker {
+fun ICorChainDsl<BizContext>.validateBookingResourceIdNotEmpty(title: String) = worker {
     this.title = title
     this.description = "Validates that booking resourceId is provided"
     on { bookingValidating.resourceId == AjastaResourceId.NONE }

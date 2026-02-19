@@ -1,7 +1,7 @@
 package top.ajasta.app.common
 
 import top.ajasta.biz.AjastaProcessor as BizProcessor
-import top.ajasta.common.AjastaContext
+import top.ajasta.biz.BizContext
 
 /**
  * Implementation of AjastaProcessor that uses the business logic module.
@@ -10,7 +10,7 @@ import top.ajasta.common.AjastaContext
 class AjastaProcessorImpl : AjastaProcessor {
     private val bizProcessor = BizProcessor()
 
-    override suspend fun exec(ctx: AjastaContext) {
+    override suspend fun exec(ctx: BizContext) {
         bizProcessor.exec(ctx)
     }
 }

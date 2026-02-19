@@ -13,6 +13,7 @@ kotlin {
                 implementation(projects.ajastaLibCor)
                 implementation(projects.ajastaCommon)
                 implementation(projects.ajastaStubs)
+                implementation(projects.ajastaRepoCommon)
             }
         }
 

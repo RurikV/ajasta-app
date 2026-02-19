@@ -11,6 +11,8 @@ dependencies {
     implementation(project(":ajasta-api-v1-mappers"))
     implementation(project(":ajasta-stubs"))
     implementation(project(":ajasta-biz"))
+    implementation(project(":ajasta-repo-common"))
+    implementation(project(":ajasta-repo-inmemory"))
 
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.logback.classic)

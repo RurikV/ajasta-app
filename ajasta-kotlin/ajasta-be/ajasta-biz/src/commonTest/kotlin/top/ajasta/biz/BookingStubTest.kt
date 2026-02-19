@@ -1,7 +1,7 @@
 package top.ajasta.biz
 
 import kotlinx.coroutines.test.runTest
-import top.ajasta.common.AjastaContext
+import top.ajasta.biz.BizContext
 import top.ajasta.common.models.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -13,17 +13,17 @@ class BookingStubTest {
 
     @Test
     fun createBookingSuccess() = runTest {
-        val ctx = AjastaContext(
-            command = AjastaCommand.CREATE_BOOKING,
-            state = AjastaState.NONE,
-            workMode = AjastaWorkMode.STUB,
-            stubCase = AjastaStubs.SUCCESS,
+        val ctx = BizContext().apply {
+            command = AjastaCommand.CREATE_BOOKING
+            state = AjastaState.NONE
+            workMode = AjastaWorkMode.STUB
+            stubCase = AjastaStubs.SUCCESS
             bookingRequest = AjastaBooking(
                 title = "Test Booking",
                 description = "Test Description",
                 resourceId = AjastaResourceId("resource-123")
             )
-        )
+        }
         processor.exec(ctx)
         assertEquals(AjastaState.FINISHING, ctx.state)
         assertTrue(ctx.bookingResponse.title.isNotEmpty())
@@ -32,12 +32,12 @@ class BookingStubTest {
 
     @Test
     fun createBookingValidationError() = runTest {
-        val ctx = AjastaContext(
-            command = AjastaCommand.CREATE_BOOKING,
-            state = AjastaState.NONE,
-            workMode = AjastaWorkMode.STUB,
+        val ctx = BizContext().apply {
+            command = AjastaCommand.CREATE_BOOKING
+            state = AjastaState.NONE
+            workMode = AjastaWorkMode.STUB
             stubCase = AjastaStubs.VALIDATION_ERROR
-        )
+        }
         processor.exec(ctx)
         assertEquals(AjastaState.FAILING, ctx.state)
         assertTrue(ctx.errors.isNotEmpty())
@@ -45,15 +45,15 @@ class BookingStubTest {
 
     @Test
     fun readBookingSuccess() = runTest {
-        val ctx = AjastaContext(
-            command = AjastaCommand.READ_BOOKING,
-            state = AjastaState.NONE,
-            workMode = AjastaWorkMode.STUB,
-            stubCase = AjastaStubs.SUCCESS,
+        val ctx = BizContext().apply {
+            command = AjastaCommand.READ_BOOKING
+            state = AjastaState.NONE
+            workMode = AjastaWorkMode.STUB
+            stubCase = AjastaStubs.SUCCESS
             bookingRequest = AjastaBooking(
                 id = AjastaBookingId("booking-123")
             )
-        )
+        }
         processor.exec(ctx)
         assertEquals(AjastaState.FINISHING, ctx.state)
         assertTrue(ctx.bookingResponse.id != AjastaBookingId.NONE)
@@ -61,12 +61,12 @@ class BookingStubTest {
 
     @Test
     fun readBookingNotFound() = runTest {
-        val ctx = AjastaContext(
-            command = AjastaCommand.READ_BOOKING,
-            state = AjastaState.NONE,
-            workMode = AjastaWorkMode.STUB,
+        val ctx = BizContext().apply {
+            command = AjastaCommand.READ_BOOKING
+            state = AjastaState.NONE
+            workMode = AjastaWorkMode.STUB
             stubCase = AjastaStubs.NOT_FOUND
-        )
+        }
         processor.exec(ctx)
         assertEquals(AjastaState.FAILING, ctx.state)
         assertTrue(ctx.errors.any { it.code == "not-found" })
@@ -74,17 +74,17 @@ class BookingStubTest {
 
     @Test
     fun updateBookingSuccess() = runTest {
-        val ctx = AjastaContext(
-            command = AjastaCommand.UPDATE_BOOKING,
-            state = AjastaState.NONE,
-            workMode = AjastaWorkMode.STUB,
-            stubCase = AjastaStubs.SUCCESS,
+        val ctx = BizContext().apply {
+            command = AjastaCommand.UPDATE_BOOKING
+            state = AjastaState.NONE
+            workMode = AjastaWorkMode.STUB
+            stubCase = AjastaStubs.SUCCESS
             bookingRequest = AjastaBooking(
                 id = AjastaBookingId("booking-123"),
                 title = "Updated Title",
                 description = "Updated Description"
             )
-        )
+        }
         processor.exec(ctx)
         assertEquals(AjastaState.FINISHING, ctx.state)
         assertEquals("Updated Title", ctx.bookingResponse.title)
@@ -92,15 +92,15 @@ class BookingStubTest {
 
     @Test
     fun deleteBookingSuccess() = runTest {
-        val ctx = AjastaContext(
-            command = AjastaCommand.DELETE_BOOKING,
-            state = AjastaState.NONE,
-            workMode = AjastaWorkMode.STUB,
-            stubCase = AjastaStubs.SUCCESS,
+        val ctx = BizContext().apply {
+            command = AjastaCommand.DELETE_BOOKING
+            state = AjastaState.NONE
+            workMode = AjastaWorkMode.STUB
+            stubCase = AjastaStubs.SUCCESS
             bookingRequest = AjastaBooking(
                 id = AjastaBookingId("booking-123")
             )
-        )
+        }
         processor.exec(ctx)
         assertEquals(AjastaState.FINISHING, ctx.state)
         assertEquals(AjastaBookingStatus.CANCELLED, ctx.bookingResponse.bookingStatus)
@@ -109,12 +109,12 @@ class BookingStubTest {
 
     @Test
     fun deleteBookingError() = runTest {
-        val ctx = AjastaContext(
-            command = AjastaCommand.DELETE_BOOKING,
-            state = AjastaState.NONE,
-            workMode = AjastaWorkMode.STUB,
+        val ctx = BizContext().apply {
+            command = AjastaCommand.DELETE_BOOKING
+            state = AjastaState.NONE
+            workMode = AjastaWorkMode.STUB
             stubCase = AjastaStubs.DELETE_ERROR
-        )
+        }
         processor.exec(ctx)
         assertEquals(AjastaState.FAILING, ctx.state)
         assertTrue(ctx.errors.any { it.code == "delete-error" })
@@ -122,13 +122,13 @@ class BookingStubTest {
 
     @Test
     fun searchBookingsSuccess() = runTest {
-        val ctx = AjastaContext(
-            command = AjastaCommand.SEARCH_BOOKINGS,
-            state = AjastaState.NONE,
-            workMode = AjastaWorkMode.STUB,
-            stubCase = AjastaStubs.SUCCESS,
+        val ctx = BizContext().apply {
+            command = AjastaCommand.SEARCH_BOOKINGS
+            state = AjastaState.NONE
+            workMode = AjastaWorkMode.STUB
+            stubCase = AjastaStubs.SUCCESS
             bookingFilterRequest = AjastaBookingFilter()
-        )
+        }
         processor.exec(ctx)
         assertEquals(AjastaState.FINISHING, ctx.state)
         assertTrue(ctx.bookingsResponse.isNotEmpty())
@@ -136,12 +136,12 @@ class BookingStubTest {
 
     @Test
     fun searchBookingsError() = runTest {
-        val ctx = AjastaContext(
-            command = AjastaCommand.SEARCH_BOOKINGS,
-            state = AjastaState.NONE,
-            workMode = AjastaWorkMode.STUB,
+        val ctx = BizContext().apply {
+            command = AjastaCommand.SEARCH_BOOKINGS
+            state = AjastaState.NONE
+            workMode = AjastaWorkMode.STUB
             stubCase = AjastaStubs.SEARCH_ERROR
-        )
+        }
         processor.exec(ctx)
         assertEquals(AjastaState.FAILING, ctx.state)
         assertTrue(ctx.errors.any { it.code == "search-error" })

@@ -32,6 +32,12 @@ include(":ajasta-stubs")
 // Business Logic Module
 include(":ajasta-biz")
 
+// Repository Modules
+include(":ajasta-repo-common")
+include(":ajasta-repo-inmemory")
+include(":ajasta-repo-tests")
+include(":ajasta-repo-pgjvm")
+
 // App Modules
 include(":ajasta-app-common")
 include(":ajasta-app-spring")

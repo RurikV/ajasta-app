@@ -1,6 +1,6 @@
 package top.ajasta.app.common
 
-import top.ajasta.common.AjastaContext
+import top.ajasta.biz.BizContext
 import top.ajasta.common.models.*
 import top.ajasta.stubs.AjastaBookingStubs
 import top.ajasta.stubs.AjastaResourceStubs
@@ -10,14 +10,14 @@ import top.ajasta.stubs.AjastaResourceStubs
  */
 class AjastaStubProcessor : AjastaProcessor {
 
-    override suspend fun exec(ctx: AjastaContext) {
+    override suspend fun exec(ctx: BizContext) {
         when (ctx.workMode) {
             AjastaWorkMode.STUB -> processStub(ctx)
             else -> processStub(ctx) // For now, all modes use stubs
         }
     }
 
-    private fun processStub(ctx: AjastaContext) {
+    private fun processStub(ctx: BizContext) {
         when (ctx.stubCase) {
             AjastaStubs.SUCCESS -> processSuccess(ctx)
             AjastaStubs.NOT_FOUND -> processNotFound(ctx)
@@ -28,7 +28,7 @@ class AjastaStubProcessor : AjastaProcessor {
         }
     }
 
-    private fun processSuccess(ctx: AjastaContext) {
+    private fun processSuccess(ctx: BizContext) {
         when (ctx.command) {
             AjastaCommand.CREATE_BOOKING -> {
                 ctx.bookingResponse = AjastaBookingStubs.BOOKING_TENNIS
@@ -136,22 +136,22 @@ class AjastaStubProcessor : AjastaProcessor {
         }
     }
 
-    private fun processNotFound(ctx: AjastaContext) {
+    private fun processNotFound(ctx: BizContext) {
         ctx.state = AjastaState.FAILING
         ctx.errors.add(AjastaError(code = "not-found", group = "stub", message = "Not found"))
     }
 
-    private fun processValidationError(ctx: AjastaContext) {
+    private fun processValidationError(ctx: BizContext) {
         ctx.state = AjastaState.FAILING
         ctx.errors.add(AjastaError(code = "validation-error", group = "stub", field = "data", message = "Validation error"))
     }
 
-    private fun processDeleteError(ctx: AjastaContext) {
+    private fun processDeleteError(ctx: BizContext) {
         ctx.state = AjastaState.FAILING
         ctx.errors.add(AjastaError(code = "delete-error", group = "stub", message = "Cannot delete"))
     }
 
-    private fun processSearchError(ctx: AjastaContext) {
+    private fun processSearchError(ctx: BizContext) {
         ctx.state = AjastaState.FAILING
         ctx.errors.add(AjastaError(code = "search-error", group = "stub", message = "Search failed"))
     }

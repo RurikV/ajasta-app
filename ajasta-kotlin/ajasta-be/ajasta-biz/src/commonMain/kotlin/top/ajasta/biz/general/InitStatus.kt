@@ -2,10 +2,10 @@ package top.ajasta.biz.general
 
 import top.ajasta.lib.cor.ICorChainDsl
 import top.ajasta.lib.cor.worker
-import top.ajasta.common.AjastaContext
+import top.ajasta.biz.BizContext
 import top.ajasta.common.models.AjastaState
 
-fun ICorChainDsl<AjastaContext>.initStatus(title: String) = worker {
+fun ICorChainDsl<BizContext>.initStatus(title: String) = worker {
     this.title = title
     this.description = """
         This handler sets the initial processing status.

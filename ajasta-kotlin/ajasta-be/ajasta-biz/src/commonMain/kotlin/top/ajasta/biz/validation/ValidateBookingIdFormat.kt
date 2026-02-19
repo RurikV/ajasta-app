@@ -2,10 +2,10 @@ package top.ajasta.biz.validation
 
 import top.ajasta.lib.cor.ICorChainDsl
 import top.ajasta.lib.cor.worker
-import top.ajasta.common.AjastaContext
+import top.ajasta.biz.BizContext
 import top.ajasta.common.models.AjastaBookingId
 
-fun ICorChainDsl<AjastaContext>.validateBookingIdFormat(title: String) = worker {
+fun ICorChainDsl<BizContext>.validateBookingIdFormat(title: String) = worker {
     this.title = title
     this.description = "Validates that booking id has proper format"
     val regex = Regex("^[a-zA-Z0-9-]+$")
