@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test
 import top.ajasta.api.v1.apiV1Mapper
 import top.ajasta.api.v1.models.*
 import top.ajasta.app.common.AjastaStubProcessor
-import top.ajasta.common.AjastaContext
+import top.ajasta.biz.BizContext
 import top.ajasta.api.v1.mappers.fromTransport
 import top.ajasta.api.v1.mappers.toTransport
 import kotlin.test.assertEquals
@@ -33,7 +33,7 @@ class AjastaKafkaTest {
             )
         )
 
-        val ctx = AjastaContext()
+        val ctx = BizContext()
         ctx.fromTransport(request)
         processor.exec(ctx)
         val response = ctx.toTransport() as BookingCreateResponse
@@ -47,12 +47,12 @@ class AjastaKafkaTest {
     fun `process resource search request through context`() = runBlocking {
         val request = ResourceSearchRequest(
             requestType = "searchResources",
-            filter = ResourceFilter(
+            resourceFilter = ResourceFilter(
                 type = ResourceType.TURF_COURT
             )
         )
 
-        val ctx = AjastaContext()
+        val ctx = BizContext()
         ctx.fromTransport(request)
         processor.exec(ctx)
         val response = ctx.toTransport() as ResourceSearchResponse

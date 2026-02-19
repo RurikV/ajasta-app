@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test
 import top.ajasta.api.v1.apiV1Mapper
 import top.ajasta.api.v1.models.*
 import top.ajasta.app.common.AjastaStubProcessor
-import top.ajasta.common.AjastaContext
+import top.ajasta.biz.BizContext
 import top.ajasta.api.v1.mappers.fromTransport
 import top.ajasta.api.v1.mappers.toTransport
 import kotlin.test.assertEquals
@@ -92,14 +92,12 @@ class AjastaKafkaConsumerTest {
                     name = "Volleyball Court",
                     type = ResourceType.VOLLEYBALL_COURT
                 )
-            ),
-            total = 2
+            )
         )
 
         val json = apiV1Mapper.writeValueAsString(response)
 
         assertTrue(json.contains("\"responseType\":\"searchResources\""))
-        assertTrue(json.contains("\"total\":2"))
     }
 
     @Test
@@ -119,7 +117,7 @@ class AjastaKafkaConsumerTest {
             )
         )
 
-        val ctx = AjastaContext()
+        val ctx = BizContext()
         ctx.fromTransport(request)
         processor.exec(ctx)
         val response = ctx.toTransport() as BookingCreateResponse
@@ -133,12 +131,12 @@ class AjastaKafkaConsumerTest {
     fun `process resource search end to end`() = runBlocking {
         val request = ResourceSearchRequest(
             requestType = "searchResources",
-            filter = ResourceFilter(
+            resourceFilter = ResourceFilter(
                 type = ResourceType.TURF_COURT
             )
         )
 
-        val ctx = AjastaContext()
+        val ctx = BizContext()
         ctx.fromTransport(request)
         processor.exec(ctx)
         val response = ctx.toTransport() as ResourceSearchResponse

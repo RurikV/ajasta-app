@@ -48,7 +48,9 @@ class ResourceControllerV1Test {
         val request = ResourceReadRequest(
             requestType = "readResource",
             debug = stubDebug,
-            resourceId = "resource-001"
+            resource = ResourceReadObject(
+                id = "resource-001"
+            )
         )
 
         webTestClient.post()
@@ -88,7 +90,9 @@ class ResourceControllerV1Test {
         val request = ResourceDeleteRequest(
             requestType = "deleteResource",
             debug = stubDebug,
-            resourceId = "resource-001"
+            resource = ResourceDeleteObject(
+                id = "resource-001"
+            )
         )
 
         webTestClient.post()
@@ -99,7 +103,7 @@ class ResourceControllerV1Test {
             .expectStatus().isOk
             .expectBody()
             .jsonPath("$.responseType").isEqualTo("deleteResource")
-            .jsonPath("$.deleted").isEqualTo(true)
+            .jsonPath("$.resource.id").exists()
     }
 
     @Test
@@ -107,7 +111,7 @@ class ResourceControllerV1Test {
         val request = ResourceSearchRequest(
             requestType = "searchResources",
             debug = stubDebug,
-            filter = ResourceFilter(
+            resourceFilter = ResourceFilter(
                 type = ResourceType.TURF_COURT
             )
         )

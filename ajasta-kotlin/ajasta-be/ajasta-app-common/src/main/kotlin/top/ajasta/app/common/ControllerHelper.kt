@@ -3,7 +3,6 @@ package top.ajasta.app.common
 import kotlinx.datetime.Clock
 import org.slf4j.LoggerFactory
 import top.ajasta.api.v1.models.Error
-import top.ajasta.api.v1.models.ErrorResponse
 import top.ajasta.biz.BizContext
 import top.ajasta.common.models.AjastaCommand
 import top.ajasta.common.models.AjastaError
