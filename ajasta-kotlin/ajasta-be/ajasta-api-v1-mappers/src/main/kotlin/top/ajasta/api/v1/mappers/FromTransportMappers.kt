@@ -7,8 +7,9 @@ import top.ajasta.common.models.*
 /**
  * Extension function to map transport request to context.
  * Entry point for all request mapping.
+ * Uses IRequest interface for proper POSTful polymorphic handling.
  */
-fun AjastaContext.fromTransport(request: Any) = when (request) {
+fun AjastaContext.fromTransport(request: IRequest): Unit = when (request) {
     is BookingCreateRequest -> fromTransport(request)
     is BookingReadRequest -> fromTransport(request)
     is BookingUpdateRequest -> fromTransport(request)
@@ -20,7 +21,8 @@ fun AjastaContext.fromTransport(request: Any) = when (request) {
     is ResourceDeleteRequest -> fromTransport(request)
     is ResourceSearchRequest -> fromTransport(request)
     is AvailabilityRequest -> fromTransport(request)
-    else -> throw IllegalArgumentException("Unknown request type: ${request::class}")
+    // Fallback for any future IRequest implementations
+    else -> throw IllegalArgumentException("Unsupported request type: ${request::class}")
 }
 
 // === Booking Mappers ===

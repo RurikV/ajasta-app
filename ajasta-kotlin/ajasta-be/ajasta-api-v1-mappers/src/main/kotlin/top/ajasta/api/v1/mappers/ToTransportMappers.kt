@@ -7,8 +7,9 @@ import top.ajasta.common.models.*
 /**
  * Extension function to map context to transport response.
  * Entry point for all response mapping.
+ * Returns IResponse interface for proper POSTful polymorphic handling.
  */
-fun AjastaContext.toTransport(): Any = when (command) {
+fun AjastaContext.toTransport(): IResponse = when (command) {
     AjastaCommand.CREATE_BOOKING -> toTransportCreateBooking()
     AjastaCommand.READ_BOOKING -> toTransportReadBooking()
     AjastaCommand.UPDATE_BOOKING -> toTransportUpdateBooking()
