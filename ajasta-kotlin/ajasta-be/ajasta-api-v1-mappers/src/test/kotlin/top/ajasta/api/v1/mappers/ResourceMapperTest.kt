@@ -88,7 +88,9 @@ class ResourceMapperTest {
     fun `should map ResourceReadRequest to context`() {
         val request = ResourceReadRequest(
             requestId = "req-123",
-            resourceId = "resource-456",
+            resource = ResourceReadObject(
+                id = "resource-456"
+            ),
             debug = Debug(mode = RequestDebugMode.PROD)
         )
 
@@ -173,8 +175,10 @@ class ResourceMapperTest {
     fun `should map ResourceDeleteRequest to context`() {
         val request = ResourceDeleteRequest(
             requestId = "req-123",
-            resourceId = "resource-999",
-            lock = "lock-v1"
+            resource = ResourceDeleteObject(
+                id = "resource-999",
+                lock = "lock-v1"
+            )
         )
 
         val context = AjastaContext()
@@ -198,8 +202,7 @@ class ResourceMapperTest {
         val response = context.toTransport() as ResourceDeleteResponse
 
         assertEquals("deleteResource", response.responseType)
-        assertEquals("resource-999", response.resourceId)
-        assertTrue(response.deleted == true)
+        assertEquals("resource-999", response.resource?.id)
     }
 
     // === Search Resources Tests ===
@@ -208,7 +211,7 @@ class ResourceMapperTest {
     fun `should map ResourceSearchRequest to context`() {
         val request = ResourceSearchRequest(
             requestId = "req-123",
-            filter = ResourceFilter(
+            resourceFilter = ResourceFilter(
                 type = ResourceType.TURF_COURT,
                 location = "Sports Complex",
                 minPrice = 20.0,
@@ -252,17 +255,13 @@ class ResourceMapperTest {
                     pricePerSlot = 35.0,
                     rating = 4.7
                 )
-            ),
-            total = 2,
-            page = 1,
-            pageSize = 10
+            )
         )
 
         val response = context.toTransport() as ResourceSearchResponse
 
         assertEquals("searchResources", response.responseType)
         assertEquals(2, response.resources?.size)
-        assertEquals(2, response.total)
         assertEquals("Tennis Court A", response.resources?.get(0)?.name)
         assertEquals("Tennis Court B", response.resources?.get(1)?.name)
     }

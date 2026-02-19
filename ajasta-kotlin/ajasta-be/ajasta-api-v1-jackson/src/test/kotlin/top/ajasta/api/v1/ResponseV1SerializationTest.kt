@@ -109,18 +109,18 @@ class ResponseV1SerializationTest {
 
     private val bookingDeleteResponse = BookingDeleteResponse(
         responseType = "deleteBooking",
-        bookingId = "booking-999",
-        cancelled = true,
-        refundAmount = 25.0
+        booking = BookingObject(
+            id = "booking-999",
+            bookingStatus = BookingStatus.CANCELLED
+        )
     )
 
     @Test
     fun serializeBookingDeleteResponse() {
         val json = apiV1Mapper.writeValueAsString(bookingDeleteResponse)
 
-        assertContains(json, Regex("\"bookingId\":\\s*\"booking-999\""))
-        assertContains(json, Regex("\"cancelled\":\\s*true"))
-        assertContains(json, Regex("\"refundAmount\":\\s*25\\.0"))
+        assertContains(json, Regex("\"id\":\\s*\"booking-999\""))
+        assertContains(json, Regex("\"bookingStatus\":\\s*\"CANCELLED\""))
         assertContains(json, Regex("\"responseType\":\\s*\"deleteBooking\""))
     }
 
@@ -147,18 +147,13 @@ class ResponseV1SerializationTest {
                 title = "Evening Session",
                 bookingStatus = BookingStatus.PENDING
             )
-        ),
-        total = 2,
-        page = 1,
-        pageSize = 20
+        )
     )
 
     @Test
     fun serializeBookingSearchResponse() {
         val json = apiV1Mapper.writeValueAsString(bookingSearchResponse)
 
-        assertContains(json, Regex("\"total\":\\s*2"))
-        assertContains(json, Regex("\"page\":\\s*1"))
         assertContains(json, Regex("\"responseType\":\\s*\"searchBookings\""))
     }
 
@@ -269,16 +264,16 @@ class ResponseV1SerializationTest {
 
     private val resourceDeleteResponse = ResourceDeleteResponse(
         responseType = "deleteResource",
-        resourceId = "resource-999",
-        deleted = true
+        resource = ResourceObject(
+            id = "resource-999"
+        )
     )
 
     @Test
     fun serializeResourceDeleteResponse() {
         val json = apiV1Mapper.writeValueAsString(resourceDeleteResponse)
 
-        assertContains(json, Regex("\"resourceId\":\\s*\"resource-999\""))
-        assertContains(json, Regex("\"deleted\":\\s*true"))
+        assertContains(json, Regex("\"id\":\\s*\"resource-999\""))
         assertContains(json, Regex("\"responseType\":\\s*\"deleteResource\""))
     }
 
@@ -307,18 +302,13 @@ class ResponseV1SerializationTest {
                 pricePerSlot = 35.0,
                 rating = 4.7
             )
-        ),
-        total = 2,
-        page = 1,
-        pageSize = 10
+        )
     )
 
     @Test
     fun serializeResourceSearchResponse() {
         val json = apiV1Mapper.writeValueAsString(resourceSearchResponse)
 
-        assertContains(json, Regex("\"total\":\\s*2"))
-        assertContains(json, Regex("\"page\":\\s*1"))
         assertContains(json, Regex("\"responseType\":\\s*\"searchResources\""))
     }
 

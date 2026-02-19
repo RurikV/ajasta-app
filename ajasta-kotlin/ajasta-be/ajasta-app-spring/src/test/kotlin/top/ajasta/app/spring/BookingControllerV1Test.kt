@@ -55,7 +55,9 @@ class BookingControllerV1Test {
         val request = BookingReadRequest(
             requestType = "readBooking",
             debug = stubDebug,
-            bookingId = "booking-001"
+            booking = BookingReadObject(
+                id = "booking-001"
+            )
         )
 
         webTestClient.post()
@@ -95,7 +97,9 @@ class BookingControllerV1Test {
         val request = BookingDeleteRequest(
             requestType = "deleteBooking",
             debug = stubDebug,
-            bookingId = "booking-001"
+            booking = BookingDeleteObject(
+                id = "booking-001"
+            )
         )
 
         webTestClient.post()
@@ -106,7 +110,7 @@ class BookingControllerV1Test {
             .expectStatus().isOk
             .expectBody()
             .jsonPath("$.responseType").isEqualTo("deleteBooking")
-            .jsonPath("$.cancelled").isEqualTo(true)
+            .jsonPath("$.booking.id").exists()
     }
 
     @Test
@@ -114,7 +118,7 @@ class BookingControllerV1Test {
         val request = BookingSearchRequest(
             requestType = "searchBookings",
             debug = stubDebug,
-            filter = BookingFilter(
+            bookingFilter = BookingFilter(
                 resourceId = "resource-tennis-001"
             )
         )

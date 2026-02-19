@@ -50,14 +50,16 @@ class RequestV1SerializationTest {
     private val bookingReadRequest = BookingReadRequest(
         requestType = "readBooking",
         debug = Debug(mode = RequestDebugMode.PROD),
-        bookingId = "booking-456"
+        booking = BookingReadObject(
+            id = "booking-456"
+        )
     )
 
     @Test
     fun serializeBookingReadRequest() {
         val json = apiV1Mapper.writeValueAsString(bookingReadRequest)
 
-        assertContains(json, Regex("\"bookingId\":\\s*\"booking-456\""))
+        assertContains(json, Regex("\"id\":\\s*\"booking-456\""))
         assertContains(json, Regex("\"requestType\":\\s*\"readBooking\""))
     }
 
@@ -99,15 +101,17 @@ class RequestV1SerializationTest {
     private val bookingDeleteRequest = BookingDeleteRequest(
         requestType = "deleteBooking",
         debug = Debug(mode = RequestDebugMode.PROD),
-        bookingId = "booking-999",
-        lock = "lock-version-2"
+        booking = BookingDeleteObject(
+            id = "booking-999",
+            lock = "lock-version-2"
+        )
     )
 
     @Test
     fun serializeBookingDeleteRequest() {
         val json = apiV1Mapper.writeValueAsString(bookingDeleteRequest)
 
-        assertContains(json, Regex("\"bookingId\":\\s*\"booking-999\""))
+        assertContains(json, Regex("\"id\":\\s*\"booking-999\""))
         assertContains(json, Regex("\"requestType\":\\s*\"deleteBooking\""))
     }
 
@@ -122,7 +126,7 @@ class RequestV1SerializationTest {
     private val bookingSearchRequest = BookingSearchRequest(
         requestType = "searchBookings",
         debug = Debug(mode = RequestDebugMode.PROD),
-        filter = BookingFilter(
+        bookingFilter = BookingFilter(
             resourceId = "resource-123",
             status = BookingStatus.CONFIRMED,
             dateFrom = "2025-03-01T00:00:00Z",
@@ -190,14 +194,16 @@ class RequestV1SerializationTest {
     private val resourceReadRequest = ResourceReadRequest(
         requestType = "readResource",
         debug = Debug(mode = RequestDebugMode.PROD),
-        resourceId = "resource-123"
+        resource = ResourceReadObject(
+            id = "resource-123"
+        )
     )
 
     @Test
     fun serializeResourceReadRequest() {
         val json = apiV1Mapper.writeValueAsString(resourceReadRequest)
 
-        assertContains(json, Regex("\"resourceId\":\\s*\"resource-123\""))
+        assertContains(json, Regex("\"id\":\\s*\"resource-123\""))
         assertContains(json, Regex("\"requestType\":\\s*\"readResource\""))
     }
 
@@ -240,15 +246,17 @@ class RequestV1SerializationTest {
     private val resourceDeleteRequest = ResourceDeleteRequest(
         requestType = "deleteResource",
         debug = Debug(mode = RequestDebugMode.PROD),
-        resourceId = "resource-789",
-        lock = "lock-version-2"
+        resource = ResourceDeleteObject(
+            id = "resource-789",
+            lock = "lock-version-2"
+        )
     )
 
     @Test
     fun serializeResourceDeleteRequest() {
         val json = apiV1Mapper.writeValueAsString(resourceDeleteRequest)
 
-        assertContains(json, Regex("\"resourceId\":\\s*\"resource-789\""))
+        assertContains(json, Regex("\"id\":\\s*\"resource-789\""))
         assertContains(json, Regex("\"requestType\":\\s*\"deleteResource\""))
     }
 
@@ -263,7 +271,7 @@ class RequestV1SerializationTest {
     private val resourceSearchRequest = ResourceSearchRequest(
         requestType = "searchResources",
         debug = Debug(mode = RequestDebugMode.PROD),
-        filter = ResourceFilter(
+        resourceFilter = ResourceFilter(
             type = ResourceType.TURF_COURT,
             location = "Sports Complex",
             minPrice = 20.0,

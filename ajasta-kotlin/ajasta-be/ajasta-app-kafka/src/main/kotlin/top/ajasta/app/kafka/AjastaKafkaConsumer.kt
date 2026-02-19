@@ -16,7 +16,7 @@ import top.ajasta.api.v1.mappers.toTransport
 import top.ajasta.api.v1.models.*
 import top.ajasta.app.common.AjastaStubProcessor
 import top.ajasta.app.common.IAjastaAppSettings
-import top.ajasta.common.AjastaContext
+import top.ajasta.biz.BizContext
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -95,7 +95,7 @@ class AjastaKafkaConsumer(
     }
 
     private suspend fun processRequest(request: Any): Any {
-        val ctx = AjastaContext()
+        val ctx = BizContext()
         ctx.fromTransport(request)
         processor.exec(ctx)
         return ctx.toTransport()

@@ -37,7 +37,7 @@ fun AjastaContext.fromTransport(request: BookingReadRequest) {
     command = AjastaCommand.READ_BOOKING
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
     bookingRequest = AjastaBooking(
-        id = request.bookingId?.let { AjastaBookingId(it) } ?: AjastaBookingId.NONE
+        id = request.booking?.id?.let { AjastaBookingId(it) } ?: AjastaBookingId.NONE
     )
     workMode = request.debug.toWorkMode()
     stubCase = request.debug.toStubCase()
@@ -55,8 +55,8 @@ fun AjastaContext.fromTransport(request: BookingDeleteRequest) {
     command = AjastaCommand.DELETE_BOOKING
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
     bookingRequest = AjastaBooking(
-        id = request.bookingId?.let { AjastaBookingId(it) } ?: AjastaBookingId.NONE,
-        lock = request.lock?.let { AjastaLock(it) } ?: AjastaLock.NONE
+        id = request.booking?.id?.let { AjastaBookingId(it) } ?: AjastaBookingId.NONE,
+        lock = request.booking?.lock?.let { AjastaLock(it) } ?: AjastaLock.NONE
     )
     workMode = request.debug.toWorkMode()
     stubCase = request.debug.toStubCase()
@@ -65,7 +65,7 @@ fun AjastaContext.fromTransport(request: BookingDeleteRequest) {
 fun AjastaContext.fromTransport(request: BookingSearchRequest) {
     command = AjastaCommand.SEARCH_BOOKINGS
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
-    bookingFilterRequest = request.filter?.toInternal() ?: AjastaBookingFilter()
+    bookingFilterRequest = request.bookingFilter?.toInternal() ?: AjastaBookingFilter()
     page = request.page ?: 1
     pageSize = request.pageSize ?: 20
     workMode = request.debug.toWorkMode()
@@ -86,7 +86,7 @@ fun AjastaContext.fromTransport(request: ResourceReadRequest) {
     command = AjastaCommand.READ_RESOURCE
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
     resourceRequest = AjastaResource(
-        id = request.resourceId?.let { AjastaResourceId(it) } ?: AjastaResourceId.NONE
+        id = request.resource?.id?.let { AjastaResourceId(it) } ?: AjastaResourceId.NONE
     )
     workMode = request.debug.toWorkMode()
     stubCase = request.debug.toStubCase()
@@ -104,8 +104,8 @@ fun AjastaContext.fromTransport(request: ResourceDeleteRequest) {
     command = AjastaCommand.DELETE_RESOURCE
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
     resourceRequest = AjastaResource(
-        id = request.resourceId?.let { AjastaResourceId(it) } ?: AjastaResourceId.NONE,
-        lock = request.lock?.let { AjastaLock(it) } ?: AjastaLock.NONE
+        id = request.resource?.id?.let { AjastaResourceId(it) } ?: AjastaResourceId.NONE,
+        lock = request.resource?.lock?.let { AjastaLock(it) } ?: AjastaLock.NONE
     )
     workMode = request.debug.toWorkMode()
     stubCase = request.debug.toStubCase()
@@ -114,7 +114,7 @@ fun AjastaContext.fromTransport(request: ResourceDeleteRequest) {
 fun AjastaContext.fromTransport(request: ResourceSearchRequest) {
     command = AjastaCommand.SEARCH_RESOURCES
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
-    resourceFilterRequest = request.filter?.toInternal() ?: AjastaResourceFilter()
+    resourceFilterRequest = request.resourceFilter?.toInternal() ?: AjastaResourceFilter()
     page = request.page ?: 1
     pageSize = request.pageSize ?: 20
     workMode = request.debug.toWorkMode()
