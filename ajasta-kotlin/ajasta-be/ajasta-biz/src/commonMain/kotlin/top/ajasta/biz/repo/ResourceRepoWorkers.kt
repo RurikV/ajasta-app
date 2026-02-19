@@ -81,7 +81,7 @@ fun ICorChainDsl<BizContext>.repoResourceDelete(title: String) = worker {
 
 fun ICorChainDsl<BizContext>.repoResourceSearch(title: String) = worker {
     this.title = title
-    description = "Searching resources in DB"
+    description = "Searching resources in DB with pagination"
     on { state == AjastaState.RUNNING }
     handle {
         val request = DbResourceFilterRequest(
@@ -90,12 +90,15 @@ fun ICorChainDsl<BizContext>.repoResourceSearch(title: String) = worker {
             minPrice = resourceFilterValidated.minPrice,
             maxPrice = resourceFilterValidated.maxPrice,
             minRating = resourceFilterValidated.minRating,
-            ownerId = resourceFilterValidated.ownerId
+            ownerId = resourceFilterValidated.ownerId,
+            page = page,
+            pageSize = pageSize
         )
         when (val result = repoResource.searchResources(request)) {
             is IDbResourcesResponse.Ok -> {
                 resourcesRepoDone.clear()
                 resourcesRepoDone.addAll(result.data)
+                total = result.total
             }
             is IDbResourcesResponse.Err -> fail(result.errors)
         }

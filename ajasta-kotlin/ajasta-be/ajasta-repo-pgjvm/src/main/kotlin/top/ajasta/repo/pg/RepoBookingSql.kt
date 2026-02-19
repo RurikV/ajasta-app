@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.transaction
+import top.ajasta.common.PaginationDefaults
 import top.ajasta.common.models.*
 import top.ajasta.repo.*
 
@@ -154,7 +155,7 @@ class RepoBookingSql(
 
     override suspend fun searchBookings(rq: DbBookingFilterRequest): IDbBookingsResponse =
         transactionWrapper({
-            val res = bookingTable.selectAll().where {
+            val allResults = bookingTable.selectAll().where {
                 buildList {
                     add(Op.TRUE)
                     if (rq.resourceId != AjastaResourceId.NONE) {
@@ -167,8 +168,17 @@ class RepoBookingSql(
                         add(bookingTable.status eq rq.status.name)
                     }
                 }.reduce { a, b -> a and b }
-            }
-            IDbBookingsResponse.Ok(data = res.map { bookingTable.from(it) })
+            }.toList()
+
+            val total = allResults.size
+            val pageSize = rq.pageSize.coerceAtMost(PaginationDefaults.MAX_PAGE_SIZE)
+            val offset = (rq.page - 1) * pageSize
+            val paginatedResults = allResults
+                .drop(offset)
+                .take(pageSize)
+                .map { bookingTable.from(it) }
+
+            IDbBookingsResponse.Ok(data = paginatedResults, total = total)
         }, {
             IDbBookingsResponse.Err(listOf(errorFromException(it)))
         })

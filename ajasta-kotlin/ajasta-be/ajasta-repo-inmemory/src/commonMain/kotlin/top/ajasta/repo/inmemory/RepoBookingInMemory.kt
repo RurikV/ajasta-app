@@ -2,6 +2,7 @@ package top.ajasta.repo.inmemory
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import top.ajasta.common.PaginationDefaults
 import top.ajasta.common.models.*
 import top.ajasta.repo.*
 
@@ -109,12 +110,18 @@ class RepoBookingInMemory(
 
     override suspend fun searchBookings(rq: DbBookingFilterRequest): IDbBookingsResponse {
         return mutex.withLock {
-            val results = bookings.values.filter { booking ->
+            val allResults = bookings.values.filter { booking ->
                 (rq.resourceId == AjastaResourceId.NONE || booking.resourceId == rq.resourceId) &&
                 (rq.userId == AjastaUserId.NONE || booking.userId == rq.userId) &&
                 (rq.status == AjastaBookingStatus.NONE || booking.bookingStatus == rq.status)
             }
-            IDbBookingsResponse.Ok(results)
+            val total = allResults.size
+            val pageSize = rq.pageSize.coerceAtMost(PaginationDefaults.MAX_PAGE_SIZE)
+            val offset = (rq.page - 1) * pageSize
+            val paginatedResults = allResults
+                .drop(offset)
+                .take(pageSize)
+            IDbBookingsResponse.Ok(data = paginatedResults, total = total)
         }
     }
 

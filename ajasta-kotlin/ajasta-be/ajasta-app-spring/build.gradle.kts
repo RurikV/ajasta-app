@@ -27,6 +27,8 @@ dependencies {
     implementation(project(":ajasta-api-v1-mappers"))
     implementation(project(":ajasta-stubs"))
     implementation(project(":ajasta-biz"))
+    implementation(project(":ajasta-repo-common"))
+    implementation(project(":ajasta-repo-inmemory"))
 
     // Logging
     implementation(libs.logback.classic)

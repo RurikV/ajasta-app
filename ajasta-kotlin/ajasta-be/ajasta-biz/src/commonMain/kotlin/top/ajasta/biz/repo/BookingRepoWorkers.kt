@@ -81,7 +81,7 @@ fun ICorChainDsl<BizContext>.repoBookingDelete(title: String) = worker {
 
 fun ICorChainDsl<BizContext>.repoBookingSearch(title: String) = worker {
     this.title = title
-    description = "Searching bookings in DB"
+    description = "Searching bookings in DB with pagination"
     on { state == AjastaState.RUNNING }
     handle {
         val request = DbBookingFilterRequest(
@@ -89,12 +89,15 @@ fun ICorChainDsl<BizContext>.repoBookingSearch(title: String) = worker {
             userId = bookingFilterValidated.userId,
             status = bookingFilterValidated.status,
             dateFrom = bookingFilterValidated.dateFrom,
-            dateTo = bookingFilterValidated.dateTo
+            dateTo = bookingFilterValidated.dateTo,
+            page = page,
+            pageSize = pageSize
         )
         when (val result = repoBooking.searchBookings(request)) {
             is IDbBookingsResponse.Ok -> {
                 bookingsRepoDone.clear()
                 bookingsRepoDone.addAll(result.data)
+                total = result.total
             }
             is IDbBookingsResponse.Err -> fail(result.errors)
         }

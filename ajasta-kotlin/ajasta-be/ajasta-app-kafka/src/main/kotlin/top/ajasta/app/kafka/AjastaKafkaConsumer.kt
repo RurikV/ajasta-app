@@ -13,15 +13,21 @@ import org.slf4j.LoggerFactory
 import top.ajasta.api.v1.apiV1Mapper
 import top.ajasta.api.v1.mappers.fromTransport
 import top.ajasta.api.v1.mappers.toTransport
-import top.ajasta.api.v1.models.*
-import top.ajasta.app.common.AjastaStubProcessor
+import top.ajasta.api.v1.models.IRequest
+import top.ajasta.api.v1.models.IResponse
 import top.ajasta.app.common.IAjastaAppSettings
 import top.ajasta.biz.BizContext
+import top.ajasta.repo.IRepoBooking
+import top.ajasta.repo.IRepoResource
+import top.ajasta.repo.inmemory.RepoBookingInMemory
+import top.ajasta.repo.inmemory.RepoResourceInMemory
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Kafka consumer for processing Ajasta requests.
+ * Uses POSTful API with polymorphic IRequest/IResponse interfaces.
+ * Maintains singleton repositories for data persistence across requests.
  */
 class AjastaKafkaConsumer(
     private val config: AjastaKafkaConfig,
@@ -32,6 +38,12 @@ class AjastaKafkaConsumer(
     private val log = LoggerFactory.getLogger(this::class.java)
     private val running = AtomicBoolean(true)
     override val processor = config.processor
+
+    /**
+     * Singleton repositories for data persistence across requests.
+     */
+    private val repoBooking: IRepoBooking = RepoBookingInMemory()
+    private val repoResource: IRepoResource = RepoResourceInMemory()
 
     /**
      * Blocking start of the consumer.
@@ -67,41 +79,33 @@ class AjastaKafkaConsumer(
     private suspend fun processRecord(record: ConsumerRecord<String, String>) {
         log.info("Received message: key=${record.key()}")
 
-        val request = deserialize(record.value())
+        val request = deserializeRequest(record.value())
         val response = processRequest(request)
-        val jsonResponse = serialize(response)
+        val jsonResponse = serializeResponse(response)
 
         sendResponse(record.key(), jsonResponse)
     }
 
-    private fun deserialize(json: String): Any {
-        val tree = apiV1Mapper.readTree(json)
-        val requestType = tree.get("requestType")?.asText()
-
-        return when (requestType) {
-            "createBooking" -> apiV1Mapper.readValue(json, BookingCreateRequest::class.java)
-            "readBooking" -> apiV1Mapper.readValue(json, BookingReadRequest::class.java)
-            "updateBooking" -> apiV1Mapper.readValue(json, BookingUpdateRequest::class.java)
-            "deleteBooking" -> apiV1Mapper.readValue(json, BookingDeleteRequest::class.java)
-            "searchBookings" -> apiV1Mapper.readValue(json, BookingSearchRequest::class.java)
-            "createResource" -> apiV1Mapper.readValue(json, ResourceCreateRequest::class.java)
-            "readResource" -> apiV1Mapper.readValue(json, ResourceReadRequest::class.java)
-            "updateResource" -> apiV1Mapper.readValue(json, ResourceUpdateRequest::class.java)
-            "deleteResource" -> apiV1Mapper.readValue(json, ResourceDeleteRequest::class.java)
-            "searchResources" -> apiV1Mapper.readValue(json, ResourceSearchRequest::class.java)
-            "getAvailability" -> apiV1Mapper.readValue(json, AvailabilityRequest::class.java)
-            else -> throw IllegalArgumentException("Unknown request type: $requestType")
-        }
+    /**
+     * Deserializes JSON to IRequest using Jackson's polymorphic type handling.
+     * The requestType field determines the concrete class instantiated.
+     */
+    private fun deserializeRequest(json: String): IRequest {
+        return apiV1Mapper.readValue(json, IRequest::class.java)
     }
 
-    private suspend fun processRequest(request: Any): Any {
-        val ctx = BizContext()
+    private suspend fun processRequest(request: IRequest): IResponse {
+        val ctx = BizContext().apply {
+            // Use singleton repositories (shared across all requests)
+            this.repoBooking = this@AjastaKafkaConsumer.repoBooking
+            this.repoResource = this@AjastaKafkaConsumer.repoResource
+        }
         ctx.fromTransport(request)
         processor.exec(ctx)
         return ctx.toTransport()
     }
 
-    private fun serialize(response: Any): String {
+    private fun serializeResponse(response: IResponse): String {
         return apiV1Mapper.writeValueAsString(response)
     }
 

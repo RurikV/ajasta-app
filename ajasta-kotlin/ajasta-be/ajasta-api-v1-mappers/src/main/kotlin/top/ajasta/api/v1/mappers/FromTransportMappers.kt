@@ -2,13 +2,15 @@ package top.ajasta.api.v1.mappers
 
 import top.ajasta.api.v1.models.*
 import top.ajasta.common.AjastaContext
+import top.ajasta.common.PaginationDefaults
 import top.ajasta.common.models.*
 
 /**
  * Extension function to map transport request to context.
  * Entry point for all request mapping.
+ * Uses IRequest interface for proper POSTful polymorphic handling.
  */
-fun AjastaContext.fromTransport(request: Any) = when (request) {
+fun AjastaContext.fromTransport(request: IRequest): Unit = when (request) {
     is BookingCreateRequest -> fromTransport(request)
     is BookingReadRequest -> fromTransport(request)
     is BookingUpdateRequest -> fromTransport(request)
@@ -20,7 +22,8 @@ fun AjastaContext.fromTransport(request: Any) = when (request) {
     is ResourceDeleteRequest -> fromTransport(request)
     is ResourceSearchRequest -> fromTransport(request)
     is AvailabilityRequest -> fromTransport(request)
-    else -> throw IllegalArgumentException("Unknown request type: ${request::class}")
+    // Fallback for any future IRequest implementations
+    else -> throw IllegalArgumentException("Unsupported request type: ${request::class}")
 }
 
 // === Booking Mappers ===
@@ -66,8 +69,8 @@ fun AjastaContext.fromTransport(request: BookingSearchRequest) {
     command = AjastaCommand.SEARCH_BOOKINGS
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
     bookingFilterRequest = request.bookingFilter?.toInternal() ?: AjastaBookingFilter()
-    page = request.page ?: 1
-    pageSize = request.pageSize ?: 20
+    page = request.page ?: PaginationDefaults.DEFAULT_PAGE
+    pageSize = request.pageSize ?: PaginationDefaults.DEFAULT_PAGE_SIZE
     workMode = request.debug.toWorkMode()
     stubCase = request.debug.toStubCase()
 }
@@ -115,8 +118,8 @@ fun AjastaContext.fromTransport(request: ResourceSearchRequest) {
     command = AjastaCommand.SEARCH_RESOURCES
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
     resourceFilterRequest = request.resourceFilter?.toInternal() ?: AjastaResourceFilter()
-    page = request.page ?: 1
-    pageSize = request.pageSize ?: 20
+    page = request.page ?: PaginationDefaults.DEFAULT_PAGE
+    pageSize = request.pageSize ?: PaginationDefaults.DEFAULT_PAGE_SIZE
     workMode = request.debug.toWorkMode()
     stubCase = request.debug.toStubCase()
 }

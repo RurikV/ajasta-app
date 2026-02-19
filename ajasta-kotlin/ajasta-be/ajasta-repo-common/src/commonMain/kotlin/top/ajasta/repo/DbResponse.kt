@@ -35,11 +35,14 @@ sealed interface IDbBookingResponse : IDbResponse<AjastaBooking> {
 }
 
 /**
- * Response for multiple bookings operations (search).
+ * Response for multiple bookings operations (search) with pagination support.
  */
 sealed interface IDbBookingsResponse : IDbResponse<List<AjastaBooking>> {
+    val total: Int
+
     data class Ok(
-        override val data: List<AjastaBooking>
+        override val data: List<AjastaBooking>,
+        override val total: Int = data.size
     ) : IDbBookingsResponse {
         override val errors: List<AjastaError> = emptyList()
     }
@@ -48,6 +51,7 @@ sealed interface IDbBookingsResponse : IDbResponse<List<AjastaBooking>> {
         override val errors: List<AjastaError> = emptyList()
     ) : IDbBookingsResponse {
         override val data: List<AjastaBooking> = emptyList()
+        override val total: Int = 0
     }
 }
 
@@ -74,11 +78,14 @@ sealed interface IDbResourceResponse : IDbResponse<AjastaResource> {
 }
 
 /**
- * Response for multiple resources operations (search).
+ * Response for multiple resources operations (search) with pagination support.
  */
 sealed interface IDbResourcesResponse : IDbResponse<List<AjastaResource>> {
+    val total: Int
+
     data class Ok(
-        override val data: List<AjastaResource>
+        override val data: List<AjastaResource>,
+        override val total: Int = data.size
     ) : IDbResourcesResponse {
         override val errors: List<AjastaError> = emptyList()
     }
@@ -87,5 +94,6 @@ sealed interface IDbResourcesResponse : IDbResponse<List<AjastaResource>> {
         override val errors: List<AjastaError> = emptyList()
     ) : IDbResourcesResponse {
         override val data: List<AjastaResource> = emptyList()
+        override val total: Int = 0
     }
 }

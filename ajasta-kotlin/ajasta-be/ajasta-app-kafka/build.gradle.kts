@@ -26,6 +26,8 @@ dependencies {
     implementation(project(":ajasta-api-v1-mappers"))
     implementation(project(":ajasta-stubs"))
     implementation(project(":ajasta-biz"))
+    implementation(project(":ajasta-repo-common"))
+    implementation(project(":ajasta-repo-inmemory"))
 
     testImplementation(kotlin("test-junit5"))
     testImplementation(libs.kotlinx.coroutines.test)
