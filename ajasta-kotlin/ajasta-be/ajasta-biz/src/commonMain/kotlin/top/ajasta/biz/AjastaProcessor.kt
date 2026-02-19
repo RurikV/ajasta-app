@@ -3,6 +3,7 @@ package top.ajasta.biz
 import top.ajasta.biz.general.initStatus
 import top.ajasta.biz.general.operation
 import top.ajasta.biz.general.prepareResult
+import top.ajasta.biz.repo.*
 import top.ajasta.biz.stubs.*
 import top.ajasta.biz.validation.*
 import top.ajasta.common.AjastaContext
@@ -14,9 +15,9 @@ import top.ajasta.lib.cor.worker
 
 class AjastaProcessor {
 
-    suspend fun exec(ctx: AjastaContext) = businessChain.exec(ctx)
+    suspend fun exec(ctx: AjastaContext) = businessChain.exec(ctx as BizContext)
 
-    private val businessChain = rootChain<AjastaContext> {
+    private val businessChain = rootChain<BizContext> {
         initStatus("Initializing status")
 
         // ==================== BOOKING OPERATIONS ====================
@@ -41,6 +42,8 @@ class AjastaProcessor {
                 validateSlotsNotEmpty("Check slots are provided")
                 finishBookingValidation("Complete validation")
             }
+            repoPrepareBookingCreate("Prepare booking for repo")
+            repoBookingCreate("Create booking in DB")
             prepareResult("Prepare response")
         }
 
@@ -58,6 +61,7 @@ class AjastaProcessor {
                 validateBookingIdFormat("Check id format")
                 finishBookingValidation("Complete validation")
             }
+            repoBookingRead("Read booking from DB")
             prepareResult("Prepare response")
         }
 
@@ -80,6 +84,9 @@ class AjastaProcessor {
                 validateBookingDescriptionLength("Check description length")
                 finishBookingValidation("Complete validation")
             }
+            repoBookingRead("Read existing booking for lock")
+            repoPrepareBookingUpdate("Prepare booking for update")
+            repoBookingUpdate("Update booking in DB")
             prepareResult("Prepare response")
         }
 
@@ -97,6 +104,8 @@ class AjastaProcessor {
                 validateBookingIdFormat("Check id format")
                 finishBookingValidation("Complete validation")
             }
+            repoBookingRead("Read existing booking for lock")
+            repoBookingDelete("Delete booking from DB")
             prepareResult("Prepare response")
         }
 
@@ -110,6 +119,7 @@ class AjastaProcessor {
                 worker("Copy fields to bookingFilterValidating") { bookingFilterValidating = bookingFilterRequest }
                 finishBookingFilterValidation("Complete validation")
             }
+            repoBookingSearch("Search bookings in DB")
             prepareResult("Prepare response")
         }
 
@@ -130,6 +140,8 @@ class AjastaProcessor {
                 validateResourcePricePositive("Check price is positive")
                 finishResourceValidation("Complete validation")
             }
+            repoPrepareResourceCreate("Prepare resource for repo")
+            repoResourceCreate("Create resource in DB")
             prepareResult("Prepare response")
         }
 
@@ -145,6 +157,7 @@ class AjastaProcessor {
                 validateResourceIdNotEmpty("Check id is not empty")
                 finishResourceValidation("Complete validation")
             }
+            repoResourceRead("Read resource from DB")
             prepareResult("Prepare response")
         }
 
@@ -166,6 +179,9 @@ class AjastaProcessor {
                 validateResourcePricePositive("Check price is positive")
                 finishResourceValidation("Complete validation")
             }
+            repoResourceRead("Read existing resource for lock")
+            repoPrepareResourceUpdate("Prepare resource for update")
+            repoResourceUpdate("Update resource in DB")
             prepareResult("Prepare response")
         }
 
@@ -181,6 +197,8 @@ class AjastaProcessor {
                 validateResourceIdNotEmpty("Check id is not empty")
                 finishResourceValidation("Complete validation")
             }
+            repoResourceRead("Read existing resource for lock")
+            repoResourceDelete("Delete resource from DB")
             prepareResult("Prepare response")
         }
 
@@ -194,6 +212,7 @@ class AjastaProcessor {
                 worker("Copy fields to resourceFilterValidating") { resourceFilterValidating = resourceFilterRequest }
                 finishResourceFilterValidation("Complete validation")
             }
+            repoResourceSearch("Search resources in DB")
             prepareResult("Prepare response")
         }
 

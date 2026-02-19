@@ -4,24 +4,30 @@ import kotlinx.datetime.Clock
 import org.slf4j.LoggerFactory
 import top.ajasta.api.v1.models.Error
 import top.ajasta.api.v1.models.ErrorResponse
-import top.ajasta.common.AjastaContext
+import top.ajasta.biz.BizContext
 import top.ajasta.common.models.AjastaCommand
 import top.ajasta.common.models.AjastaError
 import top.ajasta.common.models.AjastaState
+import top.ajasta.repo.inmemory.RepoBookingInMemory
+import top.ajasta.repo.inmemory.RepoResourceInMemory
 
 /**
  * Helper function for processing requests in controllers.
  * Handles logging, error handling, and stub processing.
  */
 suspend inline fun <T> IAjastaAppSettings.controllerHelper(
-    crossinline getRequest: suspend AjastaContext.() -> Unit,
-    crossinline toResponse: suspend AjastaContext.() -> T,
+    crossinline getRequest: suspend BizContext.() -> Unit,
+    crossinline toResponse: suspend BizContext.() -> T,
     logId: String,
 ): T {
     val logger = LoggerFactory.getLogger("AjastaController")
-    val ctx = AjastaContext(
+    val ctx = BizContext(
         timeStart = Clock.System.now(),
-    )
+    ).apply {
+        // Initialize repositories (in production, these would be injected)
+        repoBooking = RepoBookingInMemory()
+        repoResource = RepoResourceInMemory()
+    }
     return try {
         ctx.getRequest()
         logger.info("Request $logId started: command=${ctx.command}")

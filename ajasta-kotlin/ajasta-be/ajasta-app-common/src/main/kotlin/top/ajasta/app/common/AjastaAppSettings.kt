@@ -1,6 +1,6 @@
 package top.ajasta.app.common
 
-import top.ajasta.common.AjastaContext
+import top.ajasta.biz.BizContext
 
 /**
  * Interface for application settings.
@@ -14,5 +14,5 @@ interface IAjastaAppSettings {
  * Processor interface for handling business logic.
  */
 interface AjastaProcessor {
-    suspend fun exec(ctx: AjastaContext)
+    suspend fun exec(ctx: BizContext)
 }

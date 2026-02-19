@@ -2,10 +2,10 @@ package top.ajasta.biz.validation
 
 import top.ajasta.lib.cor.ICorChainDsl
 import top.ajasta.lib.cor.worker
-import top.ajasta.common.AjastaContext
+import top.ajasta.biz.BizContext
 import top.ajasta.common.models.AjastaState
 
-fun ICorChainDsl<AjastaContext>.finishResourceValidation(title: String) = worker {
+fun ICorChainDsl<BizContext>.finishResourceValidation(title: String) = worker {
     this.title = title
     on { state == AjastaState.RUNNING }
     handle {
