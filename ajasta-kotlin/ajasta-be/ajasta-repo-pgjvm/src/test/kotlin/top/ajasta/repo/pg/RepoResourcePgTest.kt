@@ -3,11 +3,7 @@ package top.ajasta.repo.pg
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.junit.After
-import org.junit.AfterClass
-import org.junit.Before
-import org.junit.BeforeClass
-import org.junit.Test
+import org.junit.*
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.utility.DockerImageName
 import top.ajasta.common.models.AjastaLock
@@ -25,12 +21,17 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
+/**
+ * Tests for PostgreSQL Resource repository using TestContainers.
+ * These tests require Docker to be running. If Docker is not available, tests will be skipped.
+ */
 class RepoResourcePgTest {
     companion object {
         private val postgresImage = DockerImageName.parse("postgres:15-alpine")
-        private lateinit var container: PostgreSQLContainer<*>
-        private lateinit var sqlProperties: SqlProperties
-        private lateinit var repo: RepoResourceSql
+        private var container: PostgreSQLContainer<*>? = null
+        private var sqlProperties: SqlProperties? = null
+        private var dockerAvailable = false
+        private var repo: RepoResourceSql? = null
 
         private val uuidNew = AjastaResourceId("10000000-0000-0000-0000-000000000001")
         private val lockOld = AjastaLock("20000000-0000-0000-0000-000000000001")
@@ -66,56 +67,63 @@ class RepoResourcePgTest {
         @BeforeClass
         @JvmStatic
         fun startContainer() {
-            container = PostgreSQLContainer(postgresImage)
-                .withDatabaseName("ajasta_test")
-                .withUsername("postgres")
-                .withPassword("test-pass")
-            container.start()
+            try {
+                container = PostgreSQLContainer(postgresImage)
+                    .withDatabaseName("ajasta_test")
+                    .withUsername("postgres")
+                    .withPassword("test-pass")
+                container?.start()
 
-            sqlProperties = SqlProperties(
-                host = container.host,
-                port = container.firstMappedPort,
-                user = container.username,
-                password = container.password,
-                database = container.databaseName,
-                schema = "public",
-                bookingsTable = "bookings",
-                resourcesTable = "resources"
-            )
+                sqlProperties = SqlProperties(
+                    host = container!!.host,
+                    port = container!!.firstMappedPort,
+                    user = container!!.username,
+                    password = container!!.password,
+                    database = container!!.databaseName,
+                    schema = "public",
+                    bookingsTable = "bookings",
+                    resourcesTable = "resources"
+                )
+                dockerAvailable = true
+            } catch (e: Exception) {
+                println("Docker not available, skipping PostgreSQL tests: ${e.message}")
+                dockerAvailable = false
+            }
         }
 
         @AfterClass
         @JvmStatic
         fun stopContainer() {
-            if (::container.isInitialized) {
-                container.stop()
-            }
+            container?.stop()
         }
     }
 
     @Before
     fun setup() {
-        repo = RepoResourceSql(sqlProperties, randomUuid = { uuidNew.asString() })
-        transaction(repo.conn) {
-            SchemaUtils.create(repo.resourceTable)
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
+        repo = RepoResourceSql(sqlProperties!!, randomUuid = { uuidNew.asString() })
+        transaction(repo!!.conn) {
+            SchemaUtils.create(repo!!.resourceTable)
         }
         runBlocking {
-            repo.initResources(initObjects)
+            repo!!.initResources(initObjects)
         }
     }
 
     @After
     fun cleanup() {
+        if (!dockerAvailable || repo == null) return
         runBlocking {
-            repo.clearResources()
+            repo!!.clearResources()
         }
-        transaction(repo.conn) {
-            SchemaUtils.drop(repo.resourceTable)
+        transaction(repo!!.conn) {
+            SchemaUtils.drop(repo!!.resourceTable)
         }
     }
 
     @Test
     fun createSuccess() = runRepoTest {
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
         val createObj = AjastaResource(
             name = "create object",
             description = "create object description",
@@ -125,7 +133,7 @@ class RepoResourcePgTest {
             rating = 4.8,
             ownerId = AjastaUserId("owner-456")
         )
-        val result = repo.createResource(DbResourceRequest(createObj))
+        val result = repo!!.createResource(DbResourceRequest(createObj))
         assertIs<IDbResourceResponse.Ok>(result)
         assertNotEquals(AjastaResourceId.NONE, result.data.id)
         assertEquals(uuidNew.asString(), result.data.lock.asString())
@@ -136,7 +144,8 @@ class RepoResourcePgTest {
 
     @Test
     fun readSuccess() = runRepoTest {
-        val result = repo.readResource(DbResourceIdRequest(initObjects[0].id))
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
+        val result = repo!!.readResource(DbResourceIdRequest(initObjects[0].id))
         assertIs<IDbResourceResponse.Ok>(result)
         assertEquals(initObjects[0].id, result.data.id)
         assertEquals(initObjects[0].name, result.data.name)
@@ -144,14 +153,16 @@ class RepoResourcePgTest {
 
     @Test
     fun readNotFound() = runRepoTest {
-        val result = repo.readResource(DbResourceIdRequest(AjastaResourceId("not-found-id")))
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
+        val result = repo!!.readResource(DbResourceIdRequest(AjastaResourceId("not-found-id")))
         assertIs<IDbResourceResponse.Err>(result)
     }
 
     @Test
     fun updateSuccess() = runRepoTest {
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
         val updateObj = initObjects[1].copy(name = "updated name")
-        val result = repo.updateResource(DbResourceRequest(updateObj))
+        val result = repo!!.updateResource(DbResourceRequest(updateObj))
         assertIs<IDbResourceResponse.Ok>(result)
         assertEquals("updated name", result.data.name)
         assertEquals(lockNew.asString(), result.data.lock.asString())
@@ -159,42 +170,47 @@ class RepoResourcePgTest {
 
     @Test
     fun updateConcurrentModification() = runRepoTest {
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
         val updateObj = initObjects[1].copy(lock = lockBad)
-        val result = repo.updateResource(DbResourceRequest(updateObj))
+        val result = repo!!.updateResource(DbResourceRequest(updateObj))
         assertIs<IDbResourceResponse.ErrWithData>(result)
         assertEquals(initObjects[1].id, result.data.id)
     }
 
     @Test
     fun updateNotFound() = runRepoTest {
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
         val updateObj = AjastaResource(
             id = AjastaResourceId("not-found-id"),
             lock = lockOld,
             name = "not found"
         )
-        val result = repo.updateResource(DbResourceRequest(updateObj))
+        val result = repo!!.updateResource(DbResourceRequest(updateObj))
         assertIs<IDbResourceResponse.Err>(result)
     }
 
     @Test
     fun deleteSuccess() = runRepoTest {
-        val result = repo.deleteResource(DbResourceIdRequest(initObjects[2].id, lockOld))
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
+        val result = repo!!.deleteResource(DbResourceIdRequest(initObjects[2].id, lockOld))
         assertIs<IDbResourceResponse.Ok>(result)
         assertEquals(initObjects[2].id, result.data.id)
 
-        val readResult = repo.readResource(DbResourceIdRequest(initObjects[2].id))
+        val readResult = repo!!.readResource(DbResourceIdRequest(initObjects[2].id))
         assertIs<IDbResourceResponse.Err>(readResult)
     }
 
     @Test
     fun deleteConcurrentModification() = runRepoTest {
-        val result = repo.deleteResource(DbResourceIdRequest(initObjects[2].id, lockBad))
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
+        val result = repo!!.deleteResource(DbResourceIdRequest(initObjects[2].id, lockBad))
         assertIs<IDbResourceResponse.ErrWithData>(result)
     }
 
     @Test
     fun searchByType() = runRepoTest {
-        val result = repo.searchResources(
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
+        val result = repo!!.searchResources(
             DbResourceFilterRequest(type = AjastaResourceType.VOLLEYBALL_COURT)
         )
         assertTrue(result.data.isNotEmpty())
@@ -205,8 +221,9 @@ class RepoResourcePgTest {
 
     @Test
     fun searchByOwnerId() = runRepoTest {
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
         val ownerId = AjastaUserId("owner-123")
-        val result = repo.searchResources(
+        val result = repo!!.searchResources(
             DbResourceFilterRequest(ownerId = ownerId)
         )
         assertTrue(result.data.isNotEmpty())
@@ -217,7 +234,8 @@ class RepoResourcePgTest {
 
     @Test
     fun searchByLocation() = runRepoTest {
-        val result = repo.searchResources(
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
+        val result = repo!!.searchResources(
             DbResourceFilterRequest(location = "Building A")
         )
         assertTrue(result.data.isNotEmpty())
