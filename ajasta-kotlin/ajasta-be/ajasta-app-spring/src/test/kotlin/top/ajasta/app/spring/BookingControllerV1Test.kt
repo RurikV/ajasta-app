@@ -15,10 +15,16 @@ class BookingControllerV1Test {
     @Autowired
     private lateinit var webTestClient: WebTestClient
 
+    private val stubDebug = Debug(
+        mode = RequestDebugMode.STUB,
+        stub = RequestDebugStubs.SUCCESS
+    )
+
     @Test
     fun `create booking should return stub response`() {
         val request = BookingCreateRequest(
             requestType = "createBooking",
+            debug = stubDebug,
             booking = BookingCreateObject(
                 resourceId = "resource-123",
                 title = "Test Booking",
@@ -48,6 +54,7 @@ class BookingControllerV1Test {
     fun `read booking should return stub response`() {
         val request = BookingReadRequest(
             requestType = "readBooking",
+            debug = stubDebug,
             bookingId = "booking-001"
         )
 
@@ -66,6 +73,7 @@ class BookingControllerV1Test {
     fun `update booking should return stub response`() {
         val request = BookingUpdateRequest(
             requestType = "updateBooking",
+            debug = stubDebug,
             booking = BookingUpdateObject(
                 id = "booking-001",
                 title = "Updated Title"
@@ -86,6 +94,7 @@ class BookingControllerV1Test {
     fun `delete booking should return stub response`() {
         val request = BookingDeleteRequest(
             requestType = "deleteBooking",
+            debug = stubDebug,
             bookingId = "booking-001"
         )
 
@@ -104,6 +113,7 @@ class BookingControllerV1Test {
     fun `search bookings should return stub response`() {
         val request = BookingSearchRequest(
             requestType = "searchBookings",
+            debug = stubDebug,
             filter = BookingFilter(
                 resourceId = "resource-tennis-001"
             )

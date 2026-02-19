@@ -15,10 +15,16 @@ class ResourceControllerV1Test {
     @Autowired
     private lateinit var webTestClient: WebTestClient
 
+    private val stubDebug = Debug(
+        mode = RequestDebugMode.STUB,
+        stub = RequestDebugStubs.SUCCESS
+    )
+
     @Test
     fun `create resource should return stub response`() {
         val request = ResourceCreateRequest(
             requestType = "createResource",
+            debug = stubDebug,
             resource = ResourceCreateObject(
                 name = "Tennis Court A",
                 type = ResourceType.TURF_COURT,
@@ -41,6 +47,7 @@ class ResourceControllerV1Test {
     fun `read resource should return stub response`() {
         val request = ResourceReadRequest(
             requestType = "readResource",
+            debug = stubDebug,
             resourceId = "resource-001"
         )
 
@@ -59,6 +66,7 @@ class ResourceControllerV1Test {
     fun `update resource should return stub response`() {
         val request = ResourceUpdateRequest(
             requestType = "updateResource",
+            debug = stubDebug,
             resource = ResourceUpdateObject(
                 id = "resource-001",
                 name = "Updated Resource"
@@ -79,6 +87,7 @@ class ResourceControllerV1Test {
     fun `delete resource should return stub response`() {
         val request = ResourceDeleteRequest(
             requestType = "deleteResource",
+            debug = stubDebug,
             resourceId = "resource-001"
         )
 
@@ -97,6 +106,7 @@ class ResourceControllerV1Test {
     fun `search resources should return stub response`() {
         val request = ResourceSearchRequest(
             requestType = "searchResources",
+            debug = stubDebug,
             filter = ResourceFilter(
                 type = ResourceType.TURF_COURT
             )
@@ -117,6 +127,7 @@ class ResourceControllerV1Test {
     fun `availability should return stub response`() {
         val request = AvailabilityRequest(
             requestType = "getAvailability",
+            debug = stubDebug,
             resourceId = "resource-001",
             dateFrom = "2025-03-01T00:00:00Z",
             dateTo = "2025-03-01T23:59:59Z"
