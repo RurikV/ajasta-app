@@ -19,6 +19,7 @@ services:
       - "15432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./deploy/volumes/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - ajasta-net
     healthcheck:
@@ -40,13 +41,21 @@ services:
     depends_on:
       ajasta-postgres:
         condition: service_healthy
+      keycloak:
+        condition: service_healthy
     environment:
-      # Database Configuration
-      SPRING_R2DBC_URL: r2dbc:postgresql://ajasta-postgres:5432/ajastadb
-      SPRING_R2DBC_USERNAME: admin
-      SPRING_R2DBC_PASSWORD: adminpw
+      # Database Configuration (JDBC for Exposed SQL)
+      SPRING_DATASOURCE_HOST: ajasta-postgres
+      SPRING_DATASOURCE_PORT: 5432
+      SPRING_DATASOURCE_USERNAME: admin
+      SPRING_DATASOURCE_PASSWORD: adminpw
+      SPRING_DATASOURCE_DATABASE: ajastadb
       # Application Configuration
       SPRING_PROFILES_ACTIVE: prod
+      # Keycloak OAuth2 Configuration
+      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/ajasta
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/ajasta/protocol/openid-connect/certs
+      KEYCLOAK_AUTH_URL: http://keycloak:8080
       # JVM Configuration
       JAVA_OPTS: -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0
     ports:
@@ -61,11 +70,11 @@ services:
       start_period: 60s
 
   # ============================================
-  # Frontend (Nginx)
+  # Frontend (React + Nginx)
   # ============================================
   ajasta-frontend:
     build:
-      context: ./frontend
+      context: ./ajasta-react
       dockerfile: Dockerfile
     container_name: ajasta-frontend
     restart: unless-stopped
@@ -151,21 +160,65 @@ services:
       - monitoring
 
   # ============================================
-  # Database Admin UI (Optional)
+  # Keycloak (Authentication with Google OAuth)
+  # ============================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    container_name: ajasta-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    depends_on:
+      ajasta-postgres:
+        condition: service_healthy
+    environment:
+      # Keycloak Admin
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin123
+      # Database Configuration
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://ajasta-postgres:5432/keycloak
+      KC_DB_USERNAME: admin
+      KC_DB_PASSWORD: adminpw
+      # Hostname Configuration
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: "8180"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
+      # HTTP Configuration
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      # Google OAuth (set these via environment or .env file)
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-your-google-client-id}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-your-google-client-secret}
+    ports:
+      - "8180:8080"
+    volumes:
+      - ./deploy/volumes/keycloak/ajasta-realm.json:/opt/keycloak/data/import/ajasta-realm.json:ro
+    networks:
+      - ajasta-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/realms/ajasta || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # ============================================
+  # Database Admin UI (Adminer)
   # ============================================
   adminer:
     image: adminer:4.8.1
     container_name: ajasta-adminer
     restart: unless-stopped
+    depends_on:
+      - ajasta-postgres
     ports:
-      - "8080:8080"
+      - "5050:8080"
     networks:
       - ajasta-net
     environment:
       ADMINER_DEFAULT_SERVER: ajasta-postgres
       ADMINER_DESIGN: pepa-linha-dark
-    profiles:
-      - admin
 
 # ============================================
 # Named Volumes

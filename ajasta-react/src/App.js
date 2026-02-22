@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import Navbar from "./components/common/Navbar";
 import Footer from "./components/common/Footer";
 import './i18n'; // Initialize i18n
+import { AuthProvider } from "./context/AuthContext";
 import RegisterPage from "./components/auth/RegisterPage";
 import LoginPage from "./components/auth/LoginPage";
 import ProfilePage from "./components/profile_cart/ProfilePage";
@@ -27,9 +28,10 @@ import CmsPage from "./components/cms/CmsPage";
 
 function App() {
   return (
-    <BrowserRouter>
-      <Navbar />
-      <div className="content">
+    <AuthProvider>
+      <BrowserRouter>
+        <Navbar />
+        <div className="content">
 
         <Routes>
 
@@ -79,7 +81,8 @@ function App() {
 
       </div>
       <Footer />
-    </BrowserRouter>
+      </BrowserRouter>
+    </AuthProvider>
   );
 }
 

@@ -62,6 +62,8 @@ jackson-datatype-jsr310 = { module = "com.fasterxml.jackson.datatype:jackson-dat
 # Spring
 spring-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
 spring-webflux = { module = "org.springframework.boot:spring-boot-starter-webflux" }
+spring-security-webflux = { module = "org.springframework.boot:spring-boot-starter-security" }
+spring-security-oauth2 = { module = "org.springframework.boot:spring-boot-starter-oauth2-resource-server" }
 spring-webflux-ui = { module = "org.springdoc:springdoc-openapi-starter-webflux-ui", version = "2.3.0" }
 spring-test = { module = "org.springframework.boot:spring-boot-starter-test" }
 spring-mockk = { module = "com.ninja-squad:springmockk", version = "4.0.2" }

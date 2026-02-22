@@ -15,11 +15,12 @@ const ResourceDetailsPage = () => {
   const [submitting, setSubmitting] = useState(false);
   const { ErrorDisplay, showError } = useError();
 
-  const numericId = useMemo(() => Number(id), [id]);
+  // Support both numeric IDs (Java backend) and string UUIDs (Kotlin backend)
+  const resourceId = useMemo(() => id, [id]);
 
   const loadResource = async () => {
     try {
-      const response = await ApiService.getResourceById(numericId);
+      const response = await ApiService.getResourceById(resourceId);
       if (response.statusCode === 200) {
         setResource(response.data);
       } else {
@@ -33,8 +34,8 @@ const ResourceDetailsPage = () => {
   const loadReviews = async () => {
     try {
       const [listResp, avgResp] = await Promise.all([
-        ApiService.getResourceReviews(numericId),
-        ApiService.getResourceAverageRating(numericId)
+        ApiService.getResourceReviews(resourceId),
+        ApiService.getResourceAverageRating(resourceId)
       ]);
       if (listResp.statusCode === 200) setReviews(listResp.data || []);
       if (avgResp.statusCode === 200) setAverageRating(avgResp.data ?? 0);
@@ -46,7 +47,7 @@ const ResourceDetailsPage = () => {
   const loadEligibility = async () => {
     try {
       if (!ApiService.isAuthenticated()) { setCanReview(false); return; }
-      const resp = await ApiService.getReviewEligibility(numericId);
+      const resp = await ApiService.getReviewEligibility(resourceId);
       if (resp.statusCode === 200) setCanReview(!!resp.data);
     } catch (e) {
       setCanReview(false);
@@ -58,14 +59,14 @@ const ResourceDetailsPage = () => {
     loadReviews();
     loadEligibility();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numericId]);
+  }, [resourceId]);
 
   const handleSubmitReview = async (e) => {
     e.preventDefault();
     if (submitting) return;
     try {
       setSubmitting(true);
-      const payload = { resourceId: numericId, rating: Number(rating), comment: comment?.trim() || undefined };
+      const payload = { resourceId: resourceId, rating: Number(rating), comment: comment?.trim() || undefined };
       const resp = await ApiService.createReview(payload);
       if (resp.statusCode === 200) {
         setComment('');

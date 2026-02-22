@@ -1,0 +1,306 @@
+{
+  "realm": "ajasta",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+
+  "roles": {
+    "realm": [
+      {
+        "name": "user",
+        "description": "Standard user role",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "admin",
+        "description": "Administrator role with full access",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "manager",
+        "description": "Resource manager role",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "customer",
+        "description": "Customer role for bookings",
+        "composite": false,
+        "clientRole": false
+      }
+    ]
+  },
+
+  "defaultRole": {
+    "name": "default-roles-ajasta",
+    "description": "${role_default-roles}",
+    "composite": true,
+    "clientRole": false
+  },
+
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "admin@ajasta.local",
+      "firstName": "System",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["admin", "user"]
+    },
+    {
+      "username": "vladimir.rurik",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "vladimir.rurik@gmail.com",
+      "firstName": "Vladimir",
+      "lastName": "Rurik",
+      "realmRoles": ["admin", "user"]
+    },
+    {
+      "username": "james.p.naive",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "james.p.naive@gmail.com",
+      "firstName": "James",
+      "lastName": "Naive",
+      "realmRoles": ["manager", "user"]
+    },
+    {
+      "username": "iraida.rurik",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "iraida.rurik@gmail.com",
+      "firstName": "Iraida",
+      "lastName": "Rurik",
+      "realmRoles": ["customer", "user"]
+    }
+  ],
+
+  "clients": [
+    {
+      "clientId": "ajasta-frontend",
+      "name": "Ajasta Frontend",
+      "description": "React frontend public client",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000/*",
+        "http://127.0.0.1:3000"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "+"
+      ],
+      "baseUrl": "http://localhost:3000",
+      "rootUrl": "http://localhost:3000",
+      "adminUrl": "http://localhost:3000",
+      "attributes": {
+        "access.token.lifespan": "3600",
+        "id.token.lifespan": "3600",
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000##http://127.0.0.1:3000"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "email",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "email",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "username",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "ajasta-backend",
+      "name": "Ajasta Backend",
+      "description": "Kotlin backend confidential client",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "ajasta-backend-secret-12345",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "bearerOnly": true,
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "access.token.lifespan": "3600"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ],
+
+  "identityProviders": [
+    {
+      "alias": "google",
+      "displayName": "Google",
+      "providerId": "google",
+      "enabled": true,
+      "updateProfileFirstLoginMode": "on",
+      "trustEmail": true,
+      "storeToken": false,
+      "addReadTokenRoleOnCreate": false,
+      "authenticateByDefault": false,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {
+        "clientId": "1037861505265-e33imehq16m4pvk8vhaqalc8edqrigfn.apps.googleusercontent.com",
+        "clientSecret": "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",
+        "hostedDomain": "",
+        "useJwksUrl": "true",
+        "syncMode": "FORCE",
+        "acceptsPromptNoneForwardFromClient": "false",
+        "disableUserInfo": "false"
+      }
+    }
+  ],
+
+  "identityProviderMappers": [
+    {
+      "name": "admin-role-mapper",
+      "identityProviderAlias": "google",
+      "identityProviderMapper": "hardcoded-user-session-attribute-mapper",
+      "config": {
+        "attribute": "admin",
+        "attribute.value": "vladimir.rurik@gmail.com",
+        "syncMode": "INHERIT"
+      }
+    },
+    {
+      "name": "vladimir-admin-role",
+      "identityProviderAlias": "google",
+      "identityProviderMapper": "hardcoded-role-idp-mapper",
+      "config": {
+        "role": "admin",
+        "syncMode": "FORCE"
+      }
+    },
+    {
+      "name": "vladimir-user-role",
+      "identityProviderAlias": "google",
+      "identityProviderMapper": "hardcoded-role-idp-mapper",
+      "config": {
+        "role": "user",
+        "syncMode": "FORCE"
+      }
+    }
+  ],
+
+  "browserSecurityHeaders": {
+    "contentSecurityPolicyReportOnly": "",
+    "xContentTypeOptions": "nosniff",
+    "xRobotsTag": "none",
+    "xFrameOptions": "SAMEORIGIN",
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
+    "xXSSProtection": "1; mode=block",
+    "strictTransportSecurity": "max-age=31536000; includeSubDomains"
+  },
+
+  "smtpServer": {},
+
+  "eventsEnabled": false,
+  "eventsListeners": ["jboss-logging"],
+
+  "enabledEventTypes": [],
+
+  "adminEventsEnabled": false,
+  "adminEventsDetailsEnabled": false,
+
+  "browserFlow": "browser",
+  "registrationFlow": "registration",
+  "directGrantFlow": "direct grant",
+  "resetCredentialsFlow": "reset credentials",
+  "clientAuthenticationFlow": "clients",
+
+  "attributes": {
+    "cibaBackchannelTokenDeliveryMode": "poll",
+    "cibaExpiresIn": "120",
+    "cibaAuthRequestedUserHint": "login_hint",
+    "oauth2DeviceCodeLifespan": "600",
+    "clientOfflineSessionMaxLifespan": "0",
+    "oauth2DevicePollingInterval": "5",
+    "clientSessionIdleTimeout": "0",
+    "parRequestUriLifespan": "60",
+    "clientSessionMaxLifespan": "0",
+    "clientOfflineSessionIdleTimeout": "0",
+    "cibaInterval": "5"
+  }
+}

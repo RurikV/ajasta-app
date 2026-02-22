@@ -12,6 +12,8 @@ dependencies {
     implementation(libs.spring.actuator)
     implementation(libs.spring.webflux)
     implementation(libs.spring.webflux.ui)
+    implementation(libs.spring.security.webflux)
+    implementation(libs.spring.security.oauth2)
     implementation(libs.jackson.module.kotlin)
     implementation(kotlin("reflect"))
     implementation(kotlin("stdlib"))
@@ -29,6 +31,7 @@ dependencies {
     implementation(project(":ajasta-biz"))
     implementation(project(":ajasta-repo-common"))
     implementation(project(":ajasta-repo-inmemory"))
+    implementation(project(":ajasta-repo-pgjvm"))
 
     // Logging
     implementation(libs.logback.classic)
