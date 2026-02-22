@@ -11,10 +11,26 @@ fun ICorChainDsl<BizContext>.prepareResult(title: String) = worker {
     description = "Preparing data for client response"
     on { workMode != AjastaWorkMode.STUB }
     handle {
-        bookingResponse = bookingRepoDone
-        bookingsResponse = bookingsRepoDone
-        resourceResponse = resourceRepoDone
-        resourcesResponse = resourcesRepoDone
+        // For single entity operations, check both repoDone and repoRead
+        if (bookingRepoDone.isEmpty()) {
+            bookingResponse = bookingRepoRead
+        } else {
+            bookingResponse = bookingRepoDone
+        }
+
+        bookingsResponse.clear()
+        bookingsResponse.addAll(bookingsRepoDone)
+
+        // For single entity operations, check both repoDone and repoRead
+        if (resourceRepoDone.isEmpty()) {
+            resourceResponse = resourceRepoRead
+        } else {
+            resourceResponse = resourceRepoDone
+        }
+
+        resourcesResponse.clear()
+        resourcesResponse.addAll(resourcesRepoDone)
+
         state = when (val st = state) {
             AjastaState.RUNNING -> AjastaState.FINISHING
             else -> st

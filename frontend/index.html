@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ajasta - Resource Booking Platform</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        header { background: #2c3e50; color: white; padding: 20px; margin-bottom: 20px; }
+        h1 { font-size: 24px; }
+        .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h2 { margin-bottom: 15px; color: #2c3e50; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: 500; }
+        input, textarea, select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        button { background: #3498db; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        button:hover { background: #2980b9; }
+        button.secondary { background: #27ae60; }
+        button.secondary:hover { background: #219a52; }
+        button.danger { background: #e74c3c; }
+        button.danger:hover { background: #c0392b; }
+        .response { background: #f8f9fa; padding: 15px; border-radius: 4px; margin-top: 15px; white-space: pre-wrap; font-family: monospace; font-size: 12px; max-height: 400px; overflow: auto; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+        .status { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .tab { padding: 10px 20px; background: #e0e0e0; border: none; cursor: pointer; border-radius: 4px 4px 0 0; }
+        .tab.active { background: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Ajasta - Resource Booking Platform</h1>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="card">
+            <h2>API Status</h2>
+            <p>Backend URL: <code id="apiUrl">(proxied through nginx)</code></p>
+            <p>Status: <span id="apiStatus" class="status">Checking...</span></p>
+            <button onclick="checkHealth()">Check Health</button>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('bookings')">Bookings</button>
+            <button class="tab" onclick="showTab('resources')">Resources</button>
+        </div>
+
+        <div id="bookings" class="tab-content active">
+            <div class="grid">
+                <div class="card">
+                    <h2>Create Booking</h2>
+                    <div class="form-group">
+                        <label>Resource ID</label>
+                        <input type="text" id="createBookingResourceId" value="resource-001">
+                    </div>
+                    <div class="form-group">
+                        <label>Title</label>
+                        <input type="text" id="createBookingTitle" value="Test Booking">
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea id="createBookingDesc" rows="2">A test booking</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Slot Start</label>
+                        <input type="datetime-local" id="createBookingStart">
+                    </div>
+                    <div class="form-group">
+                        <label>Slot End</label>
+                        <input type="datetime-local" id="createBookingEnd">
+                    </div>
+                    <div class="form-group">
+                        <label>Price</label>
+                        <input type="number" id="createBookingPrice" value="100">
+                    </div>
+                    <button onclick="createBooking()">Create Booking</button>
+                    <div id="createBookingResponse" class="response" style="display:none;"></div>
+                </div>
+
+                <div class="card">
+                    <h2>Read/ Search Bookings</h2>
+                    <div class="form-group">
+                        <label>Booking ID (for read)</label>
+                        <input type="text" id="readBookingId" placeholder="Enter booking ID">
+                    </div>
+                    <button onclick="readBooking()">Read Booking</button>
+                    <button class="secondary" onclick="searchBookings()">Search All</button>
+                    <div id="readBookingResponse" class="response" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+
+        <div id="resources" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h2>Create Resource</h2>
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" id="createResourceName" value="Conference Room A">
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea id="createResourceDesc" rows="2">A spacious conference room</textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Type</label>
+                        <select id="createResourceType">
+                            <option value="TURF_COURT">Turf Court</option>
+                            <option value="VOLLEYBALL_COURT">Volleyball Court</option>
+                            <option value="PLAYGROUND">Playground</option>
+                            <option value="HAIRDRESSING_CHAIR">Hairdressing Chair</option>
+                            <option value="OTHER">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Location</label>
+                        <input type="text" id="createResourceLocation" value="Building A, Floor 3">
+                    </div>
+                    <div class="form-group">
+                        <label>Price per Slot</label>
+                        <input type="number" id="createResourcePrice" value="50">
+                    </div>
+                    <button onclick="createResource()">Create Resource</button>
+                    <div id="createResourceResponse" class="response" style="display:none;"></div>
+                </div>
+
+                <div class="card">
+                    <h2>Search Resources</h2>
+                    <div class="form-group">
+                        <label>Type Filter</label>
+                        <select id="searchResourceType">
+                            <option value="">All</option>
+                            <option value="TURF_COURT">Turf Court</option>
+                            <option value="VOLLEYBALL_COURT">Volleyball Court</option>
+                            <option value="PLAYGROUND">Playground</option>
+                            <option value="HAIRDRESSING_CHAIR">Hairdressing Chair</option>
+                            <option value="OTHER">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Location Search</label>
+                        <input type="text" id="searchResourceLocation" placeholder="Enter location">
+                    </div>
+                    <button onclick="searchResources()">Search</button>
+                    <div id="searchResourceResponse" class="response" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Use relative URLs so they go through nginx proxy
+        const API_URL = window.location.origin;
+
+        // Initialize datetime inputs with default values
+        document.addEventListener('DOMContentLoaded', () => {
+            const now = new Date();
+            const start = new Date(now.getTime() + 24*60*60*1000);
+            const end = new Date(start.getTime() + 60*60*1000);
+
+            document.getElementById('createBookingStart').value = formatDateTimeLocal(start);
+            document.getElementById('createBookingEnd').value = formatDateTimeLocal(end);
+
+            checkHealth();
+        });
+
+        function formatDateTimeLocal(date) {
+            return date.toISOString().slice(0, 16);
+        }
+
+        function formatDateTimeUTC(dateStr) {
+            return new Date(dateStr).toISOString();
+        }
+
+        async function apiCall(endpoint, body) {
+            try {
+                const response = await fetch(`${API_URL}${endpoint}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                return await response.json();
+            } catch (error) {
+                return { error: error.message };
+            }
+        }
+
+        function showResponse(elementId, data) {
+            const el = document.getElementById(elementId);
+            el.style.display = 'block';
+            el.textContent = JSON.stringify(data, null, 2);
+        }
+
+        function showTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        async function checkHealth() {
+            const statusEl = document.getElementById('apiStatus');
+            try {
+                const response = await fetch(`${API_URL}/actuator/health`);
+                const data = await response.json();
+                statusEl.textContent = data.status === 'UP' ? 'UP' : 'DOWN';
+                statusEl.className = `status ${data.status === 'UP' ? 'success' : 'error'}`;
+            } catch (error) {
+                statusEl.textContent = 'DOWN';
+                statusEl.className = 'status error';
+            }
+        }
+
+        async function createBooking() {
+            const body = {
+                requestType: 'createBooking',
+                booking: {
+                    resourceId: document.getElementById('createBookingResourceId').value,
+                    title: document.getElementById('createBookingTitle').value,
+                    description: document.getElementById('createBookingDesc').value,
+                    slots: [{
+                        slotStart: formatDateTimeUTC(document.getElementById('createBookingStart').value),
+                        slotEnd: formatDateTimeUTC(document.getElementById('createBookingEnd').value),
+                        price: parseFloat(document.getElementById('createBookingPrice').value)
+                    }]
+                }
+            };
+            const result = await apiCall('/v1/bookings/create', body);
+            showResponse('createBookingResponse', result);
+            if (result.booking?.id) {
+                document.getElementById('readBookingId').value = result.booking.id;
+            }
+        }
+
+        async function readBooking() {
+            const id = document.getElementById('readBookingId').value;
+            if (!id) { alert('Please enter a booking ID'); return; }
+            const body = {
+                requestType: 'readBooking',
+                booking: { id }
+            };
+            const result = await apiCall('/v1/bookings/read', body);
+            showResponse('readBookingResponse', result);
+        }
+
+        async function searchBookings() {
+            const body = {
+                requestType: 'searchBookings'
+            };
+            const result = await apiCall('/v1/bookings/search', body);
+            showResponse('readBookingResponse', result);
+        }
+
+        async function createResource() {
+            const body = {
+                requestType: 'createResource',
+                resource: {
+                    name: document.getElementById('createResourceName').value,
+                    description: document.getElementById('createResourceDesc').value,
+                    type: document.getElementById('createResourceType').value,
+                    location: document.getElementById('createResourceLocation').value,
+                    pricePerSlot: parseFloat(document.getElementById('createResourcePrice').value)
+                }
+            };
+            const result = await apiCall('/v1/resources/create', body);
+            showResponse('createResourceResponse', result);
+            if (result.resource?.id) {
+                document.getElementById('createResourceName').dataset.lastId = result.resource.id;
+            }
+        }
+
+        async function searchResources() {
+            const body = {
+                requestType: 'searchResources',
+                resourceFilter: {}
+            };
+            const type = document.getElementById('searchResourceType').value;
+            const location = document.getElementById('searchResourceLocation').value;
+            if (type) body.resourceFilter.type = type;
+            if (location) body.resourceFilter.location = location;
+
+            const result = await apiCall('/v1/resources/search', body);
+            showResponse('searchResourceResponse', result);
+        }
+    </script>
+</body>
+</html>

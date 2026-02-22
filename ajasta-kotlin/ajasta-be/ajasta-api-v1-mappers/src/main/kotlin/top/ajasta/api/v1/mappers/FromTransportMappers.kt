@@ -196,7 +196,7 @@ private fun ResourceFilter.toInternal() = AjastaResourceFilter(
     type = type.fromTransport(),
     location = location ?: "",
     minPrice = minPrice ?: 0.0,
-    maxPrice = maxPrice ?: 0.0,
+    maxPrice = maxPrice ?: Double.MAX_VALUE,
     minRating = minRating ?: 0.0,
     ownerId = ownerId?.let { AjastaUserId(it) } ?: AjastaUserId.NONE
 )
