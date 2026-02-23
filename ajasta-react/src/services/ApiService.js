@@ -307,17 +307,26 @@ export default class ApiService {
      /**USERS PROFILE MANAGEMENT SESSION */
     static async myProfile() {
         if (USE_KOTLIN_BACKEND) {
-            // Mock profile
-            return {
-                statusCode: 200,
-                data: {
-                    id: "mock-user-id",
-                    email: "user@example.com",
-                    firstName: "Test",
-                    lastName: "User",
-                    roles: [{ name: 'ADMIN' }, { name: 'CUSTOMER' }]
-                }
-            };
+            // Get profile from Keycloak token
+            const tokenParsed = keycloakService.getTokenParsed();
+            if (tokenParsed) {
+                return {
+                    statusCode: 200,
+                    data: {
+                        id: tokenParsed.sub || 'unknown',
+                        email: tokenParsed.email || '',
+                        name: tokenParsed.name || `${tokenParsed.given_name || ''} ${tokenParsed.family_name || ''}`.trim() || tokenParsed.preferred_username || 'User',
+                        firstName: tokenParsed.given_name || '',
+                        lastName: tokenParsed.family_name || '',
+                        phoneNumber: tokenParsed.phone_number || '',
+                        address: tokenParsed.address || '',
+                        profileUrl: tokenParsed.picture || '',
+                        active: true,
+                        roles: this.getRoles().map(r => ({ name: r }))
+                    }
+                };
+            }
+            return { statusCode: 401, data: null };
         }
         const resp = await axios.get(`${this.BASE_URL}/users/account`, {
             headers: this.getHeader()
@@ -1035,25 +1044,72 @@ export default class ApiService {
     /* ADMIN USERS & ROLES */
     static async getAllUsers() {
         if (USE_KOTLIN_BACKEND) {
-            return {
-                statusCode: 200,
-                data: [
+            // Fetch users from Keycloak Admin API via nginx proxy
+            try {
+                // Use nginx proxy to avoid CORS issues
+                const keycloakUrl = '/keycloak';
+
+                // Get admin token from Keycloak
+                const adminTokenResponse = await axios.post(
+                    `${keycloakUrl}/realms/master/protocol/openid-connect/token`,
+                    new URLSearchParams({
+                        username: 'admin',
+                        password: 'admin123',
+                        grant_type: 'password',
+                        client_id: 'admin-cli'
+                    }),
+                    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+                );
+
+                const adminToken = adminTokenResponse.data.access_token;
+
+                // Fetch users from Keycloak
+                const usersResponse = await axios.get(
+                    `${keycloakUrl}/admin/realms/ajasta/users`,
                     {
-                        id: "mock-user-1",
-                        email: "admin@example.com",
-                        firstName: "Admin",
-                        lastName: "User",
-                        roles: [{ name: 'ADMIN' }]
-                    },
-                    {
-                        id: "mock-user-2",
-                        email: "customer@example.com",
-                        firstName: "Customer",
-                        lastName: "User",
-                        roles: [{ name: 'CUSTOMER' }]
+                        headers: { Authorization: `Bearer ${adminToken}` },
+                        params: { max: 100 }
                     }
-                ]
-            };
+                );
+
+                // Fetch roles for each user
+                const users = await Promise.all(
+                    usersResponse.data.map(async (user) => {
+                        try {
+                            const rolesResponse = await axios.get(
+                                `${keycloakUrl}/admin/realms/ajasta/users/${user.id}/role-mappings/realm`,
+                                { headers: { Authorization: `Bearer ${adminToken}` } }
+                            );
+                            return {
+                                id: user.id,
+                                email: user.email || '',
+                                firstName: user.firstName || '',
+                                lastName: user.lastName || '',
+                                name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || '',
+                                username: user.username,
+                                active: user.enabled,
+                                roles: rolesResponse.data.map(r => ({ name: r.name.toUpperCase() }))
+                            };
+                        } catch {
+                            return {
+                                id: user.id,
+                                email: user.email || '',
+                                firstName: user.firstName || '',
+                                lastName: user.lastName || '',
+                                name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || '',
+                                username: user.username,
+                                active: user.enabled,
+                                roles: []
+                            };
+                        }
+                    })
+                );
+
+                return { statusCode: 200, data: users };
+            } catch (error) {
+                console.error('Failed to fetch users from Keycloak:', error);
+                return { statusCode: 500, data: [], message: 'Failed to fetch users' };
+            }
         }
         const resp = await axios.get(`${this.BASE_URL}/users/all`, {
             headers: this.getHeader()

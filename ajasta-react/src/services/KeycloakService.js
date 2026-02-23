@@ -190,12 +190,14 @@ class KeycloakService {
     }
 
     /**
-     * Check if user has a specific role
+     * Check if user has a specific role (case-insensitive)
      * @param {string} role - Role name to check
      * @returns {boolean}
      */
     hasRole(role) {
-        return this.getRoles().includes(role);
+        const roles = this.getRoles();
+        const targetRole = role.toLowerCase();
+        return roles.some(r => r.toLowerCase() === targetRole);
     }
 
     /**

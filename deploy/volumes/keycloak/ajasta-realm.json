@@ -235,13 +235,12 @@
 
   "identityProviderMappers": [
     {
-      "name": "admin-role-mapper",
+      "name": "default-user-role",
       "identityProviderAlias": "google",
-      "identityProviderMapper": "hardcoded-user-session-attribute-mapper",
+      "identityProviderMapper": "hardcoded-role-idp-mapper",
       "config": {
-        "attribute": "admin",
-        "attribute.value": "vladimir.rurik@gmail.com",
-        "syncMode": "INHERIT"
+        "role": "user",
+        "syncMode": "FORCE"
       }
     },
     {
@@ -250,15 +249,6 @@
       "identityProviderMapper": "hardcoded-role-idp-mapper",
       "config": {
         "role": "admin",
-        "syncMode": "FORCE"
-      }
-    },
-    {
-      "name": "vladimir-user-role",
-      "identityProviderAlias": "google",
-      "identityProviderMapper": "hardcoded-role-idp-mapper",
-      "config": {
-        "role": "user",
         "syncMode": "FORCE"
       }
     }
