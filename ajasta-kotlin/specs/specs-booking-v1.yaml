@@ -386,6 +386,18 @@ components:
           type: integer
         ownerId:
           type: string
+        active:
+          type: boolean
+          description: Whether the resource is active and available for booking
+        unavailableWeekdays:
+          type: string
+          description: CSV of weekday indices (0-6, 0=Sunday) when resource is unavailable
+        unavailableDates:
+          type: string
+          description: CSV of dates (yyyy-MM-dd) when resource is unavailable
+        dailyUnavailableRanges:
+          type: string
+          description: Semicolon-separated time ranges (HH:mm-HH:mm) when resource is unavailable daily
         lock:
           type: string
         createdAt:
@@ -425,6 +437,19 @@ components:
         ownerId:
           type: string
           description: ID of the user who owns/manages this resource
+        active:
+          type: boolean
+          description: Whether the resource is active and available for booking
+          default: true
+        unavailableWeekdays:
+          type: string
+          description: CSV of weekday indices (0-6, 0=Sunday) when resource is unavailable
+        unavailableDates:
+          type: string
+          description: CSV of dates (yyyy-MM-dd) when resource is unavailable
+        dailyUnavailableRanges:
+          type: string
+          description: Semicolon-separated time ranges (HH:mm-HH:mm) when resource is unavailable daily
 
     ResourceUpdateObject:
       type: object
@@ -457,6 +482,18 @@ components:
         ownerId:
           type: string
           description: ID of the user who owns/manages this resource
+        active:
+          type: boolean
+          description: Whether the resource is active and available for booking
+        unavailableWeekdays:
+          type: string
+          description: CSV of weekday indices (0-6, 0=Sunday) when resource is unavailable
+        unavailableDates:
+          type: string
+          description: CSV of dates (yyyy-MM-dd) when resource is unavailable
+        dailyUnavailableRanges:
+          type: string
+          description: Semicolon-separated time ranges (HH:mm-HH:mm) when resource is unavailable daily
 
     ResourceReadObject:
       type: object

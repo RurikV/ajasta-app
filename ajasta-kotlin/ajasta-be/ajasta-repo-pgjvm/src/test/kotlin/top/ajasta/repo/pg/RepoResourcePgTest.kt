@@ -243,4 +243,82 @@ class RepoResourcePgTest {
             assertEquals("Building A", it.location)
         }
     }
+
+    // === New Availability Fields Tests ===
+
+    @Test
+    fun createResourceWithActiveFalse() = runRepoTest {
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
+        val resource = AjastaResource(
+            name = "Inactive Resource",
+            type = AjastaResourceType.TURF_COURT,
+            pricePerSlot = 50.0,
+            active = false
+        )
+        val result = repo!!.createResource(DbResourceRequest(resource))
+        assertIs<IDbResourceResponse.Ok>(result)
+        assertEquals(false, result.data.active)
+    }
+
+    @Test
+    fun createResourceWithAvailabilityRules() = runRepoTest {
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
+        val resource = AjastaResource(
+            name = "Resource with Rules",
+            type = AjastaResourceType.VOLLEYBALL_COURT,
+            pricePerSlot = 40.0,
+            active = true,
+            unavailableWeekdays = "0,6",
+            unavailableDates = "2025-01-01,2025-12-25",
+            dailyUnavailableRanges = "12:00-13:00;17:00-18:00"
+        )
+        val result = repo!!.createResource(DbResourceRequest(resource))
+        assertIs<IDbResourceResponse.Ok>(result)
+        assertEquals(true, result.data.active)
+        assertEquals("0,6", result.data.unavailableWeekdays)
+        assertEquals("2025-01-01,2025-12-25", result.data.unavailableDates)
+        assertEquals("12:00-13:00;17:00-18:00", result.data.dailyUnavailableRanges)
+    }
+
+    @Test
+    fun updateResourceActiveStatus() = runRepoTest {
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
+        val updateObj = initObjects[1].copy(
+            active = false,
+            unavailableWeekdays = "1",
+            unavailableDates = "2025-07-04",
+            dailyUnavailableRanges = "14:00-15:00"
+        )
+        val result = repo!!.updateResource(DbResourceRequest(updateObj))
+        assertIs<IDbResourceResponse.Ok>(result)
+        assertEquals(false, result.data.active)
+        assertEquals("1", result.data.unavailableWeekdays)
+        assertEquals("2025-07-04", result.data.unavailableDates)
+        assertEquals("14:00-15:00", result.data.dailyUnavailableRanges)
+    }
+
+    @Test
+    fun readResourceReturnsAvailabilityFields() = runRepoTest {
+        Assume.assumeTrue("Docker is not available", dockerAvailable)
+        // First create a resource with availability rules
+        val resource = AjastaResource(
+            name = "Test Read Availability",
+            type = AjastaResourceType.PLAYGROUND,
+            pricePerSlot = 25.0,
+            active = false,
+            unavailableWeekdays = "0",
+            unavailableDates = "2025-12-25",
+            dailyUnavailableRanges = "13:00-14:00"
+        )
+        val createResult = repo!!.createResource(DbResourceRequest(resource))
+        assertIs<IDbResourceResponse.Ok>(createResult)
+
+        // Then read it back
+        val readResult = repo!!.readResource(DbResourceIdRequest(createResult.data.id))
+        assertIs<IDbResourceResponse.Ok>(readResult)
+        assertEquals(false, readResult.data.active)
+        assertEquals("0", readResult.data.unavailableWeekdays)
+        assertEquals("2025-12-25", readResult.data.unavailableDates)
+        assertEquals("13:00-14:00", readResult.data.dailyUnavailableRanges)
+    }
 }

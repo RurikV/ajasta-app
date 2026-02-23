@@ -61,10 +61,10 @@ Service providers (trainers, consultants, coaches) build their knowledge base in
 | Frontend | React 19 |
 | Database | PostgreSQL 16 |
 | Payments | Stripe |
-| Auth | JWT (Keycloak planned) |
+| Auth | JWT (Keycloak) |
 | Storage | AWS S3 |
 
-The backend is currently Java, but we're in the process of rewriting it in Kotlin. The pattern we're following comes from our [marketplace project](../Kotlin/202508-ok-marketplace) — clean architecture, proper separation, modern practices.
+The backend is currently Java, but we're in the process of rewriting it in Kotlin. The pattern we're following comes from the [marketplace project](../Kotlin/202508-ok-marketplace) — clean architecture, proper separation, modern practices.
 
 ## Running Locally
 

@@ -30,6 +30,10 @@ object SqlFields {
     const val RESOURCE_CLOSE_TIME = "close_time"
     const val RESOURCE_RATING = "rating"
     const val RESOURCE_OWNER_ID = "owner_id"
+    const val RESOURCE_ACTIVE = "active"
+    const val RESOURCE_UNAVAILABLE_WEEKDAYS = "unavailable_weekdays"
+    const val RESOURCE_UNAVAILABLE_DATES = "unavailable_dates"
+    const val RESOURCE_DAILY_UNAVAILABLE_RANGES = "daily_unavailable_ranges"
     const val RESOURCE_CREATED_AT = "created_at"
     const val RESOURCE_UPDATED_AT = "updated_at"
 }

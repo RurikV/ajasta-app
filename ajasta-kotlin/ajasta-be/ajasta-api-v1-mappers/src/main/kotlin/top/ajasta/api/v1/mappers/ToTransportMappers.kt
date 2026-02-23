@@ -165,6 +165,10 @@ fun AjastaResource.toTransport() = ResourceObject(
     rating = rating.takeIf { it > 0 },
     reviewCount = reviewCount.takeIf { it > 0 },
     ownerId = ownerId.asString().takeIf { it.isNotEmpty() },
+    active = active,
+    unavailableWeekdays = unavailableWeekdays.takeIf { it.isNotEmpty() },
+    unavailableDates = unavailableDates.takeIf { it.isNotEmpty() },
+    dailyUnavailableRanges = dailyUnavailableRanges.takeIf { it.isNotEmpty() },
     lock = lock.asString().takeIf { it.isNotEmpty() },
     createdAt = createdAt.takeIf { it != kotlinx.datetime.Instant.DISTANT_PAST }?.toString(),
     updatedAt = updatedAt.takeIf { it != kotlinx.datetime.Instant.DISTANT_PAST }?.toString()

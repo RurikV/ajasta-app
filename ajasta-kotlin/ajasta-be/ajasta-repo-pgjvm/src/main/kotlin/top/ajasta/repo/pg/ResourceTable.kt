@@ -21,6 +21,10 @@ class ResourceTable(tableName: String) : Table(tableName) {
     val closeTime = text(SqlFields.RESOURCE_CLOSE_TIME).nullable()
     val rating = double(SqlFields.RESOURCE_RATING)
     val ownerId = text(SqlFields.RESOURCE_OWNER_ID)
+    val active = bool(SqlFields.RESOURCE_ACTIVE).default(true)
+    val unavailableWeekdays = text(SqlFields.RESOURCE_UNAVAILABLE_WEEKDAYS).nullable()
+    val unavailableDates = text(SqlFields.RESOURCE_UNAVAILABLE_DATES).nullable()
+    val dailyUnavailableRanges = text(SqlFields.RESOURCE_DAILY_UNAVAILABLE_RANGES).nullable()
     val lock = text(SqlFields.LOCK)
     val createdAt = long(SqlFields.RESOURCE_CREATED_AT)
     val updatedAt = long(SqlFields.RESOURCE_UPDATED_AT).nullable()
@@ -40,6 +44,10 @@ class ResourceTable(tableName: String) : Table(tableName) {
         closeTime = res[closeTime] ?: "",
         rating = res[rating],
         ownerId = AjastaUserId(res[ownerId]),
+        active = res[active],
+        unavailableWeekdays = res[unavailableWeekdays] ?: "",
+        unavailableDates = res[unavailableDates] ?: "",
+        dailyUnavailableRanges = res[dailyUnavailableRanges] ?: "",
         lock = AjastaLock(res[lock]),
         createdAt = kotlinx.datetime.Instant.fromEpochMilliseconds(res[createdAt]),
         updatedAt = res[updatedAt]?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it) }
@@ -59,6 +67,10 @@ class ResourceTable(tableName: String) : Table(tableName) {
         this[closeTime] = resource.closeTime.takeIf { it.isNotEmpty() }
         this[rating] = resource.rating
         this[ownerId] = resource.ownerId.asString()
+        this[active] = resource.active
+        this[unavailableWeekdays] = resource.unavailableWeekdays.takeIf { it.isNotEmpty() }
+        this[unavailableDates] = resource.unavailableDates.takeIf { it.isNotEmpty() }
+        this[dailyUnavailableRanges] = resource.dailyUnavailableRanges.takeIf { it.isNotEmpty() }
         this[lock] = resource.lock.takeIf { it != AjastaLock.NONE }?.asString() ?: randomUuid()
         this[createdAt] = resource.createdAt.toEpochMilliseconds()
         this[updatedAt] = resource.updatedAt.toEpochMilliseconds()

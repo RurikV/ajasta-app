@@ -11,7 +11,11 @@ abstract class BaseInitResource(private val op: String) : IInitObjects<AjastaRes
         ownerId: AjastaUserId = AjastaUserId("owner-123"),
         type: AjastaResourceType = AjastaResourceType.TURF_COURT,
         lock: AjastaLock = lockOld,
-        pricePerSlot: Double = 100.0
+        pricePerSlot: Double = 100.0,
+        active: Boolean = true,
+        unavailableWeekdays: String = "",
+        unavailableDates: String = "",
+        dailyUnavailableRanges: String = ""
     ) = AjastaResource(
         id = AjastaResourceId("resource-repo-$op-$suf"),
         name = "$suf resource",
@@ -21,6 +25,10 @@ abstract class BaseInitResource(private val op: String) : IInitObjects<AjastaRes
         pricePerSlot = pricePerSlot,
         rating = 4.5,
         ownerId = ownerId,
+        active = active,
+        unavailableWeekdays = unavailableWeekdays,
+        unavailableDates = unavailableDates,
+        dailyUnavailableRanges = dailyUnavailableRanges,
         lock = lock
     )
 }

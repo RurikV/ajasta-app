@@ -251,7 +251,13 @@ class KotlinApiService {
                     pricePerSlot: parseFloat(resourceData.pricePerSlot) || 0,
                     unitsCount: parseInt(resourceData.unitsCount) || 1,
                     openTime: resourceData.openTime || '09:00',
-                    closeTime: resourceData.closeTime || '18:00'
+                    closeTime: resourceData.closeTime || '18:00',
+                    ownerId: resourceData.ownerId || null,
+                    // Availability fields
+                    active: resourceData.active === 'true' || resourceData.active === true,
+                    unavailableWeekdays: resourceData.unavailableWeekdays || '',
+                    unavailableDates: resourceData.unavailableDates || '',
+                    dailyUnavailableRanges: resourceData.dailyUnavailableRanges || ''
                 }
             };
 
@@ -295,7 +301,13 @@ class KotlinApiService {
                     unitsCount: parseInt(resourceData.unitsCount) || 1,
                     openTime: resourceData.openTime || '09:00',
                     closeTime: resourceData.closeTime || '18:00',
-                    lock: resourceData.lock || ''
+                    lock: resourceData.lock || '',
+                    ownerId: resourceData.ownerId || null,
+                    // Availability fields - these are essential for partial updates
+                    active: resourceData.active === 'true' || resourceData.active === true,
+                    unavailableWeekdays: resourceData.unavailableWeekdays || '',
+                    unavailableDates: resourceData.unavailableDates || '',
+                    dailyUnavailableRanges: resourceData.dailyUnavailableRanges || ''
                 }
             };
 
@@ -366,7 +378,13 @@ class KotlinApiService {
             closeTime: resource.closeTime,
             lock: resource.lock,
             rating: resource.rating || 0,
-            active: true // Kotlin backend doesn't have active field yet
+            reviewCount: resource.reviewCount || 0,
+            ownerId: resource.ownerId || '',
+            // Availability fields from backend
+            active: resource.active !== undefined ? resource.active : true,
+            unavailableWeekdays: resource.unavailableWeekdays || '',
+            unavailableDates: resource.unavailableDates || '',
+            dailyUnavailableRanges: resource.dailyUnavailableRanges || ''
         };
     }
 

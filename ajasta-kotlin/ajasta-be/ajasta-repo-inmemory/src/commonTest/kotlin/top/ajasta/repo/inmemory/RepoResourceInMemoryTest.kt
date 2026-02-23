@@ -37,3 +37,10 @@ class RepoResourceInMemorySearchTest : RepoResourceSearchTest() {
         initObjects = initObjects.toList()
     )
 }
+
+class RepoResourceInMemoryAvailabilityFieldsTest : RepoResourceAvailabilityFieldsTest() {
+    override val repo = RepoResourceInitialized(
+        RepoResourceInMemory(),
+        initObjects = initObjects.toList()
+    )
+}

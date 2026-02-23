@@ -304,6 +304,205 @@ class ResourceMapperTest {
         }
     }
 
+    // === New Fields Tests (active, unavailableWeekdays, unavailableDates, dailyUnavailableRanges) ===
+
+    @Test
+    fun `should map new availability fields from ResourceCreateRequest to context`() {
+        val request = ResourceCreateRequest(
+            requestId = "req-new-fields",
+            resource = ResourceCreateObject(
+                name = "Test Resource",
+                type = ResourceType.TURF_COURT,
+                pricePerSlot = 50.0,
+                active = false,
+                unavailableWeekdays = "0,6",
+                unavailableDates = "2025-01-01,2025-12-25",
+                dailyUnavailableRanges = "12:00-13:00;17:00-18:00"
+            )
+        )
+
+        val context = AjastaContext()
+        context.fromTransport(request)
+
+        assertEquals(AjastaCommand.CREATE_RESOURCE, context.command)
+        assertEquals(false, context.resourceRequest.active)
+        assertEquals("0,6", context.resourceRequest.unavailableWeekdays)
+        assertEquals("2025-01-01,2025-12-25", context.resourceRequest.unavailableDates)
+        assertEquals("12:00-13:00;17:00-18:00", context.resourceRequest.dailyUnavailableRanges)
+    }
+
+    @Test
+    fun `should map new availability fields from ResourceUpdateRequest to context`() {
+        val request = ResourceUpdateRequest(
+            requestId = "req-update-fields",
+            resource = ResourceUpdateObject(
+                id = "resource-update-123",
+                name = "Updated Resource",
+                pricePerSlot = 75.0,
+                active = true,
+                unavailableWeekdays = "1",
+                unavailableDates = "2025-07-04",
+                dailyUnavailableRanges = "14:00-15:00",
+                lock = "lock-123"
+            )
+        )
+
+        val context = AjastaContext()
+        context.fromTransport(request)
+
+        assertEquals(AjastaCommand.UPDATE_RESOURCE, context.command)
+        assertEquals("resource-update-123", context.resourceRequest.id.asString())
+        assertEquals(true, context.resourceRequest.active)
+        assertEquals("1", context.resourceRequest.unavailableWeekdays)
+        assertEquals("2025-07-04", context.resourceRequest.unavailableDates)
+        assertEquals("14:00-15:00", context.resourceRequest.dailyUnavailableRanges)
+        assertEquals("lock-123", context.resourceRequest.lock.asString())
+    }
+
+    @Test
+    fun `should map new availability fields from context to ResourceCreateResponse`() {
+        val context = AjastaContext(
+            command = AjastaCommand.CREATE_RESOURCE,
+            requestId = AjastaRequestId("req-response"),
+            resourceResponse = AjastaResource(
+                id = AjastaResourceId("resource-new-fields"),
+                name = "Test Resource",
+                type = AjastaResourceType.TURF_COURT,
+                pricePerSlot = 50.0,
+                active = false,
+                unavailableWeekdays = "0,6",
+                unavailableDates = "2025-01-01,2025-12-25",
+                dailyUnavailableRanges = "12:00-13:00;17:00-18:00"
+            )
+        )
+
+        val response = context.toTransport() as ResourceCreateResponse
+
+        assertEquals("createResource", response.responseType)
+        assertEquals(false, response.resource?.active)
+        assertEquals("0,6", response.resource?.unavailableWeekdays)
+        assertEquals("2025-01-01,2025-12-25", response.resource?.unavailableDates)
+        assertEquals("12:00-13:00;17:00-18:00", response.resource?.dailyUnavailableRanges)
+    }
+
+    @Test
+    fun `should map new availability fields from context to ResourceUpdateResponse`() {
+        val context = AjastaContext(
+            command = AjastaCommand.UPDATE_RESOURCE,
+            requestId = AjastaRequestId("req-update-response"),
+            resourceResponse = AjastaResource(
+                id = AjastaResourceId("resource-updated"),
+                name = "Updated Resource",
+                active = true,
+                unavailableWeekdays = "1",
+                unavailableDates = "2025-07-04",
+                dailyUnavailableRanges = "14:00-15:00",
+                lock = AjastaLock("new-lock")
+            )
+        )
+
+        val response = context.toTransport() as ResourceUpdateResponse
+
+        assertEquals("updateResource", response.responseType)
+        assertEquals(true, response.resource?.active)
+        assertEquals("1", response.resource?.unavailableWeekdays)
+        assertEquals("2025-07-04", response.resource?.unavailableDates)
+        assertEquals("14:00-15:00", response.resource?.dailyUnavailableRanges)
+    }
+
+    @Test
+    fun `should map empty availability fields as null in response`() {
+        val context = AjastaContext(
+            command = AjastaCommand.CREATE_RESOURCE,
+            requestId = AjastaRequestId("req-empty"),
+            resourceResponse = AjastaResource(
+                id = AjastaResourceId("resource-empty"),
+                name = "Always Available Resource",
+                type = AjastaResourceType.VOLLEYBALL_COURT,
+                pricePerSlot = 25.0,
+                active = true,
+                unavailableWeekdays = "",
+                unavailableDates = "",
+                dailyUnavailableRanges = ""
+            )
+        )
+
+        val response = context.toTransport() as ResourceCreateResponse
+
+        assertEquals(true, response.resource?.active)
+        assertNull(response.resource?.unavailableWeekdays)
+        assertNull(response.resource?.unavailableDates)
+        assertNull(response.resource?.dailyUnavailableRanges)
+    }
+
+    @Test
+    fun `should use default values for new fields when not provided in create request`() {
+        val request = ResourceCreateRequest(
+            requestId = "req-defaults",
+            resource = ResourceCreateObject(
+                name = "Minimal Resource",
+                type = ResourceType.PLAYGROUND,
+                pricePerSlot = 15.0
+                // active, unavailableWeekdays, unavailableDates, dailyUnavailableRanges not provided
+            )
+        )
+
+        val context = AjastaContext()
+        context.fromTransport(request)
+
+        assertEquals(true, context.resourceRequest.active) // Default is true
+        assertEquals("", context.resourceRequest.unavailableWeekdays) // Default is empty
+        assertEquals("", context.resourceRequest.unavailableDates) // Default is empty
+        assertEquals("", context.resourceRequest.dailyUnavailableRanges) // Default is empty
+    }
+
+    @Test
+    fun `should map all fields correctly in search response`() {
+        val context = AjastaContext(
+            command = AjastaCommand.SEARCH_RESOURCES,
+            requestId = AjastaRequestId("req-search"),
+            resourcesResponse = mutableListOf(
+                AjastaResource(
+                    id = AjastaResourceId("resource-1"),
+                    name = "Resource with all fields",
+                    type = AjastaResourceType.HAIRDRESSING_CHAIR,
+                    pricePerSlot = 40.0,
+                    active = false,
+                    unavailableWeekdays = "0",
+                    unavailableDates = "2025-01-01",
+                    dailyUnavailableRanges = "12:00-13:00"
+                ),
+                AjastaResource(
+                    id = AjastaResourceId("resource-2"),
+                    name = "Resource with defaults",
+                    type = AjastaResourceType.OTHER,
+                    pricePerSlot = 20.0,
+                    active = true,
+                    unavailableWeekdays = "",
+                    unavailableDates = "",
+                    dailyUnavailableRanges = ""
+                )
+            )
+        )
+
+        val response = context.toTransport() as ResourceSearchResponse
+
+        assertEquals("searchResources", response.responseType)
+        assertEquals(2, response.resources?.size)
+
+        // First resource - with values
+        assertEquals(false, response.resources?.get(0)?.active)
+        assertEquals("0", response.resources?.get(0)?.unavailableWeekdays)
+        assertEquals("2025-01-01", response.resources?.get(0)?.unavailableDates)
+        assertEquals("12:00-13:00", response.resources?.get(0)?.dailyUnavailableRanges)
+
+        // Second resource - defaults (empty becomes null)
+        assertEquals(true, response.resources?.get(1)?.active)
+        assertNull(response.resources?.get(1)?.unavailableWeekdays)
+        assertNull(response.resources?.get(1)?.unavailableDates)
+        assertNull(response.resources?.get(1)?.dailyUnavailableRanges)
+    }
+
     // === Availability Tests ===
 
     @Test

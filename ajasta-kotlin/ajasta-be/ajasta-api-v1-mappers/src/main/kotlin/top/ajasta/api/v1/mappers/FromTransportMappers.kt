@@ -176,7 +176,11 @@ private fun ResourceCreateObject.toInternal() = AjastaResource(
     unitsCount = unitsCount ?: 1,
     openTime = openTime ?: "",
     closeTime = closeTime ?: "",
-    ownerId = ownerId?.let { AjastaUserId(it) } ?: AjastaUserId.NONE
+    ownerId = ownerId?.let { AjastaUserId(it) } ?: AjastaUserId.NONE,
+    active = active ?: true,
+    unavailableWeekdays = unavailableWeekdays ?: "",
+    unavailableDates = unavailableDates ?: "",
+    dailyUnavailableRanges = dailyUnavailableRanges ?: ""
 )
 
 private fun ResourceUpdateObject.toInternalUpdate() = AjastaResource(
@@ -191,7 +195,11 @@ private fun ResourceUpdateObject.toInternalUpdate() = AjastaResource(
     openTime = openTime ?: "",
     closeTime = closeTime ?: "",
     lock = lock?.let { AjastaLock(it) } ?: AjastaLock.NONE,
-    ownerId = ownerId?.let { AjastaUserId(it) } ?: AjastaUserId.NONE
+    ownerId = ownerId?.let { AjastaUserId(it) } ?: AjastaUserId.NONE,
+    active = active ?: true,
+    unavailableWeekdays = unavailableWeekdays ?: "",
+    unavailableDates = unavailableDates ?: "",
+    dailyUnavailableRanges = dailyUnavailableRanges ?: ""
 )
 
 private fun ResourceFilter.toInternal() = AjastaResourceFilter(

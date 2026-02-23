@@ -720,7 +720,12 @@ export default class ApiService {
                     closeTime: resourceData.closeTime || '18:00',
                     lock: resourceData.lock || '',
                     // ownerId: always include it - empty string means "no owner", null/undefined won't be sent
-                    ...(resourceData.ownerId !== undefined && resourceData.ownerId !== null ? { ownerId: resourceData.ownerId } : {})
+                    ...(resourceData.ownerId !== undefined && resourceData.ownerId !== null ? { ownerId: resourceData.ownerId } : {}),
+                    // Availability fields - essential for partial updates
+                    active: resourceData.active === 'true' || resourceData.active === true,
+                    unavailableWeekdays: resourceData.unavailableWeekdays || '',
+                    unavailableDates: resourceData.unavailableDates || '',
+                    dailyUnavailableRanges: resourceData.dailyUnavailableRanges || ''
                 }
             };
 
@@ -890,7 +895,11 @@ export default class ApiService {
             closeTime: resource.closeTime,
             lock: resource.lock,
             rating: resource.rating || 0,
-            active: true,
+            // Availability fields from backend
+            active: resource.active !== undefined ? resource.active : true,
+            unavailableWeekdays: resource.unavailableWeekdays || '',
+            unavailableDates: resource.unavailableDates || '',
+            dailyUnavailableRanges: resource.dailyUnavailableRanges || '',
             ownerId: resource.ownerId || null
         };
     }
