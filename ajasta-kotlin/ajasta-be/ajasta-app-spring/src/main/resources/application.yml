@@ -9,7 +9,6 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://keycloak:8080/realms/ajasta}
           jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://keycloak:8080/realms/ajasta/protocol/openid-connect/certs}
 
 server:

@@ -53,9 +53,8 @@ services:
       # Application Configuration
       SPRING_PROFILES_ACTIVE: prod
       # Keycloak OAuth2 Configuration
-      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/ajasta
       KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/ajasta/protocol/openid-connect/certs
-      KEYCLOAK_AUTH_URL: http://keycloak:8080
+      KEYCLOAK_AUTH_URL: http://localhost:8180
       # JVM Configuration
       JAVA_OPTS: -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0
     ports:

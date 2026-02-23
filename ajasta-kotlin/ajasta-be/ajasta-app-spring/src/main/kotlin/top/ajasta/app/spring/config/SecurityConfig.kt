@@ -33,8 +33,8 @@ import reactor.core.publisher.Mono
 @EnableWebFluxSecurity
 class SecurityConfig {
 
-    @Value("\${spring.security.oauth2.resourceserver.jwt.issuer-uri:http://keycloak:8080/realms/ajasta}")
-    private lateinit var issuerUri: String
+    @Value("\${spring.security.oauth2.resourceserver.jwt.jwk-set-uri:http://keycloak:8080/realms/ajasta/protocol/openid-connect/certs}")
+    private lateinit var jwkSetUri: String
 
     /**
      * Main security filter chain configuration.
@@ -92,11 +92,13 @@ class SecurityConfig {
     }
 
     /**
-     * JWT decoder configured for Keycloak issuer.
+     * JWT decoder configured for Keycloak using JWK set URI directly.
+     * This avoids issuer validation issues when Keycloak uses different hostnames
+     * for internal (Docker network) vs external (browser) access.
      */
     @Bean
     fun reactiveJwtDecoder(): ReactiveJwtDecoder {
-        return NimbusReactiveJwtDecoder.withIssuerLocation(issuerUri).build()
+        return NimbusReactiveJwtDecoder.withJwkSetUri(jwkSetUri).build()
     }
 
     /**
