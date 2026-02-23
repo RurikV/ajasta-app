@@ -1119,14 +1119,45 @@ export default class ApiService {
 
     static async getAllRoles() {
         if (USE_KOTLIN_BACKEND) {
-            return {
-                statusCode: 200,
-                data: [
-                    { id: 1, name: 'ADMIN' },
-                    { id: 2, name: 'CUSTOMER' },
-                    { id: 3, name: 'RESOURCE_MANAGER' }
-                ]
-            };
+            // Fetch roles from Keycloak Admin API
+            try {
+                const keycloakUrl = '/keycloak';
+
+                // Get admin token
+                const adminTokenResponse = await axios.post(
+                    `${keycloakUrl}/realms/master/protocol/openid-connect/token`,
+                    new URLSearchParams({
+                        username: 'admin',
+                        password: 'admin123',
+                        grant_type: 'password',
+                        client_id: 'admin-cli'
+                    }),
+                    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+                );
+
+                const adminToken = adminTokenResponse.data.access_token;
+
+                // Fetch realm roles from Keycloak
+                const rolesResponse = await axios.get(
+                    `${keycloakUrl}/admin/realms/ajasta/roles`,
+                    {
+                        headers: { Authorization: `Bearer ${adminToken}` }
+                    }
+                );
+
+                // Filter out default-roles-* composite roles and map to expected format
+                const roles = rolesResponse.data
+                    .filter(r => !r.name.startsWith('default-roles-'))
+                    .map(r => ({
+                        id: r.id,
+                        name: r.name.toUpperCase()
+                    }));
+
+                return { statusCode: 200, data: roles };
+            } catch (error) {
+                console.error('Failed to fetch roles from Keycloak:', error);
+                return { statusCode: 500, data: [], message: 'Failed to fetch roles' };
+            }
         }
         const resp = await axios.get(`${this.BASE_URL}/roles`, {
             headers: this.getHeader()
@@ -1136,7 +1167,72 @@ export default class ApiService {
 
     static async updateUserRoles(userId, roles) {
         if (USE_KOTLIN_BACKEND) {
-            return { statusCode: 200, message: "Roles updated" };
+            // Update user roles in Keycloak
+            try {
+                const keycloakUrl = '/keycloak';
+
+                // Get admin token
+                const adminTokenResponse = await axios.post(
+                    `${keycloakUrl}/realms/master/protocol/openid-connect/token`,
+                    new URLSearchParams({
+                        username: 'admin',
+                        password: 'admin123',
+                        grant_type: 'password',
+                        client_id: 'admin-cli'
+                    }),
+                    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+                );
+
+                const adminToken = adminTokenResponse.data.access_token;
+
+                // Get all available realm roles
+                const allRolesResponse = await axios.get(
+                    `${keycloakUrl}/admin/realms/ajasta/roles`,
+                    { headers: { Authorization: `Bearer ${adminToken}` } }
+                );
+
+                // Get user's current roles
+                const currentRolesResponse = await axios.get(
+                    `${keycloakUrl}/admin/realms/ajasta/users/${userId}/role-mappings/realm`,
+                    { headers: { Authorization: `Bearer ${adminToken}` } }
+                );
+
+                const currentRoles = currentRolesResponse.data.map(r => r.name.toLowerCase());
+                const targetRoles = roles.map(r => r.toLowerCase());
+
+                // Find roles to add and remove
+                const rolesToAdd = allRolesResponse.data.filter(
+                    r => targetRoles.includes(r.name.toLowerCase()) && !currentRoles.includes(r.name.toLowerCase())
+                );
+                const rolesToRemove = currentRolesResponse.data.filter(
+                    r => !targetRoles.includes(r.name.toLowerCase()) && !r.name.startsWith('default-roles-')
+                );
+
+                // Add new roles
+                if (rolesToAdd.length > 0) {
+                    await axios.post(
+                        `${keycloakUrl}/admin/realms/ajasta/users/${userId}/role-mappings/realm`,
+                        rolesToAdd.map(r => ({ id: r.id, name: r.name })),
+                        { headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' } }
+                    );
+                }
+
+                // Remove old roles
+                if (rolesToRemove.length > 0) {
+                    await axios.delete(
+                        `${keycloakUrl}/admin/realms/ajasta/users/${userId}/role-mappings/realm`,
+                        {
+                            headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
+                            data: rolesToRemove.map(r => ({ id: r.id, name: r.name }))
+                        }
+                    );
+                }
+
+                return { statusCode: 200, message: "Roles updated successfully" };
+            } catch (error) {
+                console.error('Failed to update user roles in Keycloak:', error);
+                return { statusCode: 500, message: 'Failed to update roles' };
+            }
         }
         const resp = await axios.put(`${this.BASE_URL}/users/${userId}/roles`, roles, {
             headers: this.getHeader()
