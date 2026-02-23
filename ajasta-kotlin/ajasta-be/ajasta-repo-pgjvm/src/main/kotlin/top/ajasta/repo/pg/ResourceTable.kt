@@ -14,7 +14,11 @@ class ResourceTable(tableName: String) : Table(tableName) {
     val description = text(SqlFields.RESOURCE_DESCRIPTION).nullable()
     val resourceType = text(SqlFields.RESOURCE_TYPE)
     val location = text(SqlFields.RESOURCE_LOCATION).nullable()
+    val imageUrl = text(SqlFields.RESOURCE_IMAGE_URL).nullable()
     val pricePerSlot = double(SqlFields.RESOURCE_PRICE)
+    val unitsCount = integer(SqlFields.RESOURCE_UNITS_COUNT)
+    val openTime = text(SqlFields.RESOURCE_OPEN_TIME).nullable()
+    val closeTime = text(SqlFields.RESOURCE_CLOSE_TIME).nullable()
     val rating = double(SqlFields.RESOURCE_RATING)
     val ownerId = text(SqlFields.RESOURCE_OWNER_ID)
     val lock = text(SqlFields.LOCK)
@@ -29,7 +33,11 @@ class ResourceTable(tableName: String) : Table(tableName) {
         description = res[description] ?: "",
         type = AjastaResourceType.valueOf(res[resourceType]),
         location = res[location] ?: "",
+        imageUrl = res[imageUrl] ?: "",
         pricePerSlot = res[pricePerSlot],
+        unitsCount = res[unitsCount],
+        openTime = res[openTime] ?: "",
+        closeTime = res[closeTime] ?: "",
         rating = res[rating],
         ownerId = AjastaUserId(res[ownerId]),
         lock = AjastaLock(res[lock]),
@@ -44,7 +52,11 @@ class ResourceTable(tableName: String) : Table(tableName) {
         this[description] = resource.description.takeIf { it.isNotEmpty() }
         this[resourceType] = resource.type.name
         this[location] = resource.location.takeIf { it.isNotEmpty() }
+        this[imageUrl] = resource.imageUrl.takeIf { it.isNotEmpty() }
         this[pricePerSlot] = resource.pricePerSlot
+        this[unitsCount] = resource.unitsCount
+        this[openTime] = resource.openTime.takeIf { it.isNotEmpty() }
+        this[closeTime] = resource.closeTime.takeIf { it.isNotEmpty() }
         this[rating] = resource.rating
         this[ownerId] = resource.ownerId.asString()
         this[lock] = resource.lock.takeIf { it != AjastaLock.NONE }?.asString() ?: randomUuid()

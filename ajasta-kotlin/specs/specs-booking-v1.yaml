@@ -422,6 +422,9 @@ components:
           type: string
         closeTime:
           type: string
+        ownerId:
+          type: string
+          description: ID of the user who owns/manages this resource
 
     ResourceUpdateObject:
       type: object
@@ -451,6 +454,9 @@ components:
           type: string
         lock:
           type: string
+        ownerId:
+          type: string
+          description: ID of the user who owns/manages this resource
 
     ResourceReadObject:
       type: object

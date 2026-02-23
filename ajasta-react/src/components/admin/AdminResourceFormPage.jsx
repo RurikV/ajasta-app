@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import ApiService from '../../services/ApiService';
+import keycloakService from '../../services/KeycloakService';
 import { useError } from '../common/ErrorDisplay';
 
 const AdminResourceFormPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { ErrorDisplay, showError } = useError();
+
+  const isAdmin = keycloakService.isAdmin();
+  const currentUserId = keycloakService.getUserId();
+  const isManager = !isAdmin && keycloakService.hasRole('manager');
 
   const [resource, setResource] = useState({
     name: '',
@@ -22,17 +27,43 @@ const AdminResourceFormPage = () => {
     unavailableWeekdays: '', // CSV of 0-6 (0=Sun)
     unavailableDates: '', // CSV yyyy-MM-dd
     dailyUnavailableRanges: '', // e.g., 12:00-13:00;16:00-17:00
-    managerIds: []
+    ownerId: '' // Single resource manager/owner
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [managers, setManagers] = useState([]);
+  const [managerOwnedResource, setManagerOwnedResource] = useState(null);
+  const [isCheckingOwnership, setIsCheckingOwnership] = useState(false);
+
+  // Check if manager already owns a resource
+  const checkManagerOwnership = async () => {
+    if (!isManager || !currentUserId || id) {
+      // Skip check for admins, users without ID, or when editing existing resource
+      return;
+    }
+
+    setIsCheckingOwnership(true);
+    try {
+      const resp = await ApiService.getAllResources({ ownerId: currentUserId });
+      if (resp.statusCode === 200 && resp.data && resp.data.length > 0) {
+        setManagerOwnedResource(resp.data[0]);
+      }
+    } catch (e) {
+      // Silently ignore
+    } finally {
+      setIsCheckingOwnership(false);
+    }
+  };
 
   const loadManagers = async () => {
     try {
       const resp = await ApiService.getAllUsers();
       const users = resp?.data || [];
-      const mgrs = users.filter(u => Array.isArray(u.roles) && u.roles.some(r => (r.name || '').toUpperCase() === 'RESOURCE_MANAGER'));
+      // Filter users with MANAGER or ADMIN role
+      const mgrs = users.filter(u => Array.isArray(u.roles) && u.roles.some(r => {
+        const roleName = (r.name || '').toUpperCase();
+        return roleName === 'MANAGER' || roleName === 'ADMIN' || roleName === 'RESOURCE_MANAGER';
+      }));
       setManagers(mgrs);
     } catch (e) {
       // silently ignore; errors will be surfaced when saving anyway
@@ -41,6 +72,7 @@ const AdminResourceFormPage = () => {
 
   useEffect(() => {
     loadManagers();
+    checkManagerOwnership();
     if (id) {
       fetchResource();
     }
@@ -57,7 +89,7 @@ const AdminResourceFormPage = () => {
           active: !!response.data.active,
           pricePerSlot: response.data.pricePerSlot || '',
           imageFile: null,
-          managerIds: Array.isArray(response.data.managerIds) ? response.data.managerIds : []
+          ownerId: response.data.ownerId || ''
         });
       }
     } catch (error) {
@@ -103,14 +135,6 @@ const AdminResourceFormPage = () => {
     });
   };
 
-  const handleManagerToggle = (userId) => {
-    setResource(prev => {
-      const current = new Set(prev.managerIds || []);
-      if (current.has(userId)) current.delete(userId); else current.add(userId);
-      return { ...prev, managerIds: Array.from(current) };
-    });
-  };
-
   const handleFileChange = (e) => {
     setResource(prev => ({ ...prev, imageFile: e.target.files[0] }));
   };
@@ -138,8 +162,9 @@ const AdminResourceFormPage = () => {
       if (resource.unavailableWeekdays !== undefined) formData.append('unavailableWeekdays', resource.unavailableWeekdays);
       if (resource.unavailableDates !== undefined) formData.append('unavailableDates', resource.unavailableDates);
       if (resource.dailyUnavailableRanges !== undefined) formData.append('dailyUnavailableRanges', resource.dailyUnavailableRanges);
-      if (Array.isArray(resource.managerIds)) {
-        resource.managerIds.forEach(mId => formData.append('managerIds', String(mId)));
+      // Admins can set/clear ownerId - always send it for updates to preserve or change the value
+      if (isAdmin) {
+        formData.append('ownerId', resource.ownerId || '');
       }
 
       let response;
@@ -152,6 +177,9 @@ const AdminResourceFormPage = () => {
 
       if (response.statusCode === 200) {
         navigate('/admin/resources');
+      } else {
+        // Show error message from API response
+        showError(response.message || 'Failed to save resource');
       }
     } catch (error) {
       showError(error.response?.data?.message || error.message);
@@ -174,6 +202,37 @@ const AdminResourceFormPage = () => {
         </button>
       </div>
 
+      {/* Manager already owns a resource - show restriction */}
+      {isCheckingOwnership && (
+        <div className="alert alert-info">Checking resource ownership...</div>
+      )}
+
+      {!id && managerOwnedResource && (
+        <div className="alert alert-warning" style={{
+          padding: '15px',
+          backgroundColor: '#fff3cd',
+          border: '1px solid #ffc107',
+          borderRadius: '4px',
+          marginBottom: '20px'
+        }}>
+          <strong>Resource Limit Reached:</strong> You already own a resource (
+          <strong>{managerOwnedResource.name}</strong>).
+          As a manager, you can only create one resource.
+          {managerOwnedResource.id && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ marginLeft: '10px' }}
+              onClick={() => navigate(`/admin/resources/edit/${managerOwnedResource.id}`)}
+            >
+              Edit Your Resource
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Show form only if not blocked */}
+      {(!isManager || !managerOwnedResource || id) && (
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label htmlFor="name">Name *</label>
@@ -334,26 +393,29 @@ const AdminResourceFormPage = () => {
           />
         </div>
         
-        <div className="form-group">
-          <label>Resource Managers</label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-            {managers.length === 0 ? (
-              <small style={{ color: '#666' }}>No resource managers available</small>
-            ) : (
-              managers.map(m => (
-                <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1px solid #eee', borderRadius: 8, padding: '6px 10px' }}>
-                  <input
-                    type="checkbox"
-                    checked={(resource.managerIds || []).includes(m.id)}
-                    onChange={() => handleManagerToggle(m.id)}
-                  />
-                  <span>{m.name || m.email}</span>
-                  {m.email && <span style={{ color: '#999', fontSize: 12 }}>({m.email})</span>}
-                </label>
-              ))
-            )}
+        {/* Resource Manager - Admin only */}
+        {isAdmin && (
+          <div className="form-group">
+            <label htmlFor="ownerId">Resource Manager (Owner)</label>
+            <select
+              id="ownerId"
+              name="ownerId"
+              value={resource.ownerId || ''}
+              onChange={handleInputChange}
+            >
+              <option value="">Select a manager (optional)</option>
+              {managers.map(m => (
+                <option key={m.id} value={m.id}>
+                  {m.name || m.email} {m.email && `(${m.email})`}
+                </option>
+              ))}
+            </select>
+            <small style={{ color: '#666', display: 'block', marginTop: '4px' }}>
+              Assign a resource manager who will own and manage this resource.
+              A manager can only be assigned to one resource.
+            </small>
           </div>
-        </div>
+        )}
         
         <div className="form-actions">
           <button
@@ -365,6 +427,7 @@ const AdminResourceFormPage = () => {
           </button>
         </div>
       </form>
+      )}
     </div>
   );
 };

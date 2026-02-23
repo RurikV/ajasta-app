@@ -639,6 +639,10 @@ export default class ApiService {
                 ? Object.fromEntries(formData.entries())
                 : formData;
 
+            // Parse pricePerSlot - only include if it's a valid positive number
+            const parsedPrice = parseFloat(resourceData.pricePerSlot);
+            const pricePerSlot = !isNaN(parsedPrice) && parsedPrice > 0 ? parsedPrice : undefined;
+
             const requestBody = {
                 requestType: "createResource",
                 resource: {
@@ -647,10 +651,12 @@ export default class ApiService {
                     type: resourceData.type || 'OTHER',
                     location: resourceData.location || '',
                     imageUrl: resourceData.imageUrl || '',
-                    pricePerSlot: parseFloat(resourceData.pricePerSlot) || 0,
+                    pricePerSlot: pricePerSlot,
                     unitsCount: parseInt(resourceData.unitsCount) || 1,
                     openTime: resourceData.openTime || '09:00',
-                    closeTime: resourceData.closeTime || '18:00'
+                    closeTime: resourceData.closeTime || '18:00',
+                    // ownerId: include if provided
+                    ...(resourceData.ownerId !== undefined && resourceData.ownerId !== null && resourceData.ownerId !== '' ? { ownerId: resourceData.ownerId } : {})
                 }
             };
 
@@ -658,6 +664,15 @@ export default class ApiService {
                 const resp = await axios.post(`${this.BASE_URL}/v1/resources/create`, requestBody, {
                     headers: this.getHeader()
                 });
+
+                // Check if the backend returned validation errors in the response body
+                if (resp.data?.errors && resp.data.errors.length > 0) {
+                    return {
+                        statusCode: 400,
+                        message: resp.data.errors.map(e => e.message).join(', ')
+                    };
+                }
+
                 return {
                     statusCode: 200,
                     data: this.transformResourceFromBackend(resp.data.resource),
@@ -686,6 +701,10 @@ export default class ApiService {
                 ? Object.fromEntries(formData.entries())
                 : formData;
 
+            // Parse pricePerSlot - only include if it's a valid positive number
+            const parsedPrice = parseFloat(resourceData.pricePerSlot);
+            const pricePerSlot = !isNaN(parsedPrice) && parsedPrice > 0 ? parsedPrice : undefined;
+
             const requestBody = {
                 requestType: "updateResource",
                 resource: {
@@ -695,11 +714,13 @@ export default class ApiService {
                     type: resourceData.type || 'OTHER',
                     location: resourceData.location || '',
                     imageUrl: resourceData.imageUrl || '',
-                    pricePerSlot: parseFloat(resourceData.pricePerSlot) || 0,
+                    pricePerSlot: pricePerSlot,
                     unitsCount: parseInt(resourceData.unitsCount) || 1,
                     openTime: resourceData.openTime || '09:00',
                     closeTime: resourceData.closeTime || '18:00',
-                    lock: resourceData.lock || ''
+                    lock: resourceData.lock || '',
+                    // ownerId: always include it - empty string means "no owner", null/undefined won't be sent
+                    ...(resourceData.ownerId !== undefined && resourceData.ownerId !== null ? { ownerId: resourceData.ownerId } : {})
                 }
             };
 
@@ -707,15 +728,34 @@ export default class ApiService {
                 const resp = await axios.post(`${this.BASE_URL}/v1/resources/update`, requestBody, {
                     headers: this.getHeader()
                 });
+
+                // Check if the backend returned validation errors in the response body
+                // Backend returns { responseType, errors: [...] } when validation fails
+                if (resp.data?.errors && resp.data.errors.length > 0) {
+                    return {
+                        statusCode: 400,
+                        message: resp.data.errors.map(e => e.message).join(', ')
+                    };
+                }
+
                 return {
                     statusCode: 200,
                     data: this.transformResourceFromBackend(resp.data.resource),
                     message: "Resource updated successfully"
                 };
             } catch (error) {
+                const errorData = error.response?.data;
+                let errorMessage = error.message;
+
+                if (errorData?.errors?.length > 0) {
+                    errorMessage = errorData.errors.map(e => e.message).join(', ');
+                } else if (errorData?.message) {
+                    errorMessage = errorData.message;
+                }
+
                 return {
                     statusCode: error.response?.status || 500,
-                    message: error.response?.data?.errors?.[0]?.message || error.message
+                    message: errorMessage
                 };
             }
         }
@@ -806,6 +846,9 @@ export default class ApiService {
                 if (params.search || params.name) {
                     requestBody.resourceFilter.location = params.search || params.name;
                 }
+                if (params.ownerId) {
+                    requestBody.resourceFilter.ownerId = params.ownerId;
+                }
 
                 const resp = await axios.post(`${this.BASE_URL}/v1/resources/search`, requestBody, {
                     headers: this.getHeader()
@@ -847,7 +890,8 @@ export default class ApiService {
             closeTime: resource.closeTime,
             lock: resource.lock,
             rating: resource.rating || 0,
-            active: true
+            active: true,
+            ownerId: resource.ownerId || null
         };
     }
 

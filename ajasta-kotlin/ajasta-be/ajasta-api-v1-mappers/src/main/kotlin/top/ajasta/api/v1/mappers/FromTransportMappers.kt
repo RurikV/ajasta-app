@@ -175,7 +175,8 @@ private fun ResourceCreateObject.toInternal() = AjastaResource(
     pricePerSlot = pricePerSlot ?: 0.0,
     unitsCount = unitsCount ?: 1,
     openTime = openTime ?: "",
-    closeTime = closeTime ?: ""
+    closeTime = closeTime ?: "",
+    ownerId = ownerId?.let { AjastaUserId(it) } ?: AjastaUserId.NONE
 )
 
 private fun ResourceUpdateObject.toInternalUpdate() = AjastaResource(
@@ -189,7 +190,8 @@ private fun ResourceUpdateObject.toInternalUpdate() = AjastaResource(
     unitsCount = unitsCount ?: 1,
     openTime = openTime ?: "",
     closeTime = closeTime ?: "",
-    lock = lock?.let { AjastaLock(it) } ?: AjastaLock.NONE
+    lock = lock?.let { AjastaLock(it) } ?: AjastaLock.NONE,
+    ownerId = ownerId?.let { AjastaUserId(it) } ?: AjastaUserId.NONE
 )
 
 private fun ResourceFilter.toInternal() = AjastaResourceFilter(
