@@ -345,11 +345,13 @@ const ResourceBookingPage = () => {
 
     // Date unavailability checks (weekday and specific dates)
     if (resource.unavailableWeekdays) {
-      const list = resource.unavailableWeekdays.split(',').map(s => s.trim()).filter(Boolean);
+      // Support both comma and semicolon as separators
+      const list = resource.unavailableWeekdays.split(/[,;]/).map(s => s.trim()).filter(Boolean);
       if (weekdayIndex != null && list.includes(String(weekdayIndex))) return true;
     }
     if (resource.unavailableDates) {
-      const dates = resource.unavailableDates.split(',').map(s => s.trim()).filter(Boolean);
+      // Support both comma and semicolon as separators
+      const dates = resource.unavailableDates.split(/[,;]/).map(s => s.trim()).filter(Boolean);
       if (dates.includes(date)) return true;
     }
 
