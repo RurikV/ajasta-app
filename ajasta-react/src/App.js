@@ -8,7 +8,7 @@ import LoginPage from "./components/auth/LoginPage";
 import ProfilePage from "./components/profile_cart/ProfilePage";
 import UpdateProfilePage from "./components/profile_cart/UpdateProfilePage";
 import OrderHistoryPage from "./components/profile_cart/OrderHistoryPage";
-import { AdminRoute, CustomerRoute, ProtectedRoute } from "./services/Guard";
+import { AdminRoute, CustomerRoute, ProtectedRoute, ManagerRoute } from "./services/Guard";
 import ProcessPaymenttPage from "./components/payment/ProcessPaymenttPage";
 import AdminLayout from "./components/admin/navbar/AdminLayout";
 import AdminOrdersPage from "./components/admin/AdminOrdersPage";
@@ -56,8 +56,8 @@ function App() {
 
 
           {/* ADMIN ROUTES */}
-
-          <Route path="/admin" element={<AdminRoute element={<AdminLayout />} />}>
+          {/* ManagerRoute allows admin/manager/resource_manager to access admin panel */}
+          <Route path="/admin" element={<ManagerRoute element={<AdminLayout />} />}>
 
             <Route path="resources" element={<AdminResourcesPage />} />
             <Route path="resources/new" element={<AdminResourceFormPage />} />
@@ -69,10 +69,12 @@ function App() {
             <Route path="payments" element={<AdminPaymentsPage />} />
             <Route path="payments/:id" element={<AdminPaymentDetailPage />} />
 
-            <Route path="users" element={<AdminUsersPage />} />
+            {/* Users page is admin-only, not accessible to managers */}
+            <Route path="users" element={<AdminRoute element={<AdminUsersPage />} />} />
 
             <Route index element={<AdminDashboardPage />} />
-            <Route path="register" element={<AdminUserRegistration />} />
+            {/* User registration is admin-only, not accessible to managers */}
+            <Route path="register" element={<AdminRoute element={<AdminUserRegistration />} />} />
           </Route>
 
           <Route path="*" element={<Navigate to={"/"} />} />

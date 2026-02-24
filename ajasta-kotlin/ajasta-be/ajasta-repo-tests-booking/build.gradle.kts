@@ -11,8 +11,6 @@ kotlin {
 
                 implementation(projects.ajastaCommon)
                 implementation(projects.ajastaRepoCommon)
-                // Booking tests need Resource types for resourceId reference
-                implementation(projects.ajastaRepoTestsResource)
                 implementation(libs.kotlinx.coroutines.core)
                 implementation(libs.kotlinx.coroutines.test)
             }

@@ -21,9 +21,10 @@ const AdminResourcesPage = () => {
       if (isAdmin) {
         setResources(all);
       } else {
+        // Non-admin managers see only resources they own
         const userId = profileResp?.data?.id;
         const filtered = (userId != null)
-          ? all.filter(r => Array.isArray(r.managerIds) && r.managerIds.includes(userId))
+          ? all.filter(r => r.ownerId === userId)
           : [];
         setResources(filtered);
       }

@@ -90,8 +90,41 @@ export const ProtectedRoute = ({ element: Component }) => {
 }
 
 /**
+ * Manager Route Guard
+ * Requires 'admin' or 'manager' or 'resource_manager' role
+ * Use this for admin panel access that should be available to managers
+ */
+export const ManagerRoute = ({ element: Component }) => {
+    const { isAuthenticated, isLoading, hasRole, login } = useAuth();
+    const location = useLocation();
+
+    if (isLoading) {
+        return <LoadingSpinner />;
+    }
+
+    if (!isAuthenticated) {
+        login();
+        return null;
+    }
+
+    // Allow access to admin, manager, or resource_manager roles
+    const isManager = hasRole('admin') || hasRole('manager') || hasRole('resource_manager');
+
+    return isManager ? (
+        Component
+    ) : (
+        <div className="container mt-5">
+            <div className="alert alert-danger">
+                <h4>Access Denied</h4>
+                <p>You need manager or administrator privileges to access this page.</p>
+            </div>
+        </div>
+    )
+}
+
+/**
  * Resource Manager Route Guard
- * Requires 'admin' or 'resource_manager' role
+ * Requires 'admin' or 'manager' or 'resource_manager' role
  */
 export const ResourceManagerRoute = ({ element: Component }) => {
     const { isAuthenticated, isLoading, hasRole, login } = useAuth();
@@ -106,7 +139,7 @@ export const ResourceManagerRoute = ({ element: Component }) => {
         return null;
     }
 
-    const isResourceManager = hasRole('admin') || hasRole('resource_manager');
+    const isResourceManager = hasRole('admin') || hasRole('manager') || hasRole('resource_manager');
 
     return isResourceManager ? (
         Component
