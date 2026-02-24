@@ -18,7 +18,8 @@ kotlin {
                 implementation(kotlin("test"))
                 implementation(libs.kotest.assertions)
                 implementation(libs.kotlinx.coroutines.test)
-                implementation(projects.ajastaRepoTests)
+                implementation(projects.ajastaRepoTestsResource)
+                implementation(projects.ajastaRepoTestsBooking)
             }
         }
 

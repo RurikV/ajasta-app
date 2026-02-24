@@ -1,7 +1,7 @@
 package top.ajasta.repo.inmemory
 
 import top.ajasta.repo.RepoResourceInitialized
-import top.ajasta.repo.tests.*
+import top.ajasta.repo.tests.resource.*
 
 class RepoResourceInMemoryCreateTest : RepoResourceCreateTest() {
     override val repo = RepoResourceInitialized(

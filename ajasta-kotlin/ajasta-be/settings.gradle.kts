@@ -35,7 +35,8 @@ include(":ajasta-biz")
 // Repository Modules
 include(":ajasta-repo-common")
 include(":ajasta-repo-inmemory")
-include(":ajasta-repo-tests")
+include(":ajasta-repo-tests-resource")
+include(":ajasta-repo-tests-booking")
 include(":ajasta-repo-pgjvm")
 
 // App Modules

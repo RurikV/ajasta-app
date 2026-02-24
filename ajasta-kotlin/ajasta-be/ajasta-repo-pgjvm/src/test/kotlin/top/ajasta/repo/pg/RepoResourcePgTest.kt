@@ -15,7 +15,7 @@ import top.ajasta.repo.DbResourceFilterRequest
 import top.ajasta.repo.DbResourceIdRequest
 import top.ajasta.repo.DbResourceRequest
 import top.ajasta.repo.IDbResourceResponse
-import top.ajasta.repo.tests.runRepoTest
+import top.ajasta.repo.tests.resource.runRepoTest
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertIs

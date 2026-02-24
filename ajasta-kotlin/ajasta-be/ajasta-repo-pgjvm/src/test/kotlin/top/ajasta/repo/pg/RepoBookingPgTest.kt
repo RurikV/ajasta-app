@@ -16,7 +16,7 @@ import top.ajasta.repo.DbBookingFilterRequest
 import top.ajasta.repo.DbBookingIdRequest
 import top.ajasta.repo.DbBookingRequest
 import top.ajasta.repo.IDbBookingResponse
-import top.ajasta.repo.tests.runRepoTest
+import top.ajasta.repo.tests.booking.runRepoTest
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertIs

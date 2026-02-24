@@ -1,7 +1,7 @@
 package top.ajasta.repo.inmemory
 
 import top.ajasta.repo.RepoBookingInitialized
-import top.ajasta.repo.tests.*
+import top.ajasta.repo.tests.booking.*
 
 class RepoBookingInMemoryCreateTest : RepoBookingCreateTest() {
     override val repo = RepoBookingInitialized(

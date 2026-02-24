@@ -16,7 +16,8 @@ dependencies {
     implementation(libs.bundles.exposed)
 
     testImplementation(kotlin("test-junit"))
-    testImplementation(project(":ajasta-repo-tests"))
+    testImplementation(project(":ajasta-repo-tests-resource"))
+    testImplementation(project(":ajasta-repo-tests-booking"))
     testImplementation(libs.bundles.testcontainers)
     testImplementation(libs.logback.classic)
     testImplementation(libs.kotlinx.coroutines.test)
