@@ -83,13 +83,22 @@ const AdminResourceFormPage = () => {
     try {
       const response = await ApiService.getResourceById(id);
       if (response.statusCode === 200) {
+        const resourceData = response.data;
+
+        // Ownership validation: non-admin managers can only edit their own resources
+        if (!isAdmin && currentUserId && resourceData.ownerId !== currentUserId) {
+          showError('You do not have permission to edit this resource. You can only edit resources you own.');
+          navigate('/admin/resources');
+          return;
+        }
+
         setResource({
-          ...response.data,
-          type: response.data.type || '',
-          active: !!response.data.active,
-          pricePerSlot: response.data.pricePerSlot || '',
+          ...resourceData,
+          type: resourceData.type || '',
+          active: !!resourceData.active,
+          pricePerSlot: resourceData.pricePerSlot || '',
           imageFile: null,
-          ownerId: response.data.ownerId || ''
+          ownerId: resourceData.ownerId || ''
         });
       }
     } catch (error) {

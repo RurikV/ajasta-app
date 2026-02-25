@@ -204,8 +204,9 @@ export default class ApiService {
 
     // Check if the user is a resource manager
     // Check for both 'manager' (Keycloak role) and 'RESOURCE_MANAGER' (legacy)
+    // Admins are also considered resource managers
     static isResourceManager() {
-        return this.hasRole('manager') || this.hasRole('RESOURCE_MANAGER');
+        return this.isAdmin() || this.hasRole('manager') || this.hasRole('RESOURCE_MANAGER');
     }
 
 

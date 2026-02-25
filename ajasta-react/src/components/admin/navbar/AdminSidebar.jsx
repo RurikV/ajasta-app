@@ -24,6 +24,7 @@ const AdminSidebar = () => {
 
   const isAdmin = ApiService.isAdmin();
   const isRM = ApiService.isResourceManager();
+  const isManager = ApiService.hasRole('manager');
 
   return (
     <div className="admin-sidebar">
@@ -52,10 +53,10 @@ const AdminSidebar = () => {
               <span>Resources</span>
             </NavLink>
           </li>
-          {(isAdmin || isRM) && (
+          {(isAdmin || isManager || isRM) && (
             <li>
-              <NavLink 
-                to="/admin/orders" 
+              <NavLink
+                to="/admin/orders"
                 className={location.pathname.includes('/admin/orders') ? 'active' : ''}
               >
                 <FontAwesomeIcon icon={faShoppingBag} />

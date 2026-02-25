@@ -1,5 +1,4 @@
 import React from 'react';
-import { Navigate, useLocation } from "react-router-dom"
 import { useAuth } from "../context/AuthContext"
 
 /**
@@ -14,12 +13,23 @@ const LoadingSpinner = () => (
 );
 
 /**
+ * Access Denied component for consistent error display
+ */
+const AccessDenied = ({ title, message }) => (
+    <div className="container mt-5">
+        <div className="alert alert-danger">
+            <h4>{title || 'Access Denied'}</h4>
+            <p>{message || 'You do not have permission to access this page.'}</p>
+        </div>
+    </div>
+);
+
+/**
  * Customer Route Guard
  * Requires authentication with 'user' role
  */
 export const CustomerRoute = ({ element: Component }) => {
     const { isAuthenticated, isLoading, hasRole, login } = useAuth();
-    const location = useLocation();
 
     if (isLoading) {
         return <LoadingSpinner />;
@@ -36,7 +46,7 @@ export const CustomerRoute = ({ element: Component }) => {
     return isCustomer ? (
         Component
     ) : (
-        <Navigate to="/login" replace state={{ from: location }} />
+        <AccessDenied title="Access Denied" message="You need to be logged in as a customer to access this page." />
     )
 }
 
@@ -46,7 +56,6 @@ export const CustomerRoute = ({ element: Component }) => {
  */
 export const AdminRoute = ({ element: Component }) => {
     const { isAuthenticated, isLoading, isAdmin, login } = useAuth();
-    const location = useLocation();
 
     if (isLoading) {
         return <LoadingSpinner />;
@@ -60,12 +69,7 @@ export const AdminRoute = ({ element: Component }) => {
     return isAdmin ? (
         Component
     ) : (
-        <div className="container mt-5">
-            <div className="alert alert-danger">
-                <h4>Access Denied</h4>
-                <p>You need administrator privileges to access this page.</p>
-            </div>
-        </div>
+        <AccessDenied title="Access Denied" message="You need administrator privileges to access this page." />
     )
 }
 
@@ -96,7 +100,6 @@ export const ProtectedRoute = ({ element: Component }) => {
  */
 export const ManagerRoute = ({ element: Component }) => {
     const { isAuthenticated, isLoading, hasRole, login } = useAuth();
-    const location = useLocation();
 
     if (isLoading) {
         return <LoadingSpinner />;
@@ -113,12 +116,7 @@ export const ManagerRoute = ({ element: Component }) => {
     return isManager ? (
         Component
     ) : (
-        <div className="container mt-5">
-            <div className="alert alert-danger">
-                <h4>Access Denied</h4>
-                <p>You need manager or administrator privileges to access this page.</p>
-            </div>
-        </div>
+        <AccessDenied title="Access Denied" message="You need manager or administrator privileges to access this page." />
     )
 }
 
@@ -128,7 +126,6 @@ export const ManagerRoute = ({ element: Component }) => {
  */
 export const ResourceManagerRoute = ({ element: Component }) => {
     const { isAuthenticated, isLoading, hasRole, login } = useAuth();
-    const location = useLocation();
 
     if (isLoading) {
         return <LoadingSpinner />;
@@ -144,6 +141,6 @@ export const ResourceManagerRoute = ({ element: Component }) => {
     return isResourceManager ? (
         Component
     ) : (
-        <Navigate to="/login" replace state={{ from: location }} />
+        <AccessDenied title="Access Denied" message="You need resource manager privileges to access this page." />
     )
 }
