@@ -39,6 +39,7 @@ dependencies {
     // Tests
     testImplementation(kotlin("test-junit5"))
     testImplementation(libs.spring.test)
+    testImplementation("org.springframework.security:spring-security-test")
     testImplementation(libs.spring.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
 }

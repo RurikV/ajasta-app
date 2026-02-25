@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.http.MediaType
+import org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.mockJwt
 import org.springframework.test.web.reactive.server.WebTestClient
 import top.ajasta.api.v1.models.*
 
@@ -32,7 +33,7 @@ class ResourceControllerV1Test {
             )
         )
 
-        webTestClient.post()
+        webTestClient.mutateWith(mockJwt()).post()
             .uri("/v1/resources/create")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)
@@ -53,7 +54,7 @@ class ResourceControllerV1Test {
             )
         )
 
-        webTestClient.post()
+        webTestClient.mutateWith(mockJwt()).post()
             .uri("/v1/resources/read")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)
@@ -75,7 +76,7 @@ class ResourceControllerV1Test {
             )
         )
 
-        webTestClient.post()
+        webTestClient.mutateWith(mockJwt()).post()
             .uri("/v1/resources/update")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)
@@ -95,7 +96,7 @@ class ResourceControllerV1Test {
             )
         )
 
-        webTestClient.post()
+        webTestClient.mutateWith(mockJwt()).post()
             .uri("/v1/resources/delete")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)
@@ -116,7 +117,7 @@ class ResourceControllerV1Test {
             )
         )
 
-        webTestClient.post()
+        webTestClient.mutateWith(mockJwt()).post()
             .uri("/v1/resources/search")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)
@@ -137,7 +138,7 @@ class ResourceControllerV1Test {
             dateTo = "2025-03-01T23:59:59Z"
         )
 
-        webTestClient.post()
+        webTestClient.mutateWith(mockJwt()).post()
             .uri("/v1/resources/availability")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)

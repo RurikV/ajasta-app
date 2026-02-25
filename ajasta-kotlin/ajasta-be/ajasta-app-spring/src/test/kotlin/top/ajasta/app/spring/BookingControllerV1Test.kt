@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.http.MediaType
+import org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.mockJwt
 import org.springframework.test.web.reactive.server.WebTestClient
 import top.ajasta.api.v1.models.*
 
@@ -38,7 +39,7 @@ class BookingControllerV1Test {
             )
         )
 
-        webTestClient.post()
+        webTestClient.mutateWith(mockJwt()).post()
             .uri("/v1/bookings/create")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)
@@ -60,7 +61,7 @@ class BookingControllerV1Test {
             )
         )
 
-        webTestClient.post()
+        webTestClient.mutateWith(mockJwt()).post()
             .uri("/v1/bookings/read")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)
@@ -82,7 +83,7 @@ class BookingControllerV1Test {
             )
         )
 
-        webTestClient.post()
+        webTestClient.mutateWith(mockJwt()).post()
             .uri("/v1/bookings/update")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)
@@ -102,7 +103,7 @@ class BookingControllerV1Test {
             )
         )
 
-        webTestClient.post()
+        webTestClient.mutateWith(mockJwt()).post()
             .uri("/v1/bookings/delete")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)
@@ -123,7 +124,7 @@ class BookingControllerV1Test {
             )
         )
 
-        webTestClient.post()
+        webTestClient.mutateWith(mockJwt()).post()
             .uri("/v1/bookings/search")
             .contentType(MediaType.APPLICATION_JSON)
             .bodyValue(request)

@@ -53,6 +53,8 @@ class SecurityConfig {
                     .pathMatchers("/actuator/health", "/actuator/info").permitAll()
                     .pathMatchers("/v1/resources/search").permitAll()
                     .pathMatchers("/v1/resources/availability").permitAll()
+                    // Swagger/OpenAPI documentation endpoints
+                    .pathMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**", "/api-docs/**", "/webjars/**").permitAll()
                     // Admin endpoints - permitAll for testing, should be hasRole("ADMIN") in production
                     .pathMatchers("/admin/**").permitAll()
                     .pathMatchers("/v1/admin/**").hasRole("ADMIN")
