@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: ajasta-app-spring
+  jackson:
+    property-naming-strategy: LOWER_CAMEL_CASE
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://keycloak:8080/realms/ajasta/protocol/openid-connect/certs}
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /api-docs
+
+# Keycloak configuration
+keycloak:
+  realm: ajasta
+  resource: ajasta-backend
+  auth-server-url: ${KEYCLOAK_AUTH_URL:http://keycloak:8080}
+  ssl-required: external
+  bearer-only: true
+  confidential-port: 0
+
+logging:
+  level:
+    root: INFO
+    top.ajasta: DEBUG
+    org.springframework.security: DEBUG

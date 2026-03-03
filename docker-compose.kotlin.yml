@@ -1,0 +1,239 @@
+---
+# Docker Compose for Ajasta Kotlin Backend
+# Full solution: PostgreSQL + Kotlin Backend + React Frontend + Monitoring
+# Usage: podman-compose -f docker-compose.kotlin.yml up
+
+services:
+  # ============================================
+  # Database
+  # ============================================
+  ajasta-postgres:
+    image: postgres:16-alpine
+    container_name: ajasta-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ajastadb
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: adminpw
+    ports:
+      - "15432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/volumes/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - ajasta-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d ajastadb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ============================================
+  # Kotlin Backend (Spring WebFlux)
+  # ============================================
+  ajasta-kotlin-backend:
+    build:
+      context: ./ajasta-kotlin
+      dockerfile: Dockerfile
+    container_name: ajasta-kotlin-backend
+    restart: unless-stopped
+    depends_on:
+      ajasta-postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    environment:
+      # Database Configuration (JDBC for Exposed SQL)
+      SPRING_DATASOURCE_HOST: ajasta-postgres
+      SPRING_DATASOURCE_PORT: 5432
+      SPRING_DATASOURCE_USERNAME: admin
+      SPRING_DATASOURCE_PASSWORD: adminpw
+      SPRING_DATASOURCE_DATABASE: ajastadb
+      # Application Configuration
+      SPRING_PROFILES_ACTIVE: prod
+      # Keycloak OAuth2 Configuration
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/ajasta/protocol/openid-connect/certs
+      KEYCLOAK_AUTH_URL: http://localhost:8180
+      # JVM Configuration
+      JAVA_OPTS: -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0
+    ports:
+      - "8090:8080"
+    networks:
+      - ajasta-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ============================================
+  # Frontend (React + Nginx)
+  # ============================================
+  ajasta-frontend:
+    build:
+      context: ./ajasta-react
+      dockerfile: Dockerfile
+    container_name: ajasta-frontend
+    restart: unless-stopped
+    depends_on:
+      ajasta-kotlin-backend:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    networks:
+      - ajasta-net
+
+  # ============================================
+  # Kafka (Optional - for async processing)
+  # ============================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: ajasta-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - ajasta-net
+    profiles:
+      - kafka
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: ajasta-kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9092:9092"
+    networks:
+      - ajasta-net
+    profiles:
+      - kafka
+
+  # ============================================
+  # Monitoring (Optional)
+  # ============================================
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: ajasta-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    volumes:
+      - ./deploy/volumes/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - ajasta-net
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: ajasta-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    networks:
+      - ajasta-net
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
+  # ============================================
+  # Keycloak (Authentication with Google OAuth)
+  # ============================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    container_name: ajasta-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    depends_on:
+      ajasta-postgres:
+        condition: service_healthy
+    environment:
+      # Keycloak Admin
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin123
+      # Database Configuration
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://ajasta-postgres:5432/keycloak
+      KC_DB_USERNAME: admin
+      KC_DB_PASSWORD: adminpw
+      # Hostname Configuration
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: "8180"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_BACKCHANNEL: "false"
+      # HTTP Configuration
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      # Google OAuth (set these via environment or .env file)
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-your-google-client-id}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-your-google-client-secret}
+    ports:
+      - "8180:8080"
+    volumes:
+      - ./deploy/volumes/keycloak/ajasta-realm.json:/opt/keycloak/data/import/ajasta-realm.json:ro
+    networks:
+      - ajasta-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/realms/ajasta || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # ============================================
+  # Database Admin UI (Adminer)
+  # ============================================
+  adminer:
+    image: adminer:4.8.1
+    container_name: ajasta-adminer
+    restart: unless-stopped
+    depends_on:
+      - ajasta-postgres
+    ports:
+      - "5050:8080"
+    networks:
+      - ajasta-net
+    environment:
+      ADMINER_DEFAULT_SERVER: ajasta-postgres
+      ADMINER_DESIGN: pepa-linha-dark
+
+# ============================================
+# Named Volumes
+# ============================================
+volumes:
+  postgres_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  ajasta-net:
+    driver: bridge
+    name: ajasta-kotlin-net

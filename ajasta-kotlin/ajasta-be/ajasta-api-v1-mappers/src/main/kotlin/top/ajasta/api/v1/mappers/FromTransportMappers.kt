@@ -2,13 +2,15 @@ package top.ajasta.api.v1.mappers
 
 import top.ajasta.api.v1.models.*
 import top.ajasta.common.AjastaContext
+import top.ajasta.common.PaginationDefaults
 import top.ajasta.common.models.*
 
 /**
  * Extension function to map transport request to context.
  * Entry point for all request mapping.
+ * Uses IRequest interface for proper POSTful polymorphic handling.
  */
-fun AjastaContext.fromTransport(request: Any) = when (request) {
+fun AjastaContext.fromTransport(request: IRequest): Unit = when (request) {
     is BookingCreateRequest -> fromTransport(request)
     is BookingReadRequest -> fromTransport(request)
     is BookingUpdateRequest -> fromTransport(request)
@@ -20,7 +22,8 @@ fun AjastaContext.fromTransport(request: Any) = when (request) {
     is ResourceDeleteRequest -> fromTransport(request)
     is ResourceSearchRequest -> fromTransport(request)
     is AvailabilityRequest -> fromTransport(request)
-    else -> throw IllegalArgumentException("Unknown request type: ${request::class}")
+    // Fallback for any future IRequest implementations
+    else -> throw IllegalArgumentException("Unsupported request type: ${request::class}")
 }
 
 // === Booking Mappers ===
@@ -37,7 +40,7 @@ fun AjastaContext.fromTransport(request: BookingReadRequest) {
     command = AjastaCommand.READ_BOOKING
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
     bookingRequest = AjastaBooking(
-        id = request.bookingId?.let { AjastaBookingId(it) } ?: AjastaBookingId.NONE
+        id = request.booking?.id?.let { AjastaBookingId(it) } ?: AjastaBookingId.NONE
     )
     workMode = request.debug.toWorkMode()
     stubCase = request.debug.toStubCase()
@@ -55,8 +58,8 @@ fun AjastaContext.fromTransport(request: BookingDeleteRequest) {
     command = AjastaCommand.DELETE_BOOKING
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
     bookingRequest = AjastaBooking(
-        id = request.bookingId?.let { AjastaBookingId(it) } ?: AjastaBookingId.NONE,
-        lock = request.lock?.let { AjastaLock(it) } ?: AjastaLock.NONE
+        id = request.booking?.id?.let { AjastaBookingId(it) } ?: AjastaBookingId.NONE,
+        lock = request.booking?.lock?.let { AjastaLock(it) } ?: AjastaLock.NONE
     )
     workMode = request.debug.toWorkMode()
     stubCase = request.debug.toStubCase()
@@ -65,9 +68,9 @@ fun AjastaContext.fromTransport(request: BookingDeleteRequest) {
 fun AjastaContext.fromTransport(request: BookingSearchRequest) {
     command = AjastaCommand.SEARCH_BOOKINGS
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
-    bookingFilterRequest = request.filter?.toInternal() ?: AjastaBookingFilter()
-    page = request.page ?: 1
-    pageSize = request.pageSize ?: 20
+    bookingFilterRequest = request.bookingFilter?.toInternal() ?: AjastaBookingFilter()
+    page = request.page ?: PaginationDefaults.DEFAULT_PAGE
+    pageSize = request.pageSize ?: PaginationDefaults.DEFAULT_PAGE_SIZE
     workMode = request.debug.toWorkMode()
     stubCase = request.debug.toStubCase()
 }
@@ -86,7 +89,7 @@ fun AjastaContext.fromTransport(request: ResourceReadRequest) {
     command = AjastaCommand.READ_RESOURCE
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
     resourceRequest = AjastaResource(
-        id = request.resourceId?.let { AjastaResourceId(it) } ?: AjastaResourceId.NONE
+        id = request.resource?.id?.let { AjastaResourceId(it) } ?: AjastaResourceId.NONE
     )
     workMode = request.debug.toWorkMode()
     stubCase = request.debug.toStubCase()
@@ -104,8 +107,8 @@ fun AjastaContext.fromTransport(request: ResourceDeleteRequest) {
     command = AjastaCommand.DELETE_RESOURCE
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
     resourceRequest = AjastaResource(
-        id = request.resourceId?.let { AjastaResourceId(it) } ?: AjastaResourceId.NONE,
-        lock = request.lock?.let { AjastaLock(it) } ?: AjastaLock.NONE
+        id = request.resource?.id?.let { AjastaResourceId(it) } ?: AjastaResourceId.NONE,
+        lock = request.resource?.lock?.let { AjastaLock(it) } ?: AjastaLock.NONE
     )
     workMode = request.debug.toWorkMode()
     stubCase = request.debug.toStubCase()
@@ -114,9 +117,9 @@ fun AjastaContext.fromTransport(request: ResourceDeleteRequest) {
 fun AjastaContext.fromTransport(request: ResourceSearchRequest) {
     command = AjastaCommand.SEARCH_RESOURCES
     requestId = request.requestId?.let { AjastaRequestId(it) } ?: AjastaRequestId.NONE
-    resourceFilterRequest = request.filter?.toInternal() ?: AjastaResourceFilter()
-    page = request.page ?: 1
-    pageSize = request.pageSize ?: 20
+    resourceFilterRequest = request.resourceFilter?.toInternal() ?: AjastaResourceFilter()
+    page = request.page ?: PaginationDefaults.DEFAULT_PAGE
+    pageSize = request.pageSize ?: PaginationDefaults.DEFAULT_PAGE_SIZE
     workMode = request.debug.toWorkMode()
     stubCase = request.debug.toStubCase()
 }
@@ -172,7 +175,12 @@ private fun ResourceCreateObject.toInternal() = AjastaResource(
     pricePerSlot = pricePerSlot ?: 0.0,
     unitsCount = unitsCount ?: 1,
     openTime = openTime ?: "",
-    closeTime = closeTime ?: ""
+    closeTime = closeTime ?: "",
+    ownerId = ownerId?.let { AjastaUserId(it) } ?: AjastaUserId.NONE,
+    active = active ?: true,
+    unavailableWeekdays = unavailableWeekdays ?: "",
+    unavailableDates = unavailableDates ?: "",
+    dailyUnavailableRanges = dailyUnavailableRanges ?: ""
 )
 
 private fun ResourceUpdateObject.toInternalUpdate() = AjastaResource(
@@ -186,14 +194,19 @@ private fun ResourceUpdateObject.toInternalUpdate() = AjastaResource(
     unitsCount = unitsCount ?: 1,
     openTime = openTime ?: "",
     closeTime = closeTime ?: "",
-    lock = lock?.let { AjastaLock(it) } ?: AjastaLock.NONE
+    lock = lock?.let { AjastaLock(it) } ?: AjastaLock.NONE,
+    ownerId = ownerId?.let { AjastaUserId(it) } ?: AjastaUserId.NONE,
+    active = active ?: true,
+    unavailableWeekdays = unavailableWeekdays ?: "",
+    unavailableDates = unavailableDates ?: "",
+    dailyUnavailableRanges = dailyUnavailableRanges ?: ""
 )
 
 private fun ResourceFilter.toInternal() = AjastaResourceFilter(
     type = type.fromTransport(),
     location = location ?: "",
     minPrice = minPrice ?: 0.0,
-    maxPrice = maxPrice ?: 0.0,
+    maxPrice = maxPrice ?: Double.MAX_VALUE,
     minRating = minRating ?: 0.0,
     ownerId = ownerId?.let { AjastaUserId(it) } ?: AjastaUserId.NONE
 )

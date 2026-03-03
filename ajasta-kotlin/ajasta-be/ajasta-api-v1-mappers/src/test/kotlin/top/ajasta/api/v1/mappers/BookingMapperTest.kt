@@ -84,7 +84,9 @@ class BookingMapperTest {
     fun `should map BookingReadRequest to context`() {
         val request = BookingReadRequest(
             requestId = "req-123",
-            bookingId = "booking-456",
+            booking = BookingReadObject(
+                id = "booking-456"
+            ),
             debug = Debug(mode = RequestDebugMode.PROD)
         )
 
@@ -165,8 +167,10 @@ class BookingMapperTest {
     fun `should map BookingDeleteRequest to context`() {
         val request = BookingDeleteRequest(
             requestId = "req-123",
-            bookingId = "booking-999",
-            lock = "lock-v1"
+            booking = BookingDeleteObject(
+                id = "booking-999",
+                lock = "lock-v1"
+            )
         )
 
         val context = AjastaContext()
@@ -185,16 +189,14 @@ class BookingMapperTest {
             bookingResponse = AjastaBooking(
                 id = AjastaBookingId("booking-999"),
                 bookingStatus = AjastaBookingStatus.CANCELLED
-            ),
-            refundAmount = 25.0
+            )
         )
 
         val response = context.toTransport() as BookingDeleteResponse
 
         assertEquals("deleteBooking", response.responseType)
-        assertEquals("booking-999", response.bookingId)
-        assertTrue(response.cancelled == true)
-        assertEquals(25.0, response.refundAmount)
+        assertEquals("booking-999", response.booking?.id)
+        assertEquals(BookingStatus.CANCELLED, response.booking?.bookingStatus)
     }
 
     // === Search Bookings Tests ===
@@ -203,7 +205,7 @@ class BookingMapperTest {
     fun `should map BookingSearchRequest to context`() {
         val request = BookingSearchRequest(
             requestId = "req-123",
-            filter = BookingFilter(
+            bookingFilter = BookingFilter(
                 resourceId = "resource-123",
                 status = BookingStatus.CONFIRMED
             ),
@@ -235,19 +237,13 @@ class BookingMapperTest {
                     id = AjastaBookingId("booking-2"),
                     title = "Evening Session"
                 )
-            ),
-            total = 2,
-            page = 1,
-            pageSize = 20
+            )
         )
 
         val response = context.toTransport() as BookingSearchResponse
 
         assertEquals("searchBookings", response.responseType)
         assertEquals(2, response.bookings?.size)
-        assertEquals(2, response.total)
-        assertEquals(1, response.page)
-        assertEquals(20, response.pageSize)
     }
 
     // === Error Mapping Tests ===

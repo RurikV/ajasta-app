@@ -7,8 +7,9 @@ import top.ajasta.common.models.*
 /**
  * Extension function to map context to transport response.
  * Entry point for all response mapping.
+ * Returns IResponse interface for proper POSTful polymorphic handling.
  */
-fun AjastaContext.toTransport(): Any = when (command) {
+fun AjastaContext.toTransport(): IResponse = when (command) {
     AjastaCommand.CREATE_BOOKING -> toTransportCreateBooking()
     AjastaCommand.READ_BOOKING -> toTransportReadBooking()
     AjastaCommand.UPDATE_BOOKING -> toTransportUpdateBooking()
@@ -54,9 +55,7 @@ fun AjastaContext.toTransportDeleteBooking() = BookingDeleteResponse(
     responseType = "deleteBooking",
     requestId = requestId.asString().takeIf { it.isNotEmpty() },
     responseTime = kotlinx.datetime.Clock.System.now().toString(),
-    bookingId = bookingResponse.id.asString().takeIf { it.isNotEmpty() },
-    cancelled = bookingResponse.bookingStatus == AjastaBookingStatus.CANCELLED,
-    refundAmount = refundAmount.takeIf { it > 0 },
+    booking = bookingResponse.takeIf { !it.isEmpty() }?.toTransport(),
     errors = errors.toTransportErrors()
 )
 
@@ -65,9 +64,6 @@ fun AjastaContext.toTransportSearchBookings() = BookingSearchResponse(
     requestId = requestId.asString().takeIf { it.isNotEmpty() },
     responseTime = kotlinx.datetime.Clock.System.now().toString(),
     bookings = bookingsResponse.map { it.toTransport() }.takeIf { it.isNotEmpty() },
-    total = total.takeIf { it > 0 },
-    page = page,
-    pageSize = pageSize,
     errors = errors.toTransportErrors()
 )
 
@@ -101,8 +97,7 @@ fun AjastaContext.toTransportDeleteResource() = ResourceDeleteResponse(
     responseType = "deleteResource",
     requestId = requestId.asString().takeIf { it.isNotEmpty() },
     responseTime = kotlinx.datetime.Clock.System.now().toString(),
-    resourceId = resourceResponse.id.asString().takeIf { it.isNotEmpty() },
-    deleted = resourceResponse.id != AjastaResourceId.NONE,
+    resource = resourceResponse.takeIf { !it.isEmpty() }?.toTransport(),
     errors = errors.toTransportErrors()
 )
 
@@ -111,9 +106,6 @@ fun AjastaContext.toTransportSearchResources() = ResourceSearchResponse(
     requestId = requestId.asString().takeIf { it.isNotEmpty() },
     responseTime = kotlinx.datetime.Clock.System.now().toString(),
     resources = resourcesResponse.map { it.toTransport() }.takeIf { it.isNotEmpty() },
-    total = total.takeIf { it > 0 },
-    page = page,
-    pageSize = pageSize,
     errors = errors.toTransportErrors()
 )
 
@@ -173,6 +165,10 @@ fun AjastaResource.toTransport() = ResourceObject(
     rating = rating.takeIf { it > 0 },
     reviewCount = reviewCount.takeIf { it > 0 },
     ownerId = ownerId.asString().takeIf { it.isNotEmpty() },
+    active = active,
+    unavailableWeekdays = unavailableWeekdays.takeIf { it.isNotEmpty() },
+    unavailableDates = unavailableDates.takeIf { it.isNotEmpty() },
+    dailyUnavailableRanges = dailyUnavailableRanges.takeIf { it.isNotEmpty() },
     lock = lock.asString().takeIf { it.isNotEmpty() },
     createdAt = createdAt.takeIf { it != kotlinx.datetime.Instant.DISTANT_PAST }?.toString(),
     updatedAt = updatedAt.takeIf { it != kotlinx.datetime.Instant.DISTANT_PAST }?.toString()

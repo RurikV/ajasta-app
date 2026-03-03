@@ -10,256 +10,239 @@ servers:
   - url: http://localhost:8090/api/v1
     description: Local development
 
+tags:
+  - name: booking
+    description: Resource booking operations
+  - name: resource
+    description: Resources for booking
+
 paths:
-  /bookings:
+  /booking/create:
     post:
-      summary: Create a new booking
-      operationId: createBooking
       tags:
-        - Bookings
+        - booking
+      summary: Create booking
+      operationId: bookingCreate
       requestBody:
-        required: true
+        description: Request body
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/BookingCreateRequest'
+        required: true
       responses:
-        '200':
-          description: Booking created successfully
+        200:
+          description: Success
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BookingCreateResponse'
 
-  /bookings/search:
+  /booking/read:
     post:
-      summary: Search bookings
-      operationId: searchBookings
       tags:
-        - Bookings
+        - booking
+      summary: Read booking
+      operationId: bookingRead
       requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/BookingSearchRequest'
-      responses:
-        '200':
-          description: Search results
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BookingSearchResponse'
-
-  /bookings/{bookingId}:
-    get:
-      summary: Get booking by ID
-      operationId: readBooking
-      tags:
-        - Bookings
-      parameters:
-        - name: bookingId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
+        description: Request body
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/BookingReadRequest'
+        required: true
       responses:
-        '200':
-          description: Booking found
+        200:
+          description: Success
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BookingReadResponse'
 
-    put:
-      summary: Update booking
-      operationId: updateBooking
+  /booking/update:
+    post:
       tags:
-        - Bookings
-      parameters:
-        - name: bookingId
-          in: path
-          required: true
-          schema:
-            type: string
+        - booking
+      summary: Update booking
+      operationId: bookingUpdate
       requestBody:
-        required: true
+        description: Request body
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/BookingUpdateRequest'
+        required: true
       responses:
-        '200':
-          description: Booking updated successfully
+        200:
+          description: Success
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BookingUpdateResponse'
 
-    delete:
-      summary: Cancel booking
-      operationId: deleteBooking
+  /booking/delete:
+    post:
       tags:
-        - Bookings
-      parameters:
-        - name: bookingId
-          in: path
-          required: true
-          schema:
-            type: string
+        - booking
+      summary: Delete booking
+      operationId: bookingDelete
       requestBody:
+        description: Request body
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/BookingDeleteRequest'
+        required: true
       responses:
-        '200':
-          description: Booking cancelled successfully
+        200:
+          description: Success
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BookingDeleteResponse'
 
-  /resources:
+  /booking/search:
     post:
-      summary: Create a new resource
-      operationId: createResource
       tags:
-        - Resources
+        - booking
+      summary: Search bookings
+      operationId: bookingSearch
       requestBody:
+        description: Request body
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingSearchRequest'
         required: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingSearchResponse'
+
+  /resource/create:
+    post:
+      tags:
+        - resource
+      summary: Create resource
+      operationId: resourceCreate
+      requestBody:
+        description: Request body
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/ResourceCreateRequest'
+        required: true
       responses:
-        '200':
-          description: Resource created successfully
+        200:
+          description: Success
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ResourceCreateResponse'
 
-  /resources/search:
+  /resource/read:
     post:
-      summary: Search resources
-      operationId: searchResources
       tags:
-        - Resources
+        - resource
+      summary: Read resource
+      operationId: resourceRead
       requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ResourceSearchRequest'
-      responses:
-        '200':
-          description: Search results
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ResourceSearchResponse'
-
-  /resources/{resourceId}:
-    get:
-      summary: Get resource by ID
-      operationId: readResource
-      tags:
-        - Resources
-      parameters:
-        - name: resourceId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
+        description: Request body
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/ResourceReadRequest'
+        required: true
       responses:
-        '200':
-          description: Resource found
+        200:
+          description: Success
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ResourceReadResponse'
 
-    put:
-      summary: Update resource
-      operationId: updateResource
+  /resource/update:
+    post:
       tags:
-        - Resources
-      parameters:
-        - name: resourceId
-          in: path
-          required: true
-          schema:
-            type: string
+        - resource
+      summary: Update resource
+      operationId: resourceUpdate
       requestBody:
-        required: true
+        description: Request body
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/ResourceUpdateRequest'
+        required: true
       responses:
-        '200':
-          description: Resource updated successfully
+        200:
+          description: Success
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ResourceUpdateResponse'
 
-    delete:
-      summary: Delete resource
-      operationId: deleteResource
+  /resource/delete:
+    post:
       tags:
-        - Resources
-      parameters:
-        - name: resourceId
-          in: path
-          required: true
-          schema:
-            type: string
+        - resource
+      summary: Delete resource
+      operationId: resourceDelete
       requestBody:
+        description: Request body
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/ResourceDeleteRequest'
+        required: true
       responses:
-        '200':
-          description: Resource deleted successfully
+        200:
+          description: Success
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ResourceDeleteResponse'
 
-  /resources/{resourceId}/availability:
+  /resource/search:
     post:
-      summary: Get resource availability
-      operationId: getAvailability
       tags:
-        - Resources
-      parameters:
-        - name: resourceId
-          in: path
-          required: true
-          schema:
-            type: string
+        - resource
+      summary: Search resources
+      operationId: resourceSearch
       requestBody:
+        description: Request body
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceSearchRequest'
         required: true
+      responses:
+        200:
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceSearchResponse'
+
+  /resource/availability:
+    post:
+      tags:
+        - resource
+      summary: Get resource availability
+      operationId: resourceAvailability
+      requestBody:
+        description: Request body
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/AvailabilityRequest'
+        required: true
       responses:
-        '200':
-          description: Availability data
+        200:
+          description: Success
           content:
             application/json:
               schema:
@@ -267,6 +250,63 @@ paths:
 
 components:
   schemas:
+
+    IRequest:
+      type: object
+      description: Base interface for all requests
+      properties:
+        requestType:
+          type: string
+          description: Discriminator field for request type resolution
+      discriminator:
+        propertyName: requestType
+        mapping:
+          createBooking: '#/components/schemas/BookingCreateRequest'
+          readBooking: '#/components/schemas/BookingReadRequest'
+          updateBooking: '#/components/schemas/BookingUpdateRequest'
+          deleteBooking: '#/components/schemas/BookingDeleteRequest'
+          searchBookings: '#/components/schemas/BookingSearchRequest'
+          createResource: '#/components/schemas/ResourceCreateRequest'
+          readResource: '#/components/schemas/ResourceReadRequest'
+          updateResource: '#/components/schemas/ResourceUpdateRequest'
+          deleteResource: '#/components/schemas/ResourceDeleteRequest'
+          searchResources: '#/components/schemas/ResourceSearchRequest'
+          getAvailability: '#/components/schemas/AvailabilityRequest'
+
+    ResponseResult:
+      type: string
+      enum:
+        - success
+        - error
+
+    IResponse:
+      type: object
+      description: Base interface for all responses
+      properties:
+        responseType:
+          type: string
+          description: Discriminator field for response type resolution
+        result:
+          $ref: '#/components/schemas/ResponseResult'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+      discriminator:
+        propertyName: responseType
+        mapping:
+          createBooking: '#/components/schemas/BookingCreateResponse'
+          readBooking: '#/components/schemas/BookingReadResponse'
+          updateBooking: '#/components/schemas/BookingUpdateResponse'
+          deleteBooking: '#/components/schemas/BookingDeleteResponse'
+          searchBookings: '#/components/schemas/BookingSearchResponse'
+          createResource: '#/components/schemas/ResourceCreateResponse'
+          readResource: '#/components/schemas/ResourceReadResponse'
+          updateResource: '#/components/schemas/ResourceUpdateResponse'
+          deleteResource: '#/components/schemas/ResourceDeleteResponse'
+          searchResources: '#/components/schemas/ResourceSearchResponse'
+          getAvailability: '#/components/schemas/AvailabilityResponse'
+
     # === Debug ===
     Debug:
       type: object
@@ -346,6 +386,18 @@ components:
           type: integer
         ownerId:
           type: string
+        active:
+          type: boolean
+          description: Whether the resource is active and available for booking
+        unavailableWeekdays:
+          type: string
+          description: CSV of weekday indices (0-6, 0=Sunday) when resource is unavailable
+        unavailableDates:
+          type: string
+          description: CSV of dates (yyyy-MM-dd) when resource is unavailable
+        dailyUnavailableRanges:
+          type: string
+          description: Semicolon-separated time ranges (HH:mm-HH:mm) when resource is unavailable daily
         lock:
           type: string
         createdAt:
@@ -382,6 +434,22 @@ components:
           type: string
         closeTime:
           type: string
+        ownerId:
+          type: string
+          description: ID of the user who owns/manages this resource
+        active:
+          type: boolean
+          description: Whether the resource is active and available for booking
+          default: true
+        unavailableWeekdays:
+          type: string
+          description: CSV of weekday indices (0-6, 0=Sunday) when resource is unavailable
+        unavailableDates:
+          type: string
+          description: CSV of dates (yyyy-MM-dd) when resource is unavailable
+        dailyUnavailableRanges:
+          type: string
+          description: Semicolon-separated time ranges (HH:mm-HH:mm) when resource is unavailable daily
 
     ResourceUpdateObject:
       type: object
@@ -408,6 +476,35 @@ components:
         openTime:
           type: string
         closeTime:
+          type: string
+        lock:
+          type: string
+        ownerId:
+          type: string
+          description: ID of the user who owns/manages this resource
+        active:
+          type: boolean
+          description: Whether the resource is active and available for booking
+        unavailableWeekdays:
+          type: string
+          description: CSV of weekday indices (0-6, 0=Sunday) when resource is unavailable
+        unavailableDates:
+          type: string
+          description: CSV of dates (yyyy-MM-dd) when resource is unavailable
+        dailyUnavailableRanges:
+          type: string
+          description: Semicolon-separated time ranges (HH:mm-HH:mm) when resource is unavailable daily
+
+    ResourceReadObject:
+      type: object
+      properties:
+        id:
+          type: string
+
+    ResourceDeleteObject:
+      type: object
+      properties:
+        id:
           type: string
         lock:
           type: string
@@ -525,6 +622,20 @@ components:
         lock:
           type: string
 
+    BookingReadObject:
+      type: object
+      properties:
+        id:
+          type: string
+
+    BookingDeleteObject:
+      type: object
+      properties:
+        id:
+          type: string
+        lock:
+          type: string
+
     BookingFilter:
       type: object
       properties:
@@ -558,441 +669,337 @@ components:
           type: number
           format: double
 
-    # === Resource Requests (without allOf) ===
+    # === Resource Requests ===
     ResourceCreateRequest:
-      type: object
-      properties:
-        requestType:
-          type: string
-          default: createResource
-        requestId:
-          type: string
-        requestTime:
-          type: string
-          format: date-time
-        debug:
-          $ref: '#/components/schemas/Debug'
-        resource:
-          $ref: '#/components/schemas/ResourceCreateObject'
+      allOf:
+        - $ref: '#/components/schemas/IRequest'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            requestTime:
+              type: string
+              format: date-time
+            debug:
+              $ref: '#/components/schemas/Debug'
+            resource:
+              $ref: '#/components/schemas/ResourceCreateObject'
 
     ResourceCreateResponse:
-      type: object
-      properties:
-        responseType:
-          type: string
-          default: createResource
-        requestId:
-          type: string
-        responseTime:
-          type: string
-          format: date-time
-        resource:
-          $ref: '#/components/schemas/ResourceObject'
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Error'
+      allOf:
+        - $ref: '#/components/schemas/IResponse'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            responseTime:
+              type: string
+              format: date-time
+            resource:
+              $ref: '#/components/schemas/ResourceObject'
 
     ResourceReadRequest:
-      type: object
-      properties:
-        requestType:
-          type: string
-          default: readResource
-        requestId:
-          type: string
-        requestTime:
-          type: string
-          format: date-time
-        debug:
-          $ref: '#/components/schemas/Debug'
-        resourceId:
-          type: string
+      allOf:
+        - $ref: '#/components/schemas/IRequest'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            requestTime:
+              type: string
+              format: date-time
+            debug:
+              $ref: '#/components/schemas/Debug'
+            resource:
+              $ref: '#/components/schemas/ResourceReadObject'
 
     ResourceReadResponse:
-      type: object
-      properties:
-        responseType:
-          type: string
-          default: readResource
-        requestId:
-          type: string
-        responseTime:
-          type: string
-          format: date-time
-        resource:
-          $ref: '#/components/schemas/ResourceObject'
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Error'
+      allOf:
+        - $ref: '#/components/schemas/IResponse'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            responseTime:
+              type: string
+              format: date-time
+            resource:
+              $ref: '#/components/schemas/ResourceObject'
 
     ResourceUpdateRequest:
-      type: object
-      properties:
-        requestType:
-          type: string
-          default: updateResource
-        requestId:
-          type: string
-        requestTime:
-          type: string
-          format: date-time
-        debug:
-          $ref: '#/components/schemas/Debug'
-        resource:
-          $ref: '#/components/schemas/ResourceUpdateObject'
+      allOf:
+        - $ref: '#/components/schemas/IRequest'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            requestTime:
+              type: string
+              format: date-time
+            debug:
+              $ref: '#/components/schemas/Debug'
+            resource:
+              $ref: '#/components/schemas/ResourceUpdateObject'
 
     ResourceUpdateResponse:
-      type: object
-      properties:
-        responseType:
-          type: string
-          default: updateResource
-        requestId:
-          type: string
-        responseTime:
-          type: string
-          format: date-time
-        resource:
-          $ref: '#/components/schemas/ResourceObject'
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Error'
+      allOf:
+        - $ref: '#/components/schemas/IResponse'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            responseTime:
+              type: string
+              format: date-time
+            resource:
+              $ref: '#/components/schemas/ResourceObject'
 
     ResourceDeleteRequest:
-      type: object
-      properties:
-        requestType:
-          type: string
-          default: deleteResource
-        requestId:
-          type: string
-        requestTime:
-          type: string
-          format: date-time
-        debug:
-          $ref: '#/components/schemas/Debug'
-        resourceId:
-          type: string
-        lock:
-          type: string
+      allOf:
+        - $ref: '#/components/schemas/IRequest'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            requestTime:
+              type: string
+              format: date-time
+            debug:
+              $ref: '#/components/schemas/Debug'
+            resource:
+              $ref: '#/components/schemas/ResourceDeleteObject'
 
     ResourceDeleteResponse:
-      type: object
-      properties:
-        responseType:
-          type: string
-          default: deleteResource
-        requestId:
-          type: string
-        responseTime:
-          type: string
-          format: date-time
-        resourceId:
-          type: string
-        deleted:
-          type: boolean
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Error'
+      allOf:
+        - $ref: '#/components/schemas/IResponse'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            responseTime:
+              type: string
+              format: date-time
+            resource:
+              $ref: '#/components/schemas/ResourceObject'
 
     ResourceSearchRequest:
-      type: object
-      properties:
-        requestType:
-          type: string
-          default: searchResources
-        requestId:
-          type: string
-        requestTime:
-          type: string
-          format: date-time
-        debug:
-          $ref: '#/components/schemas/Debug'
-        filter:
-          $ref: '#/components/schemas/ResourceFilter'
-        page:
-          type: integer
-        pageSize:
-          type: integer
+      allOf:
+        - $ref: '#/components/schemas/IRequest'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            requestTime:
+              type: string
+              format: date-time
+            debug:
+              $ref: '#/components/schemas/Debug'
+            resourceFilter:
+              $ref: '#/components/schemas/ResourceFilter'
+            page:
+              type: integer
+            pageSize:
+              type: integer
 
     ResourceSearchResponse:
-      type: object
-      properties:
-        responseType:
-          type: string
-          default: searchResources
-        requestId:
-          type: string
-        responseTime:
-          type: string
-          format: date-time
-        resources:
-          type: array
-          items:
-            $ref: '#/components/schemas/ResourceObject'
-        total:
-          type: integer
-        page:
-          type: integer
-        pageSize:
-          type: integer
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Error'
+      allOf:
+        - $ref: '#/components/schemas/IResponse'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            responseTime:
+              type: string
+              format: date-time
+            resources:
+              type: array
+              items:
+                $ref: '#/components/schemas/ResourceObject'
 
-    # === Booking Requests (without allOf) ===
+    # === Booking Requests ===
     BookingCreateRequest:
-      type: object
-      properties:
-        requestType:
-          type: string
-          default: createBooking
-        requestId:
-          type: string
-        requestTime:
-          type: string
-          format: date-time
-        debug:
-          $ref: '#/components/schemas/Debug'
-        booking:
-          $ref: '#/components/schemas/BookingCreateObject'
+      allOf:
+        - $ref: '#/components/schemas/IRequest'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            requestTime:
+              type: string
+              format: date-time
+            debug:
+              $ref: '#/components/schemas/Debug'
+            booking:
+              $ref: '#/components/schemas/BookingCreateObject'
 
     BookingCreateResponse:
-      type: object
-      properties:
-        responseType:
-          type: string
-          default: createBooking
-        requestId:
-          type: string
-        responseTime:
-          type: string
-          format: date-time
-        booking:
-          $ref: '#/components/schemas/BookingObject'
-        paymentLink:
-          type: string
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Error'
+      allOf:
+        - $ref: '#/components/schemas/IResponse'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            responseTime:
+              type: string
+              format: date-time
+            booking:
+              $ref: '#/components/schemas/BookingObject'
+            paymentLink:
+              type: string
 
     BookingReadRequest:
-      type: object
-      properties:
-        requestType:
-          type: string
-          default: readBooking
-        requestId:
-          type: string
-        requestTime:
-          type: string
-          format: date-time
-        debug:
-          $ref: '#/components/schemas/Debug'
-        bookingId:
-          type: string
+      allOf:
+        - $ref: '#/components/schemas/IRequest'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            requestTime:
+              type: string
+              format: date-time
+            debug:
+              $ref: '#/components/schemas/Debug'
+            booking:
+              $ref: '#/components/schemas/BookingReadObject'
 
     BookingReadResponse:
-      type: object
-      properties:
-        responseType:
-          type: string
-          default: readBooking
-        requestId:
-          type: string
-        responseTime:
-          type: string
-          format: date-time
-        booking:
-          $ref: '#/components/schemas/BookingObject'
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Error'
+      allOf:
+        - $ref: '#/components/schemas/IResponse'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            responseTime:
+              type: string
+              format: date-time
+            booking:
+              $ref: '#/components/schemas/BookingObject'
 
     BookingUpdateRequest:
-      type: object
-      properties:
-        requestType:
-          type: string
-          default: updateBooking
-        requestId:
-          type: string
-        requestTime:
-          type: string
-          format: date-time
-        debug:
-          $ref: '#/components/schemas/Debug'
-        booking:
-          $ref: '#/components/schemas/BookingUpdateObject'
+      allOf:
+        - $ref: '#/components/schemas/IRequest'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            requestTime:
+              type: string
+              format: date-time
+            debug:
+              $ref: '#/components/schemas/Debug'
+            booking:
+              $ref: '#/components/schemas/BookingUpdateObject'
 
     BookingUpdateResponse:
-      type: object
-      properties:
-        responseType:
-          type: string
-          default: updateBooking
-        requestId:
-          type: string
-        responseTime:
-          type: string
-          format: date-time
-        booking:
-          $ref: '#/components/schemas/BookingObject'
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Error'
+      allOf:
+        - $ref: '#/components/schemas/IResponse'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            responseTime:
+              type: string
+              format: date-time
+            booking:
+              $ref: '#/components/schemas/BookingObject'
 
     BookingDeleteRequest:
-      type: object
-      properties:
-        requestType:
-          type: string
-          default: deleteBooking
-        requestId:
-          type: string
-        requestTime:
-          type: string
-          format: date-time
-        debug:
-          $ref: '#/components/schemas/Debug'
-        bookingId:
-          type: string
-        lock:
-          type: string
+      allOf:
+        - $ref: '#/components/schemas/IRequest'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            requestTime:
+              type: string
+              format: date-time
+            debug:
+              $ref: '#/components/schemas/Debug'
+            booking:
+              $ref: '#/components/schemas/BookingDeleteObject'
 
     BookingDeleteResponse:
-      type: object
-      properties:
-        responseType:
-          type: string
-          default: deleteBooking
-        requestId:
-          type: string
-        responseTime:
-          type: string
-          format: date-time
-        bookingId:
-          type: string
-        cancelled:
-          type: boolean
-        refundAmount:
-          type: number
-          format: double
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Error'
+      allOf:
+        - $ref: '#/components/schemas/IResponse'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            responseTime:
+              type: string
+              format: date-time
+            booking:
+              $ref: '#/components/schemas/BookingObject'
 
     BookingSearchRequest:
-      type: object
-      properties:
-        requestType:
-          type: string
-          default: searchBookings
-        requestId:
-          type: string
-        requestTime:
-          type: string
-          format: date-time
-        debug:
-          $ref: '#/components/schemas/Debug'
-        filter:
-          $ref: '#/components/schemas/BookingFilter'
-        page:
-          type: integer
-        pageSize:
-          type: integer
+      allOf:
+        - $ref: '#/components/schemas/IRequest'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            requestTime:
+              type: string
+              format: date-time
+            debug:
+              $ref: '#/components/schemas/Debug'
+            bookingFilter:
+              $ref: '#/components/schemas/BookingFilter'
+            page:
+              type: integer
+            pageSize:
+              type: integer
 
     BookingSearchResponse:
-      type: object
-      properties:
-        responseType:
-          type: string
-          default: searchBookings
-        requestId:
-          type: string
-        responseTime:
-          type: string
-          format: date-time
-        bookings:
-          type: array
-          items:
-            $ref: '#/components/schemas/BookingObject'
-        total:
-          type: integer
-        page:
-          type: integer
-        pageSize:
-          type: integer
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Error'
+      allOf:
+        - $ref: '#/components/schemas/IResponse'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            responseTime:
+              type: string
+              format: date-time
+            bookings:
+              type: array
+              items:
+                $ref: '#/components/schemas/BookingObject'
 
     # === Availability ===
     AvailabilityRequest:
-      type: object
-      properties:
-        requestType:
-          type: string
-          default: getAvailability
-        requestId:
-          type: string
-        requestTime:
-          type: string
-          format: date-time
-        debug:
-          $ref: '#/components/schemas/Debug'
-        resourceId:
-          type: string
-        dateFrom:
-          type: string
-          format: date-time
-        dateTo:
-          type: string
-          format: date-time
+      allOf:
+        - $ref: '#/components/schemas/IRequest'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            requestTime:
+              type: string
+              format: date-time
+            debug:
+              $ref: '#/components/schemas/Debug'
+            resourceId:
+              type: string
+            dateFrom:
+              type: string
+              format: date-time
+            dateTo:
+              type: string
+              format: date-time
 
     AvailabilityResponse:
-      type: object
-      properties:
-        responseType:
-          type: string
-          default: getAvailability
-        requestId:
-          type: string
-        responseTime:
-          type: string
-          format: date-time
-        resourceId:
-          type: string
-        slots:
-          type: array
-          items:
-            $ref: '#/components/schemas/AvailabilitySlot'
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Error'
-
-    ErrorResponse:
-      type: object
-      properties:
-        responseType:
-          type: string
-        requestId:
-          type: string
-        responseTime:
-          type: string
-          format: date-time
-        errors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Error'
+      allOf:
+        - $ref: '#/components/schemas/IResponse'
+        - type: object
+          properties:
+            requestId:
+              type: string
+            responseTime:
+              type: string
+              format: date-time
+            resourceId:
+              type: string
+            slots:
+              type: array
+              items:
+                $ref: '#/components/schemas/AvailabilitySlot'

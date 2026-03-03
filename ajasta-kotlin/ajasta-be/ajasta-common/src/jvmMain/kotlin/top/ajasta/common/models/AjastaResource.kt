@@ -20,6 +20,10 @@ data class AjastaResource(
     var rating: Double = 0.0,
     var reviewCount: Int = 0,
     var ownerId: AjastaUserId = AjastaUserId.NONE,
+    var active: Boolean = true,
+    var unavailableWeekdays: String = "",
+    var unavailableDates: String = "",
+    var dailyUnavailableRanges: String = "",
     var lock: AjastaLock = AjastaLock.NONE,
     var createdAt: Instant = Instant.DISTANT_PAST,
     var updatedAt: Instant = Instant.DISTANT_PAST

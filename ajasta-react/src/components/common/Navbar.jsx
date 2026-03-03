@@ -1,6 +1,7 @@
 import { useNavigate, Link } from "react-router-dom";
 import { useTranslation } from 'react-i18next';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useAuth } from "../../context/AuthContext";
 import ApiService from "../../services/ApiService";
 
 const Navbar = () => {
@@ -9,21 +10,13 @@ const Navbar = () => {
 
     const navigate = useNavigate();
 
-    // Force re-render when roles change; also bootstrap roles on mount if authenticated
-    // eslint-disable-next-line no-unused-vars
-    const [roleTick, setRoleTick] = useState(0);
-    useEffect(() => {
-        const unsubscribe = ApiService.onRolesChange(() => setRoleTick(t => t + 1));
-        if (ApiService.isAuthenticated()) {
-            ApiService.bootstrapRoles();
-        }
-        return unsubscribe;
-    }, []);
+    // Use Keycloak authentication from AuthContext
+    const { isAuthenticated, isLoading, isAdmin: keycloakIsAdmin, hasRole, login, logout, user } = useAuth();
 
-    const isAuthenticated = ApiService.isAuthenticated();
-    const isAdmin = ApiService.isAdmin();
-    const isCustomer = ApiService.isCustomer();
-    const isResourceManager = ApiService.isResourceManager();
+    // Determine roles (prefer Keycloak roles)
+    const isAdmin = keycloakIsAdmin || ApiService.isAdmin();
+    const isCustomer = hasRole('user') || ApiService.isCustomer();
+    const isResourceManager = hasRole('resource_manager') || ApiService.isResourceManager();
 
     const languages = [
         { code: 'en', name: t('english'), flag: '🇺🇸' },
@@ -45,11 +38,33 @@ const Navbar = () => {
     const handleLogout = () => {
         const isLogout = window.confirm(t('logout_confirm'));
         if (isLogout) {
+            // Logout from Keycloak
+            logout();
+            // Also clear any local storage
             ApiService.logout();
-            navigate("/login")
+            navigate("/");
         }
     }
 
+    const handleLogin = () => {
+        // Redirect to Keycloak login
+        login();
+    }
+
+    // Show loading state while checking authentication
+    if (isLoading) {
+        return (
+            <nav>
+                <div className="logo">
+                    <Link to="/" className="logo-link">{t('app_title')}</Link>
+                </div>
+                <div className="desktop-nav">
+                    <Link to="/" className="nav-link">{t('home')}</Link>
+                    <Link to="/resources" className="nav-link">{t('resources')}</Link>
+                </div>
+            </nav>
+        );
+    }
 
     return (
         <nav>
@@ -65,12 +80,12 @@ const Navbar = () => {
 
                 {/* Language Dropdown */}
                 <div className="language-dropdown" style={{ position: 'relative', display: 'inline-block' }}>
-                    <button 
+                    <button
                         className="nav-button language-button"
                         onClick={() => setShowLanguageDropdown(!showLanguageDropdown)}
-                        style={{ 
-                            background: 'none', 
-                            border: 'none', 
+                        style={{
+                            background: 'none',
+                            border: 'none',
                             cursor: 'pointer',
                             display: 'flex',
                             alignItems: 'center',
@@ -83,9 +98,9 @@ const Navbar = () => {
                         <span>{t('language')}</span>
                         <span style={{ fontSize: '12px' }}>▼</span>
                     </button>
-                    
+
                     {showLanguageDropdown && (
-                        <div 
+                        <div
                             className="language-dropdown-menu"
                             style={{
                                 position: 'absolute',
@@ -136,32 +151,23 @@ const Navbar = () => {
                         {(isAdmin || isResourceManager) && (
                             <Link to="/admin" className="nav-link">{t('admin')}</Link>
                         )}
-                        <Link to="/profile" className="nav-link">{t('profile')}</Link>
+                        <Link to="/profile" className="nav-link">
+                            {user?.fullName || user?.username || t('profile')}
+                        </Link>
                         <button className="nav-button" onClick={handleLogout}>
                             {t('logout')}
                         </button>
                     </>
                 ) : (
                     <>
-                        <Link to="/login" className="nav-link">{t('login')}</Link>
-                        <Link to="/register" className="nav-link">{t('register')}</Link>
+                        <button className="nav-button" onClick={handleLogin}>
+                            {t('login')}
+                        </button>
                     </>
                 )}
             </div>
         </nav>
     )
-
-
-
 }
+
 export default Navbar;
-
-
-
-
-
-
-
-
-
-

@@ -7,7 +7,7 @@ import top.ajasta.common.models.*
  * Main context for processing booking system requests.
  * Tracks the entire request lifecycle through different stages.
  */
-data class AjastaContext(
+open class AjastaContext(
     // Command and state
     var command: AjastaCommand = AjastaCommand.NONE,
     var state: AjastaState = AjastaState.NONE,

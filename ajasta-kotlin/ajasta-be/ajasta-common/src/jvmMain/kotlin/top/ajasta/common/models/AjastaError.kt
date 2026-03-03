@@ -16,5 +16,10 @@ data class AjastaError(
 
     companion object {
         val NONE = AjastaError()
+        val DEFAULT = AjastaError(
+            code = "repo-error",
+            group = "repository",
+            message = "Repository error"
+        )
     }
 }
